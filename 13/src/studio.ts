@@ -232,37 +232,50 @@ export function setupStudio(renderer: THREE.WebGLRenderer, scene: THREE.Scene): 
   // while chrome steel & clear plastic boost envMapIntensity per-material.
   scene.environmentIntensity = 0.56;
 
-  // Seamless warm-alabaster photographic cyclorama backdrop dome
+  // Sculptural Scandinavian studio cyclorama gradient dome (cool mist zenith -> warm backlit horizon -> grounded stone floor)
   const backdropGeo = new THREE.SphereGeometry(28, 32, 24);
   const backdropMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      uTop: { value: new THREE.Color(0xdfdcd4) },
-      uMid: { value: new THREE.Color(0xebe8e0) },
-      uBottom: { value: new THREE.Color(0xd5cfc3) },
+      uTop: { value: new THREE.Color(0xd2dae3) },    // airy cool Nordic mist slate
+      uMid: { value: new THREE.Color(0xf1ece2) },    // luminous warm studio alabaster sweep
+      uBottom: { value: new THREE.Color(0xcbc1b2) }, // grounded warm architectural limestone
+      uGlow: { value: new THREE.Color(0xfaf7f0) },   // soft diffused cyclorama backlight
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorldDir;
+      varying vec2 vScreenUv;
       void main() {
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vWorldDir = normalize(wp.xyz);
-        gl_Position = projectionMatrix * viewMatrix * wp;
+        vec4 clip = projectionMatrix * viewMatrix * wp;
+        vScreenUv = clip.xy / max(clip.w, 0.0001) * 0.5 + 0.5;
+        gl_Position = clip;
       }
     `,
     fragmentShader: /* glsl */ `
       uniform vec3 uTop;
       uniform vec3 uMid;
       uniform vec3 uBottom;
+      uniform vec3 uGlow;
       varying vec3 vWorldDir;
+      varying vec2 vScreenUv;
       void main() {
-        float y = vWorldDir.y;
-        // Soft studio sweep brighter behind subject, gently shaded at floor & ceiling
-        vec3 col = mix(uMid, uTop, smoothstep(0.05, 0.72, y));
-        col = mix(col, uBottom, smoothstep(0.0, -0.48, y));
-        // Subtle off-center key softbox wash on the cyclorama wall
-        float keyGlow = smoothstep(-0.3, 0.95, dot(vWorldDir, normalize(vec3(-0.35, 0.28, -0.88))));
-        col += vec3(0.025, 0.023, 0.019) * keyGlow;
+        // Blend screen vertical sweep with subtle 3D world elevation so the gradient reads richly at 32deg FOV
+        float sy = clamp(vScreenUv.y, 0.0, 1.0);
+        float wy = clamp(vWorldDir.y * 1.4 + 0.5, 0.0, 1.0);
+        float t = mix(sy, wy, 0.25);
+
+        // Smooth 3-stop studio sweep: warm limestone floor -> luminous alabaster mid -> cool Nordic mist top
+        vec3 col = mix(uBottom, uMid, smoothstep(0.0, 0.48, t));
+        col = mix(col, uTop, smoothstep(0.46, 1.0, t));
+
+        // Soft off-center studio softbox backlight halo behind the sphere (upper-left bias matching key light)
+        vec2 haloVec = (vScreenUv - vec2(0.46, 0.52)) * vec2(1.15, 1.0);
+        float halo = exp(-dot(haloVec, haloVec) * 4.2);
+        col = mix(col, uGlow, halo * 0.48);
+
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -275,20 +288,20 @@ export function setupStudio(renderer: THREE.WebGLRenderer, scene: THREE.Scene): 
   const hemi = new THREE.HemisphereLight(0xfaf8f3, 0xbab1a2, 0.55);
   scene.add(hemi);
 
-  // Primary softbox key light (upper-left-front) with crisp tight shadows inside tracks
+  // Primary softbox key light (upper-left-front) with crisp tight shadows inside tracks & windows
   const keyLight = new THREE.DirectionalLight(0xfffaf0, 1.48);
   keyLight.position.set(-2.9, 3.8, 3.3);
   keyLight.castShadow = true;
-  keyLight.shadow.mapSize.set(1024, 1024);
+  keyLight.shadow.mapSize.set(2048, 2048);
   keyLight.shadow.camera.near = 1.5;
   keyLight.shadow.camera.far = 12.0;
-  keyLight.shadow.camera.left = -1.45;
-  keyLight.shadow.camera.right = 1.45;
-  keyLight.shadow.camera.top = 1.45;
-  keyLight.shadow.camera.bottom = -1.45;
-  keyLight.shadow.bias = -0.00045;
-  keyLight.shadow.normalBias = 0.014;
-  keyLight.shadow.radius = 3.0;
+  keyLight.shadow.camera.left = -1.32;
+  keyLight.shadow.camera.right = 1.32;
+  keyLight.shadow.camera.top = 1.32;
+  keyLight.shadow.camera.bottom = -1.32;
+  keyLight.shadow.bias = -0.00035;
+  keyLight.shadow.normalBias = 0.01;
+  keyLight.shadow.radius = 2.5;
   scene.add(keyLight);
 
   // Cool neutral fill light (right-front) — classic 3:1 studio key-to-fill ratio

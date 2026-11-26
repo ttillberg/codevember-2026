@@ -148,17 +148,17 @@ export class StudioPost {
       distanceExponent: 1.3,
       thickness: 0.58,
       scale: 1.18,
-      samples: 10,
+      samples: 8,
       distanceFallOff: 0.88,
     });
     this.aoPass.updatePdMaterial({
-      lumaPhi: 8,
-      depthPhi: 2.2,
-      normalPhi: 3.0,
-      radius: 2.6,
-      radiusExponent: 1.5,
+      lumaPhi: 6,
+      depthPhi: 1.2,
+      normalPhi: 2.6,
+      radius: 2.0,
+      radiusExponent: 1.6,
       rings: 1,
-      samples: 8,
+      samples: 6,
     });
     this.aoPass.renderToScreen = false;
 
@@ -176,8 +176,8 @@ export class StudioPost {
     const H = Math.max(1, Math.floor(h * pr));
     this.target.setSize(W, H);
     this.ping.setSize(W, H);
-    // Half-res GTAO cuts AO fillrate & normal prepass pixels by 4x while bilateral blur stays silky smooth
-    this.aoPass.setSize(Math.max(1, Math.floor(W * 0.5)), Math.max(1, Math.floor(H * 0.5)));
+    // 0.65x GTAO with tight depth-aware bilateral denoise keeps window edges crisp AND locks 60 FPS
+    this.aoPass.setSize(Math.max(1, Math.floor(W * 0.65)), Math.max(1, Math.floor(H * 0.65)));
   }
 
   render(time: number) {
