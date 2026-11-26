@@ -4,6 +4,7 @@ export type FlavorId =
   | 'mango'
   | 'lemon'
   | 'orange'
+  | 'kiwi'
   | 'watermelon'
   | 'strawberry'
   | 'raspberry'
@@ -62,6 +63,9 @@ export interface ResolvedOpticalPalette {
   opacity: number;
   /** True when two distinct tastes are active for organic layered/swirled dual-color blending */
   isDual: boolean;
+  /** 1 when Flavor A / B is Kiwi (automatically embeds volumetric black kiwi seeds inside the green zone!) */
+  kiwiMaskA: number;
+  kiwiMaskB: number;
   // Flavor A (top / primary)
   sigmaA: [number, number, number];
   coreA: [number, number, number];
@@ -130,6 +134,21 @@ export const FLAVOR_LIST: FlavorOpticalSpec[] = [
     creamDeep: [0.54, 0.11, 0.014],
     stain: [0.94, 0.42, 0.09],
     dropSigma: [0.20, 2.05, 4.80],
+  },
+  {
+    id: 'kiwi',
+    label: 'Kiwi',
+    swatch: '#5d9822',
+    sigma: [4.25, 0.92, 8.20],
+    core: [0.68, 1.18, 0.22],
+    mid: [0.34, 0.80, 0.08],
+    deep: [0.12, 0.38, 0.025],
+    waterCloudiness: 0.24,
+    creamAlbedo: [0.28, 0.54, 0.085],
+    creamSss: [0.46, 0.78, 0.17],
+    creamDeep: [0.12, 0.26, 0.028],
+    stain: [0.34, 0.60, 0.12],
+    dropSigma: [2.55, 0.58, 4.70],
   },
   {
     id: 'watermelon',
@@ -375,6 +394,8 @@ export function resolveOpticalPalette(rawRecipe: PopsicleRecipe): ResolvedOptica
         : FLAVOR_MAP.strawberry;
   const specB: OpticalSpec = recipe.flavors.length > 1 ? FLAVOR_MAP[recipe.flavors[1]] : specA;
   const isDual = recipe.flavors.length > 1 && recipe.flavors[0] !== recipe.flavors[1];
+  const kiwiMaskA = recipe.flavors.length > 0 && recipe.flavors[0] === 'kiwi' ? 1 : 0;
+  const kiwiMaskB = recipe.flavors.length > 1 ? (recipe.flavors[1] === 'kiwi' ? 1 : 0) : kiwiMaskA;
 
   const opacity = isCoconut
     ? 1.0
@@ -425,6 +446,8 @@ export function resolveOpticalPalette(rawRecipe: PopsicleRecipe): ResolvedOptica
     isCoconut,
     opacity,
     isDual,
+    kiwiMaskA,
+    kiwiMaskB,
     sigmaA: specA.sigma,
     coreA: specA.core,
     midA: specA.mid,
