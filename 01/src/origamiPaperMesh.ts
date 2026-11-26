@@ -921,7 +921,7 @@ export function buildOrigamiHouseRig(
   // so ONLY the sliced-off portions of the previous house exist & fall — ZERO outer sheet borders!)
   if (cutoutRoot) {
     const outerPerim = computeNetOuterPerimeter(net);
-    const S = Math.max(360, net.sheetHalfMm + 160);
+    const S = Math.max(520, net.sheetHalfMm + 240);
     const sheetShape = new THREE.Shape();
     sheetShape.moveTo(-S * MM, -S * MM);
     sheetShape.lineTo(S * MM, -S * MM);

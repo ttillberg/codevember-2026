@@ -37,6 +37,7 @@ const dbgModel = document.getElementById('dbg-model') as HTMLSelectElement;
 const dbgColor = document.getElementById('dbg-color') as HTMLInputElement;
 const dbgSpin = document.getElementById('dbg-spin') as HTMLInputElement;
 const dbgShiftView = document.getElementById('dbg-shift-view') as HTMLInputElement;
+const dbgPerspCut = document.getElementById('dbg-persp-cut') as HTMLInputElement;
 const dbgResetFactory = document.getElementById('dbg-reset-factory') as HTMLButtonElement;
 
 // Populate model presets in debug selector
@@ -62,6 +63,7 @@ interface DebugSettings {
   color: boolean;
   spin: boolean;
   shiftView: boolean;
+  perspectiveCut: boolean;
 }
 
 const FACTORY_SETTINGS: DebugSettings = {
@@ -69,6 +71,7 @@ const FACTORY_SETTINGS: DebugSettings = {
   color: true,
   spin: true,
   shiftView: false,
+  perspectiveCut: true,
 };
 
 function loadSavedSettings(): DebugSettings {
@@ -85,6 +88,7 @@ function loadSavedSettings(): DebugSettings {
       if (typeof parsed.color === 'boolean') s.color = parsed.color;
       if (typeof parsed.spin === 'boolean') s.spin = parsed.spin;
       if (typeof parsed.shiftView === 'boolean') s.shiftView = parsed.shiftView;
+      if (typeof parsed.perspectiveCut === 'boolean') s.perspectiveCut = parsed.perspectiveCut;
     }
   } catch {
     // Ignore storage access errors (private mode, restricted iframe, etc.)
@@ -107,12 +111,15 @@ let debugSpinEnabled =
   params.get('spin') !== null ? params.get('spin') !== '0' : initialSettings.spin;
 let debugShiftViewEnabled =
   params.get('shiftView') !== null ? params.get('shiftView') === '1' : initialSettings.shiftView;
+let debugPerspCutEnabled =
+  params.get('perspCut') !== null ? params.get('perspCut') !== '0' : initialSettings.perspectiveCut;
 
 function syncDebugControls(): void {
   dbgModel.value = forcedModelSlot ? String(forcedModelSlot) : 'auto';
   dbgColor.checked = debugColorEnabled;
   dbgSpin.checked = debugSpinEnabled;
   dbgShiftView.checked = debugShiftViewEnabled;
+  dbgPerspCut.checked = debugPerspCutEnabled;
 }
 
 function saveDebugSettings(): void {
@@ -122,6 +129,7 @@ function saveDebugSettings(): void {
       color: debugColorEnabled,
       spin: debugSpinEnabled,
       shiftView: debugShiftViewEnabled,
+      perspectiveCut: debugPerspCutEnabled,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   } catch {
@@ -233,11 +241,42 @@ let finalDist = defaultDist;
 let finalLookY = BASE_LOOK_Y;
 let userZoomDelta = 0;
 
-// Optional per-slide camera shift (composes incrementally with gentle turntable spin & manual drag!)
+// Optional per-slide camera shift & instant perspective jump-cut on projection
 let slideYawDelta = 0;
 let slidePitchDelta = 0;
 let prevSlideEase = 0;
 const AUTO_SPIN_RAD_PER_SEC = 0.11;
+
+function computeHeroElevation(net: BuiltHouseNet): { yawOffsetFromCut: number; targetPitch: number } {
+  const { generation: g, topology, roofType } = net.spec;
+  // Layer 1 folds straight into an iconic architectural Front View; subsequent houses alternate
+  // contrasting low front / oblique / tower hero elevations so every aerial jump-cut feels bold!
+  if (g <= 1) {
+    return { yawOffsetFromCut: 0.12 - curYaw, targetPitch: 0.22 };
+  }
+  const sign = g % 2 === 0 ? -1 : 1;
+  const isTall = topology === 'setback' || topology === 'oct' || roofType === 'spire';
+  const isRoofShowcase = roofType === 'sawtooth' || roofType === 'butterfly' || topology === 'lwing';
+  const targetPitch = isTall
+    ? 0.20 + ((g * 7) % 3) * 0.04
+    : isRoofShowcase
+      ? 0.34 + ((g * 11) % 3) * 0.04
+      : 0.22 + ((g * 13) % 3) * 0.04;
+  const yawOffsetFromCut = sign * (0.58 + ((g * 17) % 4) * 0.12);
+  return { yawOffsetFromCut, targetPitch };
+}
+
+function computeProjectionAerialView(net: BuiltHouseNet): { toYaw: number; toPitch: number; toDist: number } {
+  // Snap directly to a high Above-3/4 aerial vantage (`~48°`) & jump yaw across the diagonal
+  // at the exact moment of projection!
+  const g = net.spec.generation;
+  const yawDir = g % 2 === 1 ? 1 : -1;
+  const toYaw = curYaw + yawDir * (0.76 + ((g * 19) % 3) * 0.10);
+  const toPitch = 0.84;
+  const ideal = computeIdealFraming(net);
+  const toDist = Math.max(curDist, ideal.dist * 1.04);
+  return { toYaw, toPitch, toDist };
+}
 
 function computeSlideViewShift(net: BuiltHouseNet): { yawDelta: number; targetPitch: number } {
   const { generation: g, topology, roofType } = net.spec;
@@ -446,9 +485,15 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
     swapShadowExtent = curShadowExtent;
     finalShadowExtent = ideal.shadowExtent;
 
-    const shift = computeSlideViewShift(net);
-    slideYawDelta = shift.yawDelta;
-    slidePitchDelta = shift.targetPitch - targetPitch;
+    if (debugPerspCutEnabled) {
+      const hero = computeHeroElevation(net);
+      slideYawDelta = hero.yawOffsetFromCut;
+      slidePitchDelta = hero.targetPitch - targetPitch;
+    } else {
+      const shift = computeSlideViewShift(net);
+      slideYawDelta = shift.yawDelta;
+      slidePitchDelta = shift.targetPitch - targetPitch;
+    }
     prevSlideEase = 0;
   } else {
     curPaperRelief = 1;
@@ -468,8 +513,15 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
     curShadowExtent = swapShadowExtent = finalShadowExtent = ideal.shadowExtent;
     applyShadowFrustum(curShadowExtent);
 
-    slideYawDelta = 0;
-    slidePitchDelta = 0;
+    if (debugPerspCutEnabled && gen <= 1) {
+      // On Layer 1 initial fold with Project sweep ON, glide smoothly from 3/4 into crisp Front View!
+      const hero = computeHeroElevation(net);
+      slideYawDelta = hero.yawOffsetFromCut;
+      slidePitchDelta = hero.targetPitch - defaultPitch;
+    } else {
+      slideYawDelta = 0;
+      slidePitchDelta = 0;
+    }
     prevSlideEase = 0;
   }
 }
@@ -568,11 +620,13 @@ function warmupCutoutPipeline(): void {
 
 /**
  * Just-In-Time (JIT) 1:1 camera projection:
- * Captures the EXACT current 3D view from the user's live camera angle into the inactive ping-pong
- * HalfFloat render target and spawns the next DIFFERENT house flat underneath with its exact
- * complementary cutout sheet & punched window chads — ZERO transition!
+ * Captures the EXACT current 3D view (`Camera A`) into the inactive ping-pong HalfFloat render target.
+ * When `jumpToAerial` (`Jump view`) is active, immediately teleports the camera to `Camera B` (high
+ * Above 3/4) and computes `snapVP` from `Camera B` while keeping `Camera A`'s texture — so at `t = 0`
+ * NOTHING changes to the user's eyes (exact Front View pixel-for-pixel!), yet the 3D perspective has
+ * secretly jumped to Above 3/4, causing the "Front View" house to crack open and fold in aerial 3D!
  */
-function projectAndSpawnUnderneath(): void {
+function projectAndSpawnUnderneath(jumpToAerial = false): void {
   const drawSize = new THREE.Vector2();
   renderer.getDrawingBufferSize(drawSize);
   const tw = Math.max(2, Math.round(drawSize.x));
@@ -586,6 +640,7 @@ function projectAndSpawnUnderneath(): void {
     else rtB = targetRT;
   }
 
+  // 1. Capture the EXACT current pixels on screen from Camera A!
   syncCameraFromOrbit();
   camera.updateMatrixWorld(true);
   rig.root.updateMatrixWorld(true);
@@ -600,10 +655,22 @@ function projectAndSpawnUnderneath(): void {
   renderer.setRenderTarget(prevTarget);
   renderer.toneMapping = prevToneMapping;
 
+  // 2. If `Jump view` is ON, secretly move camera to Camera B (Above 3/4) BEFORE building `snapVP`,
+  //    reprojecting Camera A's exact screen image onto the flat net from Camera B's perspective!
+  if (jumpToAerial) {
+    const aerial = computeProjectionAerialView(rig.net);
+    curYaw = targetYaw = aerial.toYaw;
+    curPitch = targetPitch = aerial.toPitch;
+    curDist = targetDist = aerial.toDist;
+    curLookY = targetLookY = BASE_LOOK_Y;
+    syncCameraFromOrbit();
+    camera.updateMatrixWorld(true);
+  }
+
   snapVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   activeRTIndex = nextIdx;
 
-  // INSTANT JIT SWAP: spawn the next DIFFERENT house flat + complementary cutout sheet with 1:1 projection!
+  // 3. INSTANT JIT SWAP: spawn the next DIFFERENT house flat + complementary cutout sheet with 1:1 projection!
   generation += 1;
   justProjected = true;
 
@@ -965,9 +1032,9 @@ function resetAll(): void {
   justProjected = false;
   clearPreparedNext();
   materials.setProjection(null);
+  targetYaw = curYaw = defaultYaw;
+  targetPitch = curPitch = defaultPitch;
   mountHouseGeneration(1, false);
-  targetYaw = defaultYaw;
-  targetPitch = defaultPitch;
   schedulePrepareNext(2, 120);
   syncUI();
 }
@@ -982,16 +1049,19 @@ function resetToFactory(): void {
   debugColorEnabled = FACTORY_SETTINGS.color;
   debugSpinEnabled = FACTORY_SETTINGS.spin;
   debugShiftViewEnabled = FACTORY_SETTINGS.shiftView;
+  debugPerspCutEnabled = FACTORY_SETTINGS.perspectiveCut;
   syncDebugControls();
   resetAll();
   applyActiveOutsideColor();
 }
 
 function triggerStepAction(): void {
-  // If the current 3D house is already folded & settled, run JIT projection from the live camera angle,
-  // cut out & drop the surrounding waste sheet + window chads first, then fold the new house!
+  // If the current 3D house is already folded & settled:
+  // - Captures the exact live pixels from Camera A, and if `Jump view` is ON, secretly reprojects
+  //   that exact image from Camera B (Above 3/4) so nothing changes at t=0 — then drops the cutout
+  //   and folds the new house in the new aerial perspective!
   if (allPanelsSettledFolded()) {
-    projectAndSpawnUnderneath();
+    projectAndSpawnUnderneath(debugPerspCutEnabled);
     triggerCutoutDrop();
     launchStaggeredFold(1, 0.44);
     return;
@@ -1304,6 +1374,10 @@ dbgShiftView.addEventListener('change', () => {
   debugShiftViewEnabled = dbgShiftView.checked;
   saveDebugSettings();
 });
+dbgPerspCut.addEventListener('change', () => {
+  debugPerspCutEnabled = dbgPerspCut.checked;
+  saveDebugSettings();
+});
 dbgResetFactory.addEventListener('click', () => {
   resetToFactory();
 });
@@ -1392,12 +1466,13 @@ syncUI();
     __origami?: {
       progress: (v: number) => void;
       fold: (pid: FoldablePanelId, v: number) => void;
-      projectNow: () => void;
+      projectNow: (jumpToAerial?: boolean) => void;
       dropCutout: (atSec?: number) => void;
       setColor: (enabled: boolean) => void;
       setModel: (slot: number | null) => void;
       setSpin: (enabled: boolean) => void;
       setShiftView: (enabled: boolean) => void;
+      setPerspectiveCut: (enabled: boolean) => void;
       view: (yaw: number, pitch: number, dist: number) => void;
       info: () => {
         generation: number;
@@ -1452,8 +1527,8 @@ syncUI();
       syncUI();
     }
   },
-  projectNow() {
-    projectAndSpawnUnderneath();
+  projectNow(jumpToAerial = false) {
+    projectAndSpawnUnderneath(jumpToAerial);
   },
   dropCutout(atSec?: number) {
     if (atSec !== undefined) {
@@ -1484,6 +1559,11 @@ syncUI();
   },
   setShiftView(enabled: boolean) {
     debugShiftViewEnabled = Boolean(enabled);
+    syncDebugControls();
+    saveDebugSettings();
+  },
+  setPerspectiveCut(enabled: boolean) {
+    debugPerspCutEnabled = Boolean(enabled);
     syncDebugControls();
     saveDebugSettings();
   },
@@ -1573,7 +1653,7 @@ function animate(now: number): void {
     }
   }
 
-  // 3. Gentle continuous turntable rotation + optional per-slide camera shift + smooth zoom-out (locked on JIT swap!)
+  // 3. Gentle continuous turntable spin + smooth per-slide view shift + final-stage zoom-out!
   if (debugSpinEnabled && drag.kind === 'none' && !justProjected && helpModal.hidden) {
     targetYaw += dt * AUTO_SPIN_RAD_PER_SEC;
   }
@@ -1581,7 +1661,7 @@ function animate(now: number): void {
   const sRaw = clamp01((foldProg - 0.12) / 0.80);
   const slideEase = sRaw * sRaw * (3 - 2 * sRaw);
   const dSlide = slideEase - prevSlideEase;
-  if (debugShiftViewEnabled && Math.abs(dSlide) > 1e-6) {
+  if ((debugPerspCutEnabled || debugShiftViewEnabled) && Math.abs(dSlide) > 1e-6) {
     targetYaw += dSlide * slideYawDelta;
     targetPitch = Math.max(0.18, Math.min(1.42, targetPitch + dSlide * slidePitchDelta));
   }
