@@ -220,9 +220,35 @@ interface SoundBanks {
   clinkGlass: AudioBuffer[];
 }
 
+export type MusicSlot = 'bed' | 'pulse' | 'ambient' | 'melody';
+
+interface MusicLayerState {
+  bus: GainNode | null;
+  src: AudioBufferSourceNode | null;
+  srcGain: GainNode | null;
+  url: string | null;
+  desiredUrl: string | null;
+  targetGain: number;
+  fadeSec: number;
+  randomOffset: boolean;
+}
+
 export class Sound {
   private ctx: AudioContext | null = null;
   private out: GainNode | null = null;
+  private musicBus: GainNode | null = null;
+  private musicFilter: BiquadFilterNode | null = null;
+  private musicBuffers = new Map<string, AudioBuffer>();
+  private musicLoading = new Map<string, Promise<AudioBuffer | null>>();
+  private musicLayers: Record<MusicSlot, MusicLayerState> = {
+    bed: { bus: null, src: null, srcGain: null, url: null, desiredUrl: null, targetGain: 1.0, fadeSec: 2.2, randomOffset: false },
+    pulse: { bus: null, src: null, srcGain: null, url: null, desiredUrl: null, targetGain: 0.50, fadeSec: 3.0, randomOffset: false },
+    ambient: { bus: null, src: null, srcGain: null, url: null, desiredUrl: null, targetGain: 0.44, fadeSec: 4.2, randomOffset: true },
+    melody: { bus: null, src: null, srcGain: null, url: null, desiredUrl: null, targetGain: 0.52, fadeSec: 3.6, randomOffset: true },
+  };
+  private musicDucked = false;
+  private tabInactive = false;
+  private suspendTimer: number | null = null;
   private noise: AudioBuffer | null = null;
   private banks: SoundBanks | null = null;
   private activeVoices = 0;
@@ -230,10 +256,18 @@ export class Sound {
   muted = false;
 
   wake() {
+    this.tabInactive = false;
+    if (this.suspendTimer !== null) {
+      window.clearTimeout(this.suspendTimer);
+      this.suspendTimer = null;
+    }
     if (this.ctx) {
       // iOS Safari uses both 'suspended' and 'interrupted' (e.g. after app switch / screen lock)
       if (this.ctx.state !== 'running') {
         this.ctx.resume().catch(() => {});
+      }
+      if (this.out) {
+        this.out.gain.setTargetAtTime(this.muted ? 0 : 0.80, this.ctx.currentTime, 0.03);
       }
       return;
     }
@@ -258,6 +292,53 @@ export class Sound {
     this.out.gain.value = this.muted ? 0 : 0.80;
     this.out.connect(comp).connect(ctx.destination);
 
+    // Dedicated meditative soundscape bus sitting cleanly under the bright crystal SFX
+    this.musicFilter = ctx.createBiquadFilter();
+    this.musicFilter.type = 'lowpass';
+    this.musicFilter.frequency.value = this.musicDucked ? 1400 : 14000;
+    this.musicFilter.Q.value = 0.7;
+
+    this.musicBus = ctx.createGain();
+    this.musicBus.gain.value = this.musicDucked ? 0.24 : 0.34;
+    this.musicFilter.connect(this.musicBus).connect(this.out);
+
+    // Four independent stem channels:
+    //  - bed: exclusive synth foundation (variations replace one another)
+    //  - pulse: Berlin-school analog sequencer momentum layer (gently sculpted 90Hz HPF so sub stays clean)
+    //  - ambient: high-passed floating shimmer/pad texture overlapping on top
+    //  - melody: high-passed sparse melodic motifs & iconic themes crossfading in & out organically
+    const bedBus = ctx.createGain();
+    bedBus.gain.value = 1.0;
+    bedBus.connect(this.musicFilter);
+    this.musicLayers.bed.bus = bedBus;
+
+    const pulseHp = ctx.createBiquadFilter();
+    pulseHp.type = 'highpass';
+    pulseHp.frequency.value = 95;
+    pulseHp.Q.value = 0.65;
+    const pulseBus = ctx.createGain();
+    pulseBus.gain.value = 1.0;
+    pulseBus.connect(pulseHp).connect(this.musicFilter);
+    this.musicLayers.pulse.bus = pulseBus;
+
+    const ambHp = ctx.createBiquadFilter();
+    ambHp.type = 'highpass';
+    ambHp.frequency.value = 180;
+    ambHp.Q.value = 0.65;
+    const ambBus = ctx.createGain();
+    ambBus.gain.value = 1.0;
+    ambBus.connect(ambHp).connect(this.musicFilter);
+    this.musicLayers.ambient.bus = ambBus;
+
+    const melHp = ctx.createBiquadFilter();
+    melHp.type = 'highpass';
+    melHp.frequency.value = 230;
+    melHp.Q.value = 0.65;
+    const melBus = ctx.createGain();
+    melBus.gain.value = 1.0;
+    melBus.connect(melHp).connect(this.musicFilter);
+    this.musicLayers.melody.bus = melBus;
+
     // 1-sample silent kick reliably unlocks iOS hardware audio output inside the first user gesture
     try {
       const unlockBuf = ctx.createBuffer(1, 1, ctx.sampleRate);
@@ -280,18 +361,187 @@ export class Sound {
 
     this.banks = this.bakeBanks(ctx);
 
-    // Auto-resume cleanly if iOS Safari interrupts audio when switching apps / notifications
+    // Kick off any soundscape layers configured before the first user gesture
+    for (const slot of ['bed', 'pulse', 'ambient', 'melody'] as MusicSlot[]) {
+      const layer = this.musicLayers[slot];
+      if (layer.desiredUrl) {
+        void this.playLayerLoop(slot, layer.desiredUrl, layer.fadeSec, layer.targetGain, layer.randomOffset);
+      }
+    }
+
+    // Stop/suspend all audio when the tab or window blurs/hides, and resume smoothly on return!
+    const setTabInactive = (inactive: boolean) => {
+      if (this.tabInactive === inactive) return;
+      this.tabInactive = inactive;
+      if (this.suspendTimer !== null) {
+        window.clearTimeout(this.suspendTimer);
+        this.suspendTimer = null;
+      }
+      if (!this.ctx || !this.out) return;
+      if (inactive) {
+        this.out.gain.cancelScheduledValues(this.ctx.currentTime);
+        this.out.gain.setTargetAtTime(0, this.ctx.currentTime, 0.02);
+        this.suspendTimer = window.setTimeout(() => {
+          this.suspendTimer = null;
+          if (this.tabInactive && this.ctx && this.ctx.state === 'running') {
+            this.ctx.suspend().catch(() => {});
+          }
+        }, 90);
+      } else {
+        if (this.ctx.state !== 'running') {
+          this.ctx.resume().catch(() => {});
+        }
+        this.out.gain.cancelScheduledValues(this.ctx.currentTime);
+        this.out.gain.setTargetAtTime(this.muted ? 0 : 0.80, this.ctx.currentTime, 0.04);
+      }
+    };
+
+    window.addEventListener('blur', () => setTabInactive(true));
+    window.addEventListener('pagehide', () => setTabInactive(true));
+    window.addEventListener('focus', () => {
+      if (!document.hidden) setTabInactive(false);
+    });
+    window.addEventListener('pageshow', () => {
+      if (!document.hidden) setTabInactive(false);
+    });
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && this.ctx && this.ctx.state !== 'running') {
-        this.ctx.resume().catch(() => {});
+      if (document.hidden) {
+        setTabInactive(true);
+      } else if (document.hasFocus()) {
+        setTabInactive(false);
       }
     });
+  }
+
+  /** Pre-fetch and decode an upcoming soundscape loop so level transitions crossfade with zero delay. */
+  preloadMusicTrack(url: string) {
+    if (!this.ctx) return;
+    void this.loadMusicBuffer(url);
+  }
+
+  /** Set (or crossfade/replace) a looping stem on one of the 3 channels ('bed', 'ambient', 'melody'). Pass null to breathe out. */
+  setMusicLayer(slot: MusicSlot, url: string | null, fadeSec = 2.6, gain?: number, randomOffset?: boolean) {
+    const layer = this.musicLayers[slot];
+    layer.desiredUrl = url;
+    layer.fadeSec = fadeSec;
+    if (gain !== undefined) layer.targetGain = gain;
+    if (randomOffset !== undefined) layer.randomOffset = randomOffset;
+    if (!this.ctx || !layer.bus) return;
+
+    if (!url) {
+      this.fadeOutLayer(slot, fadeSec);
+      return;
+    }
+    if (layer.url === url && layer.src) {
+      if (layer.srcGain) {
+        layer.srcGain.gain.setTargetAtTime(layer.targetGain, this.ctx.currentTime, Math.max(0.15, fadeSec * 0.35));
+      }
+      return;
+    }
+    void this.playLayerLoop(slot, url, fadeSec, layer.targetGain, layer.randomOffset);
+  }
+
+  /** Convenience wrapper targeting the exclusive synth 'bed' channel. */
+  setMusicTrack(url: string, fadeSec = 2.4) {
+    this.setMusicLayer('bed', url, fadeSec, 1.0, false);
+  }
+
+  /** Softly warm/muffle the background soundscape when paused or on the Replay attract screen. */
+  setMusicDucked(ducked: boolean) {
+    this.musicDucked = ducked;
+    if (!this.ctx || !this.musicFilter || !this.musicBus) return;
+    const t = this.ctx.currentTime;
+    this.musicFilter.frequency.setTargetAtTime(ducked ? 1400 : 14000, t, 0.35);
+    this.musicBus.gain.setTargetAtTime(ducked ? 0.24 : 0.34, t, 0.35);
+  }
+
+  private fadeOutLayer(slot: MusicSlot, fadeSec: number) {
+    const layer = this.musicLayers[slot];
+    const prevSrc = layer.src;
+    const prevGain = layer.srcGain;
+    layer.src = null;
+    layer.srcGain = null;
+    layer.url = null;
+    if (!prevSrc || !prevGain || !this.ctx) return;
+    const t = this.ctx.currentTime + 0.02;
+    prevGain.gain.cancelScheduledValues(t);
+    prevGain.gain.setValueAtTime(Math.max(0.0001, prevGain.gain.value), t);
+    prevGain.gain.linearRampToValueAtTime(0.0001, t + fadeSec);
+    try {
+      prevSrc.stop(t + fadeSec + 0.05);
+    } catch {
+      // ignore if already stopped
+    }
+  }
+
+  private async loadMusicBuffer(url: string): Promise<AudioBuffer | null> {
+    if (!this.ctx) return null;
+    const cached = this.musicBuffers.get(url);
+    if (cached) return cached;
+    const inflight = this.musicLoading.get(url);
+    if (inflight) return inflight;
+
+    const p = fetch(url)
+      .then((res) => (res.ok ? res.arrayBuffer() : null))
+      .then((ab) => (ab && this.ctx ? this.ctx.decodeAudioData(ab) : null))
+      .then((buf) => {
+        if (buf) this.musicBuffers.set(url, buf);
+        this.musicLoading.delete(url);
+        return buf;
+      })
+      .catch(() => {
+        this.musicLoading.delete(url);
+        return null;
+      });
+    this.musicLoading.set(url, p);
+    return p;
+  }
+
+  private async playLayerLoop(
+    slot: MusicSlot,
+    url: string,
+    fadeSec: number,
+    targetGain: number,
+    randomOffset: boolean,
+  ) {
+    const buf = await this.loadMusicBuffer(url);
+    const layer = this.musicLayers[slot];
+    if (!buf || !this.ctx || !layer.bus) return;
+    if (layer.desiredUrl !== url) return;
+    if (layer.url === url && layer.src) return;
+
+    const ctx = this.ctx;
+    const t = ctx.currentTime + 0.02;
+
+    // Crossfade out the previous stem on this channel cleanly
+    this.fadeOutLayer(slot, fadeSec);
+
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    // Trim ~40ms MP3 encoder padding at both ends so the tail-wrapped seam is 100% gapless
+    src.loopStart = Math.min(0.04, buf.duration * 0.1);
+    src.loopEnd = Math.max(src.loopStart + 0.5, buf.duration - 0.05);
+
+    const span = Math.max(0.1, src.loopEnd - src.loopStart);
+    const startOffset = randomOffset ? src.loopStart + Math.random() * span : src.loopStart;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(Math.max(0.001, targetGain), t + fadeSec);
+
+    src.connect(g).connect(layer.bus);
+    src.start(t, startOffset);
+
+    layer.src = src;
+    layer.srcGain = g;
+    layer.url = url;
   }
 
   setMuted(m: boolean) {
     this.muted = m;
     if (this.out && this.ctx) {
-      this.out.gain.setTargetAtTime(m ? 0 : 0.80, this.ctx.currentTime, 0.02);
+      this.out.gain.setTargetAtTime(m || this.tabInactive ? 0 : 0.80, this.ctx.currentTime, 0.02);
     }
   }
 
@@ -470,7 +720,7 @@ export class Sound {
     panDur = 0.14,
     priority = true,
   ) {
-    if (!this.ctx || !this.out) return;
+    if (!this.ctx || !this.out || this.tabInactive) return;
     if (!priority && this.activeVoices >= this.maxVoices) return;
     if (this.ctx.state !== 'running') {
       this.ctx.resume().catch(() => {});
@@ -505,7 +755,7 @@ export class Sound {
   }
 
   private ping(at: number, freq: number, dur: number, gain: number, pan = 0) {
-    if (!this.ctx || !this.out) return;
+    if (!this.ctx || !this.out || this.tabInactive) return;
     const ctx = this.ctx;
     const o = ctx.createOscillator();
     o.type = 'sine';
@@ -523,7 +773,7 @@ export class Sound {
 
   /** Original native WebAudio directional katana swoosh — smooth per-sample Biquad sweep, pans LTR/RTL! */
   swoosh(panFrom: number, panTo: number, intensity = 0.65) {
-    if (!this.ctx || !this.out || !this.noise) return;
+    if (!this.ctx || !this.out || !this.noise || this.tabInactive) return;
     if (this.ctx.state !== 'running') {
       this.ctx.resume().catch(() => {});
     }
@@ -628,14 +878,21 @@ export class Sound {
     this.playBuf(this.banks.failFreeze, 1.0, 1.0, undefined, undefined, 0, true);
   }
 
-  /** Crisp luminous 3-note crystal triad on Level Clear! */
-  levelClear() {
+  /** Crisp luminous crystal triad on Level Clear (with an extra warm harmonic halo on every 5-level milestone!). */
+  levelClear(isMilestone = false) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime + 0.004;
     this.ping(t, 1046.5, 0.30, 0.08, -0.2);
     this.ping(t + 0.075, 1318.5, 0.32, 0.085, 0.0);
     this.ping(t + 0.15, 1568.0, 0.42, 0.10, 0.2);
     this.ping(t + 0.22, 2093.0, 0.48, 0.09, 0.0);
+    if (isMilestone) {
+      // Warm nostalgic Cmaj9 fifth + octave shimmer anchoring every 5-level chapter shift in memory
+      this.ping(t + 0.04, 523.25, 1.35, 0.075, -0.35);
+      this.ping(t + 0.12, 783.99, 1.45, 0.065, 0.35);
+      this.ping(t + 0.28, 2349.3, 0.95, 0.060, -0.18);
+      this.ping(t + 0.34, 2637.0, 1.15, 0.055, 0.18);
+    }
   }
 
   /** Step 1: The cutting plane cleaves the glass block & optionally creeps cracks through the severed piece. */

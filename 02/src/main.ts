@@ -208,7 +208,263 @@ const soundBtn = document.getElementById('sound') as HTMLButtonElement;
 const pauseBtn = document.getElementById('pause') as HTMLButtonElement;
 const fatalEl = document.getElementById('fatal') as HTMLDivElement;
 
+const TRACK_OVERRIDE = qs.get('track');
+const AUDIO_BASE = `${import.meta.env.BASE_URL}audio/`;
+const MUSIC_INTRO_BED = `${AUDIO_BASE}synth-intro.mp3`; // Intro / Replay: pure synthetic FM shimmer & Buchla droplets (no piano)
+const MUSIC_PLAY_BEDS = [
+  `${AUDIO_BASE}synth-play.mp3`, // Levels 1–9: lively fluid 108 BPM DX7/Juno/Prophet crystalline synth flow (no piano)
+  `${AUDIO_BASE}bed-03.mp3`,     // Level 10+ exclusive bed swap: lush expansive CS-80/Juno vintage synth chords
+] as const;
+const MUSIC_SWELL_LAYERS = [
+  `${AUDIO_BASE}synth-arp.mp3`,  // Level 15+ milestone: buoyant 110 BPM liquid Buchla/modular synth cascades
+] as const;
+const MUSIC_AMBIENT_LAYERS = [
+  `${AUDIO_BASE}glass-amb.mp3`,  // Level 5+ milestone: bowed crystal glass harp shimmer
+] as const;
+const MUSIC_MELODY_LAYERS = [
+  `${AUDIO_BASE}mel-01.mp3`,     // Level 5+: sparse crystalline vintage synth bell tones
+  `${AUDIO_BASE}lead-01.mp3`,    // Level 20+ milestone: iconic soaring vintage analog synth lead
+] as const;
+
+interface MusicChapter {
+  bed: string;
+  swell: string | null;
+  swellGain: number;
+  ambient: string | null;
+  ambientGain: number;
+  melodyPool: readonly string[];
+  /** Signature melody introduced right when entering this 5-level milestone (triggers instant recognition!) */
+  entryMelody: string | null;
+  melodyGain: number;
+  melodyChance: number;
+}
+
+/**
+ * Expanding milestone arc spanning Levels 1..100+ (then every +25 beyond 100):
+ *  - Intro / Replay: synth-intro (pure FM shimmer & Juno pads)
+ *  - Lv 1–7:    synth-play + soft Buchla cascades (synth-arp)
+ *  - Lv 8–15:   + bowed glass shimmer (glass-amb) & sparse crystal synth bells (mel-01)
+ *  - Lv 16–30:  Bed swaps exclusively to lush CS-80/Juno chords (bed-03) + cascades + glass shimmer
+ *  - Lv 31–50:  + iconic soaring nostalgic vintage synth lead (lead-01) over synth-play + bright cascades
+ *  - Lv 51–75:  Cathedral bed-03 + bright Buchla cascades + soaring lead + crystal shimmer
+ *  - Lv 76–100: High-altitude radiant FM ascent (synth-intro bed + peak cascades + lead + shimmer)
+ *  - Lv 101+:   Rotates cleanly every 25 levels across all peak vintage synth chapters!
+ */
+const MUSIC_MILESTONE_STARTS = [1, 8, 16, 31, 51, 76, 101] as const;
+
+function getMusicMilestoneIndex(lv: number): number {
+  const n = Math.max(1, Math.floor(lv));
+  if (n >= 101) return 6 + Math.floor((n - 101) / 25);
+  for (let i = MUSIC_MILESTONE_STARTS.length - 1; i >= 0; i--) {
+    if (n >= MUSIC_MILESTONE_STARTS[i]) return i;
+  }
+  return 0;
+}
+
+function isMusicMilestoneLevel(lv: number): boolean {
+  if (lv <= 1) return false;
+  if (lv > 101) return (lv - 101) % 25 === 0;
+  return (MUSIC_MILESTONE_STARTS as readonly number[]).includes(lv);
+}
+
+function getMusicChapterForLevel(lv: number): MusicChapter {
+  const milestone = getMusicMilestoneIndex(lv);
+  const bedOverride =
+    TRACK_OVERRIDE === '1'
+      ? MUSIC_INTRO_BED
+      : TRACK_OVERRIDE === '2'
+        ? MUSIC_PLAY_BEDS[0]
+        : TRACK_OVERRIDE === '3'
+          ? MUSIC_PLAY_BEDS[1]
+          : null;
+
+  if (milestone === 0) {
+    // Lv 1–7: warm pure-synth bed + gentle buoyant Buchla modular sparkle
+    return {
+      bed: bedOverride ?? MUSIC_PLAY_BEDS[0],
+      swell: MUSIC_SWELL_LAYERS[0],
+      swellGain: 0.28,
+      ambient: null,
+      ambientGain: 0,
+      melodyPool: [],
+      entryMelody: null,
+      melodyGain: 0,
+      melodyChance: 0,
+    };
+  }
+  if (milestone === 1) {
+    // Lv 8–15: fuller Buchla cascades + bowed glass shimmer & sparse crystalline synth bells
+    return {
+      bed: bedOverride ?? MUSIC_PLAY_BEDS[0],
+      swell: MUSIC_SWELL_LAYERS[0],
+      swellGain: 0.44,
+      ambient: MUSIC_AMBIENT_LAYERS[0],
+      ambientGain: 0.44,
+      melodyPool: [MUSIC_MELODY_LAYERS[0]],
+      entryMelody: MUSIC_MELODY_LAYERS[0],
+      melodyGain: 0.46,
+      melodyChance: 0.65,
+    };
+  }
+  if (milestone === 2) {
+    // Lv 16–30: exclusive bed swap to lush CS-80/Juno chords + sparkling Buchla runs & crystal shimmer
+    return {
+      bed: bedOverride ?? MUSIC_PLAY_BEDS[1],
+      swell: MUSIC_SWELL_LAYERS[0],
+      swellGain: 0.50,
+      ambient: MUSIC_AMBIENT_LAYERS[0],
+      ambientGain: 0.42,
+      melodyPool: [MUSIC_MELODY_LAYERS[0]],
+      entryMelody: MUSIC_MELODY_LAYERS[0],
+      melodyGain: 0.48,
+      melodyChance: 0.70,
+    };
+  }
+  if (milestone === 3) {
+    // Lv 31–50: iconic soaring nostalgic vintage synth lead enters over buoyant modular cascades!
+    return {
+      bed: bedOverride ?? MUSIC_PLAY_BEDS[0],
+      swell: MUSIC_SWELL_LAYERS[0],
+      swellGain: 0.54,
+      ambient: MUSIC_AMBIENT_LAYERS[0],
+      ambientGain: 0.40,
+      melodyPool: MUSIC_MELODY_LAYERS,
+      entryMelody: MUSIC_MELODY_LAYERS[1],
+      melodyGain: 0.54,
+      melodyChance: 0.74,
+    };
+  }
+  if (milestone === 4) {
+    // Lv 51–75: cathedral CS-80 chords + bright Buchla cascades + soaring lead + shimmer
+    return {
+      bed: bedOverride ?? MUSIC_PLAY_BEDS[1],
+      swell: MUSIC_SWELL_LAYERS[0],
+      swellGain: 0.58,
+      ambient: MUSIC_AMBIENT_LAYERS[0],
+      ambientGain: 0.44,
+      melodyPool: MUSIC_MELODY_LAYERS,
+      entryMelody: MUSIC_MELODY_LAYERS[1],
+      melodyGain: 0.56,
+      melodyChance: 0.78,
+    };
+  }
+  if (milestone === 5) {
+    // Lv 76–100: high-altitude radiant FM shimmer bed + peak Buchla cascades + soaring lead
+    return {
+      bed: bedOverride ?? MUSIC_INTRO_BED,
+      swell: MUSIC_SWELL_LAYERS[0],
+      swellGain: 0.62,
+      ambient: MUSIC_AMBIENT_LAYERS[0],
+      ambientGain: 0.46,
+      melodyPool: MUSIC_MELODY_LAYERS,
+      entryMelody: MUSIC_MELODY_LAYERS[1],
+      melodyGain: 0.58,
+      melodyChance: 0.82,
+    };
+  }
+  // Lv 101+ (rotates cleanly every 25 levels across all peak vintage synth beds)
+  const highCycle = [MUSIC_PLAY_BEDS[1], MUSIC_PLAY_BEDS[0], MUSIC_INTRO_BED] as const;
+  const cycleBed = highCycle[(milestone - 6) % highCycle.length];
+  return {
+    bed: bedOverride ?? cycleBed,
+    swell: MUSIC_SWELL_LAYERS[0],
+    swellGain: 0.62,
+    ambient: MUSIC_AMBIENT_LAYERS[0],
+    ambientGain: 0.44,
+    melodyPool: MUSIC_MELODY_LAYERS,
+    entryMelody: MUSIC_MELODY_LAYERS[1],
+    melodyGain: 0.58,
+    melodyChance: 0.82,
+  };
+}
+
 const sound = new Sound();
+let musicPreloaded = false;
+let lastMusicMilestone = -1;
+let ambientTimer = 18.0;
+let melodyTimer = 16.0;
+let lastMelodyUrl: string | null = null;
+
+function ensureMusicStemsPreloaded() {
+  if (musicPreloaded) return;
+  musicPreloaded = true;
+  for (const url of [
+    MUSIC_INTRO_BED,
+    ...MUSIC_PLAY_BEDS,
+    ...MUSIC_SWELL_LAYERS,
+    ...MUSIC_AMBIENT_LAYERS,
+    ...MUSIC_MELODY_LAYERS,
+  ]) {
+    sound.preloadMusicTrack(url);
+  }
+}
+
+function syncIntroMusic(fadeSec = 2.4) {
+  lastMusicMilestone = -1;
+  sound.setMusicLayer('bed', TRACK_OVERRIDE === '2' ? MUSIC_PLAY_BEDS[0] : MUSIC_INTRO_BED, fadeSec, 1.0, false);
+  sound.setMusicLayer('pulse', null, 2.4);
+  sound.setMusicLayer('ambient', MUSIC_AMBIENT_LAYERS[0], 4.8, 0.24, true);
+  sound.setMusicLayer('melody', null, 3.0);
+}
+
+function syncLevelMusic(lv: number, fadeSec = 3.2) {
+  ensureMusicStemsPreloaded();
+  const milestone = getMusicMilestoneIndex(lv);
+  const ch = getMusicChapterForLevel(lv);
+  const enteringNewChapter = milestone !== lastMusicMilestone;
+  lastMusicMilestone = milestone;
+
+  // Exclusive synth bed & milestone tape-strings swell layer
+  sound.setMusicLayer('bed', ch.bed, fadeSec, 1.0, false);
+  sound.setMusicLayer('pulse', ch.swell, ch.swell ? 4.2 : 3.0, ch.swellGain, true);
+
+  if (enteringNewChapter) {
+    // Smooth, recognizable chapter bloom right when crossing a 5-level milestone!
+    sound.setMusicLayer('ambient', ch.ambient, ch.ambient ? 4.2 : 3.0, ch.ambientGain, true);
+    if (ch.entryMelody) {
+      lastMelodyUrl = ch.entryMelody;
+      sound.setMusicLayer('melody', ch.entryMelody, 3.8, ch.melodyGain, false);
+    } else {
+      lastMelodyUrl = null;
+      sound.setMusicLayer('melody', null, 3.0);
+    }
+    ambientTimer = 18 + Math.random() * 11;
+    melodyTimer = 17 + Math.random() * 11;
+  }
+}
+
+/** Gentle organic breathing within the active 5-level chapter so overlays crossfade naturally without breaking chapter identity! */
+function stepMusicDirector(dt: number) {
+  if (paused || (gamePhase !== 'playing' && gamePhase !== 'cleared')) return;
+  const ch = getMusicChapterForLevel(currentLevel);
+
+  if (ch.ambient) {
+    ambientTimer -= dt;
+    if (ambientTimer <= 0) {
+      ambientTimer = 16 + Math.random() * 12;
+      if (Math.random() < 0.78) {
+        sound.setMusicLayer('ambient', ch.ambient, 4.8, ch.ambientGain * (0.82 + Math.random() * 0.30), true);
+      } else {
+        sound.setMusicLayer('ambient', null, 5.2);
+      }
+    }
+  }
+
+  if (ch.melodyPool.length > 0) {
+    melodyTimer -= dt;
+    if (melodyTimer <= 0) {
+      melodyTimer = 14 + Math.random() * 11;
+      if (Math.random() < ch.melodyChance) {
+        const pool = ch.melodyPool.length > 1 ? ch.melodyPool.filter((u) => u !== lastMelodyUrl) : ch.melodyPool;
+        const pick = pool[Math.floor(Math.random() * pool.length)];
+        lastMelodyUrl = pick;
+        sound.setMusicLayer('melody', pick, 3.8, ch.melodyGain * (0.88 + Math.random() * 0.22), true);
+      } else {
+        sound.setMusicLayer('melody', null, 4.4);
+      }
+    }
+  }
+}
 const gpu = new GpuEngine(canvas, { maxSplinters: SPLINTER_CAP, causticRes: CAUSTIC_RES });
 const worker = new SimWorker();
 
@@ -1278,6 +1534,7 @@ function triggerGameFail(reason: string) {
   failFlash = 1.0;
   sound.wake();
   sound.failFreeze();
+  sound.setMusicDucked(true);
   hideBanner();
   updateActionUI();
 }
@@ -1330,6 +1587,8 @@ function explodeEverythingNow() {
   replayDelayTimer = 0;
   attractGems.length = 0;
   attractSpawnTimer = 0.85; // brief beat after explosion, then meditative slowly falling gems begin!
+  syncIntroMusic(3.0);
+  sound.setMusicDucked(true);
   showReplayBanner();
 
   updateActionUI();
@@ -1373,6 +1632,8 @@ function startLevel(lv: number, resetScore = false) {
   strokeLastHitAt = -99999;
 
   hideBanner();
+  sound.setMusicDucked(false);
+  syncLevelMusic(currentLevel, 2.6);
   updateActionUI();
 }
 
@@ -2229,6 +2490,7 @@ function replayFromStart() {
 
 function setPaused(on: boolean) {
   paused = on;
+  sound.setMusicDucked(paused || gamePhase === 'lost');
   pauseBtn.classList.toggle('paused', paused);
   pauseBtn.setAttribute('aria-pressed', String(paused));
   pauseBtn.title = paused ? 'Resume (P)' : 'Pause (P)';
@@ -2787,6 +3049,7 @@ async function boot() {
       blockParts = [];
       gpu.setMainBlocks([]);
       setupReadyBackdrop();
+      syncIntroMusic(2.0);
       showPlayBanner();
     }
     updateLivePreview();
@@ -2912,6 +3175,7 @@ async function boot() {
 
     // 1. 1,000-Level Diamond Cutter Game vs. Stationary studio pedestal
     if (tossMode && !carvePlan) {
+      stepMusicDirector(rawDt);
       if (paused) {
         // Simulation frozen cleanly while paused
       } else if (gamePhase === 'ready' && backdropGems.length > 0) {
@@ -3114,7 +3378,8 @@ async function boot() {
             hudLevelEl.classList.remove('level-bump');
             void hudLevelEl.offsetWidth;
             hudLevelEl.classList.add('level-bump');
-            sound.levelClear();
+            sound.levelClear(isMusicMilestoneLevel(currentLevel));
+            syncLevelMusic(currentLevel, 2.8);
           }
         } else if (clearStage === 'levelup') {
           if (clearStageElapsed >= 0.42) {
