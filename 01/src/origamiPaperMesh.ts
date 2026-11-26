@@ -168,7 +168,7 @@ function attachProjectiveShader(
   const clip = Boolean(opts.clipToSilhouette);
   const face = opts.face ?? 1;
   const sideExpr = face === 0 ? '1.0' : face > 0 ? 'step(0.0, uProjSide)' : 'step(0.0, -uProjSide)';
-  mat.customProgramCacheKey = () => `origami-cam-proj-v10-${clip ? 'clip' : 'full'}-f${face}`;
+  mat.customProgramCacheKey = () => `origami-cam-proj-v12-${clip ? 'clip' : 'full'}-f${face}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHasProj = uniforms.uHasProj;
     shader.uniforms.uProjTex = uniforms.uProjTex;
@@ -221,6 +221,8 @@ varying vec3 vLiveWorldPos;`,
         `#include <map_fragment>
 float projSideMatch = ${sideExpr};
 float projIsBlank = 0.0;
+float projHasCaptured = 0.0;
+vec3 projCapturedLinear = vec3(0.0);
 if (uHasProj > 0.5) {
   vec4 pClip = uProjMatrix * vec4(vProjWorldPos, 1.0);
   if (pClip.w > 0.0001) {
@@ -233,6 +235,8 @@ if (uHasProj > 0.5) {
       vec3 groundRef = max(vec3(0.05), max(max(c0, c1), max(c2, c3)));
       vec3 captured = texture2D(uProjTex, pUv).rgb;${clipBlock}
       if (projSideMatch > 0.5) {
+        projCapturedLinear = captured;
+        projHasCaptured = 1.0;
         vec3 projAlbedo = clamp((captured / groundRef) * uProjGain, vec3(0.0), vec3(1.65));
         float fx = smoothstep(0.002, 0.035, pUv.x) * smoothstep(0.002, 0.035, 1.0 - pUv.x);
         float fy = smoothstep(0.002, 0.035, pUv.y) * smoothstep(0.002, 0.035, 1.0 - pUv.y);
@@ -241,20 +245,37 @@ if (uHasProj > 0.5) {
     }${clipOutside}
   }${clipOutside}
 }${clip ? ' else { discard; }' : ''}`,
-      );
-
-    if (!clip) {
-      shader.fragmentShader = shader.fragmentShader.replace(
+      )
+      .replace(
+        '#include <opaque_fragment>',
+        `#include <opaque_fragment>
+// Exact pre-tonemap linear pixel lock while resting flat on the sheet -> 0/255 color shift on fold swap!
+// Smoothly eases into live 3D PBR lighting & shadows as each wall lifts or cutout falls.
+float projSheetLift = max(0.0, abs(vLiveWorldPos.y - 0.028) - 0.042);
+float projFlatLock = 0.0;
+if (uHasProj > 0.5 && projSideMatch > 0.5 && projHasCaptured > 0.5) {
+  projFlatLock = (1.0 - smoothstep(0.015, 0.48, projSheetLift)) * uProjFade;
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, projCapturedLinear, projFlatLock);
+}`,
+      )
+      .replace(
         '#include <fog_fragment>',
-        `#include <fog_fragment>
+        `vec3 projPreFogRgb = gl_FragColor.rgb;
+#include <fog_fragment>
+if (projFlatLock > 0.001) {
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, projPreFogRgb, projFlatLock);
+}${
+          !clip
+            ? `
 if (uHasProj > 0.5 && projSideMatch > 0.5 && projIsBlank > 0.001 && uPaperReveal < 0.999) {
   vec3 studioBg = vec3(0.960784, 0.956863, 0.941176);
-  float liftReveal = smoothstep(0.14, 1.25, abs(vLiveWorldPos.y));
+  float liftReveal = smoothstep(0.06, 0.85, projSheetLift);
   float localReveal = clamp(max(uPaperReveal, liftReveal), 0.0, 1.0);
   gl_FragColor.rgb = mix(gl_FragColor.rgb, studioBg, projIsBlank * (1.0 - localReveal));
-}`,
+}`
+            : ''
+        }`,
       );
-    }
   };
 }
 
@@ -435,9 +456,10 @@ if (vPaperFaceY > 0.5) {
     opacity: 0.45,
   });
 
-  const fadeGroup = [cutoutInside, cutoutOutside, cutoutEdge, chadInside, chadOutside, chadEdge];
-  // Keep `transparent = true` permanently on cutout & chad materials so Three.js compiles ONE
-  // shader variant upfront (never toggling `#define OPAQUE` or setting `needsUpdate = true` mid-fall!).
+  const fadeGroup = [cutoutInside, cutoutOutside, cutoutEdge];
+  const allCutoutMats = [cutoutInside, cutoutOutside, cutoutEdge, chadInside, chadOutside, chadEdge];
+  // Keep `transparent = true` permanently on outer cutout materials so Three.js compiles ONE
+  // shader variant upfront; window chads stay opaque while seated on still-flat walls and fall per-wall!
   for (const m of fadeGroup) {
     m.transparent = true;
     m.depthWrite = true;
@@ -516,7 +538,7 @@ if (vPaperFaceY > 0.5) {
         for (const m of duplexSlots) m.dispose();
       }
       edge.dispose();
-      for (const m of fadeGroup) m.dispose();
+      for (const m of allCutoutMats) m.dispose();
       foldLine.dispose();
       foldLineMountain.dispose();
       foldLineActive.dispose();
@@ -1276,7 +1298,7 @@ export interface OrigamiHouseRig {
   hasCutout: boolean;
   updatePanelVisual(id: FoldablePanelId, fold01: number, peekRad: number, hovered: boolean): void;
   setWindowOpen(mode: WindowOpenMode, ratio?: number): void;
-  updateCutoutDrop(elapsedSec: number): boolean;
+  updateCutoutDrop(outerElapsedSec: number, dtSec?: number): boolean;
   setFoldLinesVisible(visible: boolean): void;
   setPaperRelief(relief01: number, forceFlatShadow?: boolean): void;
   dispose(): void;
@@ -1310,18 +1332,30 @@ export function buildOrigamiHouseRig(
   const details: KirigamiDetailRig[] = [];
 
   // Optional physical cutout group: complementary outer paper sheet + punched window/door/skylight chads!
-  // Sits 100% flush with the house net on the JIT swap frame, then breaks free and falls into the void just before folding!
+  // Each window chad mounts INSIDE its host wall panel so it lifts seamlessly WITH the wall through
+  // initial ease-in, then detaches in world space and tumbles cleanly out of the moving wall!
   interface FallingChad {
     mesh: THREE.Mesh;
-    baseX: number;
-    baseZ: number;
-    delay: number;
+    hostGroup: THREE.Group;
+    hostPanelId: PanelId;
+    localX: number;
+    localZ: number;
+    releaseThreshold: number;
+    detached: boolean;
+    dropElapsed: number;
     grav: number;
     driftX: number;
     driftZ: number;
+    outDirX: number;
+    outDirZ: number;
     spinX: number;
+    spinY: number;
     spinZ: number;
+    detachPos: THREE.Vector3;
+    detachQuat: THREE.Quaternion;
   }
+  const tmpSpinEuler = new THREE.Euler();
+  const tmpSpinQuat = new THREE.Quaternion();
   let cutoutRoot: THREE.Group | null = null;
   let outerCutoutMesh: THREE.Mesh | null = null;
   const fallingChads: FallingChad[] = [];
@@ -1406,57 +1440,6 @@ export function buildOrigamiHouseRig(
     const flatOriginX = def.hingeOrigin[0] * MM;
     const flatOriginZ = -def.hingeOrigin[1] * MM;
 
-    // Collect every genuinely punched window/door/oculus/skylight opening (skipping hinged flaps!) as a real falling chad!
-    if (cutoutRoot && shape.holes.length > 0) {
-      for (let hi = 0; hi < shape.holes.length; hi++) {
-        if (punched.hingedHoleIndices.has(hi)) continue;
-        const holePath = shape.holes[hi];
-        const pts = holePath.getPoints(10);
-        if (pts.length < 3) continue;
-        let cx = 0;
-        let cy = 0;
-        for (const pt of pts) {
-          cx += pt.x;
-          cy += pt.y;
-        }
-        cx /= pts.length;
-        cy /= pts.length;
-
-        const chadShape = new THREE.Shape();
-        pts.forEach((pt, idx) => {
-          const x = pt.x - cx;
-          const y = pt.y - cy;
-          if (idx === 0) chadShape.moveTo(x, y);
-          else chadShape.lineTo(x, y);
-        });
-        chadShape.closePath();
-
-        const chadFlatX = flatOriginX + cx;
-        const chadFlatZ = flatOriginZ - cy;
-        const chadGeo = buildDualSidedPaperGeometry(chadShape, chadFlatX, chadFlatZ, spec.yawOffset);
-        const chadMesh = new THREE.Mesh(chadGeo, chadMats);
-        chadMesh.position.set(chadFlatX, 0, chadFlatZ);
-        chadMesh.castShadow = false;
-        chadMesh.receiveShadow = false;
-        cutoutRoot.add(chadMesh);
-
-        const idx = fallingChads.length;
-        const hash = Math.sin((idx + 1) * 127.1 + spec.generation * 31.7);
-        const hash2 = Math.cos((idx + 1) * 269.5 + spec.generation * 17.3);
-        fallingChads.push({
-          mesh: chadMesh,
-          baseX: chadFlatX,
-          baseZ: chadFlatZ,
-          delay: 0.02 + (idx % 7) * 0.018,
-          grav: 34 + (idx % 5) * 3.5,
-          driftX: hash * 1.1,
-          driftZ: hash2 * 1.1,
-          spinX: hash * 2.6,
-          spinZ: hash2 * 2.4,
-        });
-      }
-    }
-
     const geo = buildDualSidedPaperGeometry(
       shape,
       flatOriginX,
@@ -1473,6 +1456,7 @@ export function buildOrigamiHouseRig(
     mesh.userData = { kind: 'panel', id: def.id };
     allMeshes.push(mesh);
 
+    let hostGroup: THREE.Group;
     if (def.parent === null) {
       const baseGroup = new THREE.Group();
       baseGroup.position.set(flatOriginX, 0, flatOriginZ);
@@ -1480,49 +1464,116 @@ export function buildOrigamiHouseRig(
       root.add(baseGroup);
       groupByPanel.set(def.id, baseGroup);
       if (!baseMesh || def.id === 'base') baseMesh = mesh;
-      continue;
-    }
+      hostGroup = baseGroup;
+    } else {
+      const parentDef = net.panelMap.get(def.parent!)!;
+      const parentGroup = groupByPanel.get(def.parent!)!;
 
-    const parentDef = net.panelMap.get(def.parent!)!;
-    const parentGroup = groupByPanel.get(def.parent!)!;
+      const pivot = new THREE.Group();
+      pivot.position.set(
+        (def.hingeOrigin[0] - parentDef.hingeOrigin[0]) * MM,
+        0,
+        -(def.hingeOrigin[1] - parentDef.hingeOrigin[1]) * MM,
+      );
+      parentGroup.add(pivot);
+      pivot.add(mesh);
 
-    const pivot = new THREE.Group();
-    pivot.position.set(
-      (def.hingeOrigin[0] - parentDef.hingeOrigin[0]) * MM,
-      0,
-      -(def.hingeOrigin[1] - parentDef.hingeOrigin[1]) * MM,
-    );
-    parentGroup.add(pivot);
-    pivot.add(mesh);
-
-    const isMountain = Boolean(def.isMountain);
-    let foldLine: THREE.Line | undefined;
-    if (!isCityDetail) {
-      if (def.crease) {
-        const [ca, cb] = def.crease;
-        foldLine = makeFoldLine(
-          [(ca[0] - def.hingeOrigin[0]) * MM, 0.004, -(ca[1] - def.hingeOrigin[1]) * MM],
-          [(cb[0] - def.hingeOrigin[0]) * MM, 0.004, -(cb[1] - def.hingeOrigin[1]) * MM],
-          isMountain,
-        );
-      } else {
-        foldLine = makeFoldLine([0, 0.004, 0], [0, 0.004, 0], isMountain);
+      const isMountain = Boolean(def.isMountain);
+      let foldLine: THREE.Line | undefined;
+      if (!isCityDetail) {
+        if (def.crease) {
+          const [ca, cb] = def.crease;
+          foldLine = makeFoldLine(
+            [(ca[0] - def.hingeOrigin[0]) * MM, 0.004, -(ca[1] - def.hingeOrigin[1]) * MM],
+            [(cb[0] - def.hingeOrigin[0]) * MM, 0.004, -(cb[1] - def.hingeOrigin[1]) * MM],
+            isMountain,
+          );
+        } else {
+          foldLine = makeFoldLine([0, 0.004, 0], [0, 0.004, 0], isMountain);
+        }
+        pivot.add(foldLine);
       }
-      pivot.add(foldLine);
+
+      groupByPanel.set(def.id, pivot);
+      const hingeAxis3D = new THREE.Vector3(def.hingeAxis[0], 0, -def.hingeAxis[1]).normalize();
+      panels.set(def.id, {
+        id: def.id,
+        stage: def.stage,
+        isMountain,
+        pivot,
+        mesh,
+        foldLine,
+        hingeAxis3D,
+        targetAngle: def.targetAngle,
+      });
+      hostGroup = pivot;
     }
 
-    groupByPanel.set(def.id, pivot);
-    const hingeAxis3D = new THREE.Vector3(def.hingeAxis[0], 0, -def.hingeAxis[1]).normalize();
-    panels.set(def.id, {
-      id: def.id,
-      stage: def.stage,
-      isMountain,
-      pivot,
-      mesh,
-      foldLine,
-      hingeAxis3D,
-      targetAngle: def.targetAngle,
-    });
+    // Seal EVERY punched & hinged window/door/oculus/skylight opening seamlessly INSIDE its host panel!
+    // Each chad rides seamlessly WITH its wall through the initial lift, then pops loose and tumbles out!
+    if (cutoutRoot && shape.holes.length > 0) {
+      for (let hi = 0; hi < shape.holes.length; hi++) {
+        const holePath = shape.holes[hi];
+        const pts = holePath.getPoints(10);
+        if (pts.length < 3) continue;
+        let cx = 0;
+        let cy = 0;
+        for (const pt of pts) {
+          cx += pt.x;
+          cy += pt.y;
+        }
+        cx /= pts.length;
+        cy /= pts.length;
+
+        // Subtle +0.004 in-plane overlap eliminates MSAA hairline cracks while keeping crisp edges!
+        const chadShape = new THREE.Shape();
+        pts.forEach((pt, idx) => {
+          const dx = pt.x - cx;
+          const dy = pt.y - cy;
+          const dist = Math.hypot(dx, dy) || 1;
+          const x = dx + (dx / dist) * 0.004;
+          const y = dy + (dy / dist) * 0.004;
+          if (idx === 0) chadShape.moveTo(x, y);
+          else chadShape.lineTo(x, y);
+        });
+        chadShape.closePath();
+
+        const chadFlatX = flatOriginX + cx;
+        const chadFlatZ = flatOriginZ - cy;
+        const chadGeo = buildDualSidedPaperGeometry(chadShape, chadFlatX, chadFlatZ, spec.yawOffset);
+        const chadMesh = new THREE.Mesh(chadGeo, chadMats);
+        chadMesh.position.set(cx, 0.0014, -cy);
+        chadMesh.castShadow = false;
+        chadMesh.receiveShadow = false;
+        hostGroup.add(chadMesh);
+
+        const idx = fallingChads.length;
+        const hash = Math.sin((idx + 1) * 127.1 + spec.generation * 31.7);
+        const hash2 = Math.cos((idx + 1) * 269.5 + spec.generation * 17.3);
+        const radLen = Math.hypot(chadFlatX, chadFlatZ) || 1;
+        const kickSpeed = 1.6 + (idx % 4) * 0.45;
+        fallingChads.push({
+          mesh: chadMesh,
+          hostGroup,
+          hostPanelId: def.id,
+          localX: cx,
+          localZ: -cy,
+          releaseThreshold: 0.12 + (idx % 5) * 0.018,
+          detached: false,
+          dropElapsed: -1,
+          grav: 28 + (idx % 5) * 3.5,
+          driftX: hash * 1.1,
+          driftZ: hash2 * 1.1,
+          outDirX: (chadFlatX / radLen) * kickSpeed,
+          outDirZ: (chadFlatZ / radLen) * kickSpeed,
+          spinX: hash * 3.1,
+          spinY: (hash + hash2) * 1.2,
+          spinZ: hash2 * 2.8,
+          detachPos: new THREE.Vector3(),
+          detachQuat: new THREE.Quaternion(),
+        });
+      }
+    }
   }
 
   // Build exact complementary outer cutout carrier (shader silhouette-clips strictly to the previous house,
@@ -2392,8 +2443,8 @@ export function buildOrigamiHouseRig(
         : pv.isMountain
           ? mats.foldLineMountain
           : mats.foldLine;
-      // Keep fold lines hidden on untouched flat projected sheets until this panel actually begins raising!
-      const lineActive = curRelief > 0.38 ? fold01 < 0.96 : fold01 > 0.018 && fold01 < 0.96;
+      // Keep fold lines hidden on untouched flat projected sheets until THIS panel actually begins raising!
+      const lineActive = curRelief > 0.5 ? fold01 < 0.96 : fold01 > 0.025 && fold01 < 0.96;
       pv.foldLine.visible = linesAllowed && (lineActive || hovered);
     }
 
@@ -2435,67 +2486,171 @@ export function buildOrigamiHouseRig(
     curRelief = r;
     forceFlatShadows = forceFlatShadow;
     mats.projUniforms.uPaperReveal.value = r;
-    mats.foldLine.opacity = 0.14 * r;
-    mats.foldLineMountain.opacity = 0.22 * r;
+    mats.foldLine.opacity = 0.14;
+    mats.foldLineMountain.opacity = 0.22;
     root.scale.y = 1;
     root.position.y = PAPER_THICK;
     syncShadowsForPanels();
   };
 
-  // Animate the die-cut outer paper sheet + punched window chads falling cleanly down into the void!
-  // Returns `true` while still falling, `false` once completely faded & hidden below.
-  const updateCutoutDrop = (elapsedSec: number): boolean => {
+  const effectivePanelLift = (pid: PanelId): number => {
+    let cur: PanelId | null = pid;
+    let maxF = 0;
+    while (cur) {
+      const f = lastPanelFold.get(cur) ?? 0;
+      if (f > maxF) maxF = f;
+      cur = net.panelMap.get(cur)?.parent ?? null;
+    }
+    return maxF;
+  };
+
+  // Animate the die-cut outer paper sheet (driven by `outerElapsedSec` / Cutout timer) AND each
+  // wall's punched window chads (carried seamlessly inside their lifting wall, then detaching in 3D!).
+  // Returns `true` while either the outer sheet or any window chad is still seated/falling.
+  const updateCutoutDrop = (outerElapsedSec: number, dtSec = 0): boolean => {
     if (!cutoutRoot || !outerCutoutMesh) return false;
-    if (elapsedSec <= 0) {
+
+    const projSideSign = mats.projUniforms.uProjSide.value < 0 ? -1 : 1;
+    const seatY = 0.0014 * projSideSign;
+
+    // Instant clear (e.g. scrub/debug jump to folded state)
+    if (outerElapsedSec >= 90) {
+      cutoutRoot.visible = false;
+      outerCutoutMesh.visible = false;
+      outerCutoutMesh.castShadow = false;
+      for (const ch of fallingChads) {
+        ch.dropElapsed = 99;
+        ch.mesh.visible = false;
+        ch.mesh.castShadow = false;
+      }
+      mats.setCutoutOpacity(0);
+      return false;
+    }
+
+    // Full reset on swap mount (outerElapsedSec <= 0 and dtSec === 0)
+    if (outerElapsedSec <= 0 && dtSec <= 0) {
       cutoutRoot.visible = true;
+      outerCutoutMesh.visible = true;
       outerCutoutMesh.position.set(0, 0, 0);
       outerCutoutMesh.rotation.set(0, 0, 0);
       outerCutoutMesh.castShadow = false;
       for (const ch of fallingChads) {
-        ch.mesh.position.set(ch.baseX, 0, ch.baseZ);
-        ch.mesh.rotation.set(0, 0, 0);
+        if (ch.detached) {
+          ch.hostGroup.add(ch.mesh);
+          ch.detached = false;
+        }
+        ch.dropElapsed = -1;
+        ch.mesh.visible = true;
+        ch.mesh.position.set(ch.localX, seatY, ch.localZ);
+        ch.mesh.quaternion.identity();
+        ch.mesh.scale.setScalar(1);
         ch.mesh.castShadow = false;
       }
       mats.setCutoutOpacity(1);
       return true;
     }
 
+    cutoutRoot.visible = true;
+    const dropDir = projSideSign < 0 ? 1 : -1;
+    const dropScale = projSideSign < 0 ? 22 : 30;
+
+    // 1. Outer silhouette paper sheet (obeys configurable Cutout drop timer!)
     const fadeStart = 0.42;
     const fadeEnd = 0.96;
-    if (elapsedSec >= fadeEnd) {
-      cutoutRoot.visible = false;
+    let outerAlive = false;
+    if (outerElapsedSec <= 0) {
+      outerCutoutMesh.visible = true;
+      outerCutoutMesh.position.set(0, 0, 0);
+      outerCutoutMesh.rotation.set(0, 0, 0);
       outerCutoutMesh.castShadow = false;
-      for (const ch of fallingChads) ch.mesh.castShadow = false;
-      mats.setCutoutOpacity(0);
-      return false;
-    }
-
-    cutoutRoot.visible = true;
-    const ft = Math.max(0, elapsedSec - 0.05);
-    const ft2 = ft * ft;
-    const dropDir = mats.projUniforms.uProjSide.value < 0 ? 1 : -1;
-    const dropScale = mats.projUniforms.uProjSide.value < 0 ? 22 : 30;
-    outerCutoutMesh.castShadow = ft > 0.08;
-    outerCutoutMesh.position.set(0.65 * ft2, dropDir * dropScale * ft2, 0.45 * ft2);
-    outerCutoutMesh.rotation.set(0.14 * ft2, 0, -0.10 * ft2);
-
-    for (const ch of fallingChads) {
-      const ct = Math.max(0, elapsedSec - ch.delay);
-      const ct2 = ct * ct;
-      ch.mesh.castShadow = ct > 0.08;
-      ch.mesh.position.set(
-        ch.baseX + ch.driftX * ct2,
-        dropDir * ch.grav * (dropDir > 0 ? 0.75 : 1) * ct2,
-        ch.baseZ + ch.driftZ * ct2,
-      );
-      ch.mesh.rotation.set(ch.spinX * ct, 0, ch.spinZ * ct);
-    }
-
-    if (elapsedSec > fadeStart) {
-      const u = (elapsedSec - fadeStart) / (fadeEnd - fadeStart);
-      mats.setCutoutOpacity(1 - u * u * (3 - 2 * u));
-    } else {
       mats.setCutoutOpacity(1);
+      outerAlive = true;
+    } else if (outerElapsedSec >= fadeEnd) {
+      outerCutoutMesh.visible = false;
+      outerCutoutMesh.castShadow = false;
+      mats.setCutoutOpacity(0);
+    } else {
+      outerCutoutMesh.visible = true;
+      const ft = Math.max(0, outerElapsedSec - 0.05);
+      const ft2 = ft * ft;
+      outerCutoutMesh.castShadow = ft > 0.08;
+      outerCutoutMesh.position.set(0.65 * ft2, dropDir * dropScale * ft2, 0.45 * ft2);
+      outerCutoutMesh.rotation.set(0.14 * ft2, 0, -0.10 * ft2);
+      if (outerElapsedSec > fadeStart) {
+        const u = (outerElapsedSec - fadeStart) / (fadeEnd - fadeStart);
+        mats.setCutoutOpacity(1 - u * u * (3 - 2 * u));
+      } else {
+        mats.setCutoutOpacity(1);
+      }
+      outerAlive = true;
+    }
+
+    // 2. Per-wall punched window/door chads: ride flush inside their host wall until it clearly lifts,
+    //    then detach in exact 3D world pose and tumble cleanly out of the moving wall!
+    const chadEnd = 0.96;
+    let anyChadAlive = false;
+    let worldSynced = false;
+    for (const ch of fallingChads) {
+      if (!ch.detached) {
+        const lift = effectivePanelLift(ch.hostPanelId);
+        if (lift > ch.releaseThreshold) {
+          if (!worldSynced) {
+            root.updateMatrixWorld(true);
+            worldSynced = true;
+          }
+          cutoutRoot.attach(ch.mesh);
+          ch.detached = true;
+          ch.dropElapsed = 0;
+          ch.detachPos.copy(ch.mesh.position);
+          ch.detachQuat.copy(ch.mesh.quaternion);
+        } else {
+          // Still seated seamlessly inside its host wall (stays solid while flat & during initial ease-in!)
+          ch.mesh.visible = true;
+          ch.mesh.position.set(ch.localX, seatY, ch.localZ);
+          ch.mesh.quaternion.identity();
+          ch.mesh.scale.setScalar(1);
+          ch.mesh.castShadow = lift > 0.065;
+          anyChadAlive = true;
+          continue;
+        }
+      }
+
+      if (dtSec > 0) {
+        ch.dropElapsed += dtSec;
+      } else if (outerElapsedSec > 0) {
+        ch.dropElapsed = Math.max(ch.dropElapsed, outerElapsedSec);
+      }
+
+      if (ch.dropElapsed >= chadEnd) {
+        ch.mesh.visible = false;
+        ch.mesh.castShadow = false;
+        continue;
+      }
+
+      const ct = ch.dropElapsed;
+      const ct2 = ct * ct;
+      ch.mesh.visible = true;
+      ch.mesh.castShadow = true;
+      ch.mesh.position.set(
+        ch.detachPos.x + ch.outDirX * ct + ch.driftX * ct2,
+        ch.detachPos.y + dropDir * (1.6 * ct + 0.5 * ch.grav * (dropDir > 0 ? 0.75 : 1) * ct2),
+        ch.detachPos.z + ch.outDirZ * ct + ch.driftZ * ct2,
+      );
+      tmpSpinEuler.set(ch.spinX * ct, ch.spinY * ct, ch.spinZ * ct);
+      tmpSpinQuat.setFromEuler(tmpSpinEuler);
+      ch.mesh.quaternion.copy(ch.detachQuat).multiply(tmpSpinQuat);
+      if (ct > 0.58) {
+        const u = Math.min(1, (ct - 0.58) / (chadEnd - 0.58));
+        ch.mesh.scale.setScalar(Math.max(0.01, 1 - u * u));
+      } else {
+        ch.mesh.scale.setScalar(1);
+      }
+      anyChadAlive = true;
+    }
+
+    if (!outerAlive && !anyChadAlive) {
+      cutoutRoot.visible = false;
+      return false;
     }
     return true;
   };

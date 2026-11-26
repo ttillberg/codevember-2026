@@ -183,7 +183,7 @@ btnCatalog.innerHTML = ICON_GRID;
 btnCity.innerHTML = ICON_CITY;
 btnDebug.innerHTML = ICON_GEAR;
 
-const SETTINGS_STORAGE_KEY = 'codevember-2026:01:settings:v6';
+const SETTINGS_STORAGE_KEY = 'codevember-2026:01:settings:v7';
 
 const VALID_TOPOLOGIES: readonly NetTopology[] = ['cross', 'ribbon', 'hex', 'oct', 'lwing', 'setback', 'village'];
 const VALID_ROOFS: readonly RoofType[] = ['gable', 'mansard', 'spire', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
@@ -256,7 +256,7 @@ const FACTORY_SETTINGS: DebugSettings = {
   color: false,
   spin: true,
   cameraTrick: 'balanced',
-  glideOnFold: true,
+  glideOnFold: false,
   fadeProjOnFold: false,
   autoFold: false,
   autoSpeed: DEFAULT_AUTO_FOLD_CURVE.speed,
@@ -1336,6 +1336,17 @@ function applyActiveOutsideColor(includeOutgoing = true): void {
     fill.intensity = baseFill;
     sun.intensity = baseSun;
   }
+
+  // Dynamically calibrate 3D projection albedo gain to current live lighting (+ env map) so as walls
+  // lift out of exact flat-lock (`sheetLift = 0 -> 0.48`), brightness & tone stay 100% seamless!
+  const horizIrr =
+    (hemi.intensity + sun.intensity * Math.max(0.1, sunDirActive.y) + fill.intensity * 0.46) / Math.PI +
+    scene.environmentIntensity;
+  const calibratedGain = Math.max(0.55, Math.min(1.45, 0.90 / Math.max(0.35, horizIrr)));
+  materials.projUniforms.uProjGain.value = calibratedGain;
+  if (includeOutgoing && outgoing) {
+    outgoing.mats.projUniforms.uProjGain.value = calibratedGain;
+  }
 }
 
 function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = false): void {
@@ -1640,6 +1651,7 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
   mountHouseGeneration(generation, true, prevStillFolding);
   materials.setProjection(targetRT.texture, snapVP, projSide);
   materials.setProjectionFade(1);
+  if (rig.hasCutout) rig.updateCutoutDrop(0, 0);
   syncUI();
 }
 
@@ -3857,17 +3869,15 @@ function animate(now: number): void {
   const foldProg = computeFoldProgress();
   materials.setProjectionFade(computeProjectionFade(foldProg));
 
-  // 2. Animate falling outer cutout sheet + punched window chads (respects configurable `cutoutDropDelay` timer!)
-  if (cutoutDropState === 'falling') {
-    cutoutDropElapsed += foldDt;
-    const dropTime = cutoutDropElapsed - cutoutDropDelay;
-    if (dropTime <= 0) {
-      rig.updateCutoutDrop(0);
-    } else {
-      const stillFalling = rig.updateCutoutDrop(dropTime);
-      if (!stillFalling) {
-        cutoutDropState = 'done';
-      }
+  // 2. Animate outer paper cutout (per Cutout delay timer) & per-wall window chads (released when each wall moves!)
+  if (rig.hasCutout && (cutoutDropState === 'falling' || (cutoutDropState === 'waiting' && anyPanelAnimating))) {
+    if (cutoutDropState === 'falling') {
+      cutoutDropElapsed += foldDt;
+    }
+    const outerDropTime = cutoutDropState === 'falling' ? cutoutDropElapsed - cutoutDropDelay : 0;
+    const stillFalling = rig.updateCutoutDrop(outerDropTime, foldDt);
+    if (!stillFalling && cutoutDropState === 'falling') {
+      cutoutDropState = 'done';
     }
   }
 
@@ -3899,9 +3909,11 @@ function animate(now: number): void {
   curLookY += (targetLookY - curLookY) * camAlpha;
   syncCameraFromOrbit();
 
-  // Smoothly reveal flat-sheet thickness, edges, creases & shadows ONLY as panels genuinely begin raising!
+  // Per-wall blank paper & shadow reveal: individual lifting walls reveal naturally via `projSheetLift`
+  // in the shader while still-flat waiting walls stay 100% invisible `#f5f4f0` until their own turn!
+  // Only ease global `uPaperReveal` once walls are already upright (`foldProg = 0.55 -> 0.95`).
   if (rig.hasCutout) {
-    const raiseRaw = clamp01((foldProg - 0.04) / 0.28);
+    const raiseRaw = clamp01((foldProg - 0.55) / 0.40);
     const raiseRelief = raiseRaw * raiseRaw * (3 - 2 * raiseRaw);
     targetPaperRelief = Math.max(targetPaperRelief, raiseRelief);
     if (!allPanelsFoldedTarget() && drag.kind === 'none' && hoveredPanel === null && foldProg < 0.02) {
