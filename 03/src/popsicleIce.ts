@@ -35,6 +35,8 @@ export interface IceUniforms {
   // Custom base (water vs opaque coconut) & max-2 flavor optical uniforms
   uOpacity: { value: number };
   uIsDual: { value: number };
+  uKiwiA: { value: number };
+  uKiwiB: { value: number };
   uSigmaA: { value: THREE.Vector3 };
   uCoreA: { value: THREE.Vector3 };
   uMidA: { value: THREE.Vector3 };
@@ -119,6 +121,8 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
     uSeedOffset: { value: 0 },
     uOpacity: { value: pal.opacity },
     uIsDual: { value: pal.isDual ? 1.0 : 0.0 },
+    uKiwiA: { value: pal.kiwiMaskA },
+    uKiwiB: { value: pal.kiwiMaskB },
     uSigmaA: { value: new THREE.Vector3(...pal.sigmaA) },
     uCoreA: { value: new THREE.Vector3(...pal.coreA) },
     uMidA: { value: new THREE.Vector3(...pal.midA) },
@@ -184,6 +188,8 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
       uniform float uSeedOffset;
       uniform float uOpacity;
       uniform float uIsDual;
+      uniform float uKiwiA;
+      uniform float uKiwiB;
       uniform vec3 uSigmaA;
       uniform vec3 uCoreA;
       uniform vec3 uMidA;
@@ -300,6 +306,31 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         // Varied translucency per shard: some faintly frosted in cream, some bright crisp white crystals on top!
         float intensity = mix(0.32, 1.12, h2.z * h2.z * 0.55 + h2.y * 0.45);
         return vec2(mask, intensity);
+      }
+
+      // Single-cell jittered 3D organic teardrop/oval kiwi seed (embedded automatically inside Kiwi green zones!)
+      float evalKiwiSeedCell(vec3 p, float prob, float sizeScale, float softEdge) {
+        vec3 cell = floor(p);
+        vec3 f = fract(p);
+        vec3 h1 = hash33(cell + 13.41);
+        if (h1.x > prob) return 0.0;
+
+        vec3 h2 = hash33(cell + 57.83);
+        vec3 ctr = vec3(0.24) + h2 * 0.52;
+        vec3 d = f - ctr;
+
+        // Random 3D seed axis orientation so suspended kiwi seeds tumble naturally in the frozen puree
+        float angXY = h1.y * 6.2831853;
+        float ca = cos(angXY);
+        float sa = sin(angXY);
+        vec3 dr = vec3(d.x * ca - d.y * sa, d.x * sa + d.y * ca, d.z);
+
+        float rBase = mix(0.085, 0.135, h1.z) * sizeScale;
+        // Subtle teardrop pinch toward one end of the oval kiwi seed
+        float pinch = 1.0 + clamp(dr.x / max(rBase * 2.2, 0.01), -0.8, 0.8) * 0.22;
+        vec3 q = dr / vec3(rBase * 1.75, rBase * pinch, rBase * 1.35);
+        float dist = length(q);
+        return revStep(1.0 + softEdge, max(0.08, 1.0 - softEdge * 0.85), dist);
       }
 
       // Tactile thawing ice micro-relief + spatially varied frozen crystal roughness + baked 3D Voronoi slush beads!
@@ -1011,6 +1042,37 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           iceBody = mix(iceBody, creamBase, clamp(milkCoverage, 0.0, mix(0.96, 1.0, isMilkBase)));
         }
 
+        // === AUTOMATIC VOLUMETRIC BLACK KIWI SEEDS SUSPENDED INSIDE KIWI GREEN ZONES ===
+        // Renders at 3 true-3D parallax depths (crisp surface specks -> softly veiled deeper seeds)
+        // masked strictly by the organic dual-flavor swirl boundary so Mango+Kiwi stays clean!
+        if (uKiwiA + uKiwiB > 0.01) {
+          float kiwiZone = smoothstep(0.18, 0.72, mix(uKiwiA, uKiwiB, dualMix)) * (1.0 - hangClear * 0.90) * edgeMeltFade;
+          if (kiwiZone > 0.01) {
+            // Subtle crushed-kiwi puree fiber micro-mottling
+            iceBody *= 1.0 + (inSampFine.a - 0.5) * 0.10 * kiwiZone;
+
+            // Layer 3: deeper veiled olive-dark seeds suspended inside the green puree
+            vec3 kPos3 = icePos - V * 0.048;
+            vec3 kRot3 = vec3(kPos3.x * 0.62 - kPos3.y * 0.78, kPos3.x * 0.78 + kPos3.y * 0.62, kPos3.z);
+            float seedDeep = evalKiwiSeedCell(kRot3 * 13.5 + vec3(uSeedOffset * 1.9, -2.6, 4.1), 0.38, 1.15, 0.85);
+            vec3 deepSeedCol = mix(iceBody * 0.30, vec3(0.036, 0.032, 0.014), 0.45);
+            iceBody = mix(iceBody, deepSeedCol, clamp(seedDeep * kiwiZone * mix(0.50, 0.28, isMilkBase), 0.0, 0.58));
+
+            // Layer 2: mid-depth softly diffused dark seeds just under the skin
+            vec3 kPos2 = icePos - V * 0.022;
+            vec3 kRot2 = vec3(kPos2.x * 0.80 + kPos2.y * 0.60, -kPos2.x * 0.60 + kPos2.y * 0.80, kPos2.z);
+            float seedMid = evalKiwiSeedCell(kRot2 * 15.0 + vec3(-3.3, uSeedOffset * 2.3, 1.7), 0.42, 1.02, 0.52);
+            vec3 midSeedCol = mix(iceBody * 0.22, vec3(0.028, 0.020, 0.010), 0.72);
+            iceBody = mix(iceBody, midSeedCol, clamp(seedMid * kiwiZone * mix(0.74, 0.62, isMilkBase), 0.0, 0.78));
+
+            // Layer 1: crisp shallow espresso-black kiwi seeds right near the frozen surface
+            vec3 kPos1 = icePos - V * 0.005;
+            float seedSurf = evalKiwiSeedCell(kPos1 * 13.8 + vec3(uSeedOffset * 1.1, 4.7, -1.9), 0.36, 0.96, 0.24);
+            vec3 surfSeedCol = vec3(0.024, 0.015, 0.009);
+            iceBody = mix(iceBody, surfSeedCol, clamp(seedSurf * kiwiZone * 0.92, 0.0, 0.94));
+          }
+        }
+
         // === GLOSSY VISCOUS MELT-SYRUP GLAZE LAYERING & BOTTOM PUDDLE ABSORPTION ===
         // Thick creeping sticky syrup layers deepen flavor saturation on the body;
         // inside crystal-clear hanging drop pouches (hangClear), keep clarity crisp & luminous like real drops!
@@ -1410,6 +1472,8 @@ export function createPopsicleIceSystem(
     const pal = resolveOpticalPalette(nextRecipe);
     uniforms.uOpacity.value = pal.opacity;
     uniforms.uIsDual.value = pal.isDual ? 1.0 : 0.0;
+    uniforms.uKiwiA.value = pal.kiwiMaskA;
+    uniforms.uKiwiB.value = pal.kiwiMaskB;
     uniforms.uSigmaA.value.set(...pal.sigmaA);
     uniforms.uCoreA.value.set(...pal.coreA);
     uniforms.uMidA.value.set(...pal.midA);

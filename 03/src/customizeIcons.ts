@@ -269,6 +269,7 @@ interface JuiceDropSpec {
   pulp: number;
   bendX: number;
   beadSide: number;
+  seeds?: number;
 }
 
 const JUICE_DROP_SPECS: Record<FlavorId, JuiceDropSpec> = {
@@ -301,6 +302,17 @@ const JUICE_DROP_SPECS: Record<FlavorId, JuiceDropSpec> = {
     pulp: 0.40,
     bendX: -0.14,
     beadSide: 1,
+  },
+  kiwi: {
+    core: [0.46, 0.98, 0.11],
+    mid: [0.22, 0.64, 0.04],
+    deep: [0.08, 0.30, 0.012],
+    caustic: [0.88, 1.48, 0.28],
+    creaminess: 0.24,
+    pulp: 0.45,
+    bendX: 0.18,
+    beadSide: -1,
+    seeds: 1,
   },
   watermelon: {
     core: [1.38, 0.28, 0.38],
@@ -417,6 +429,7 @@ function createJuiceDropMaterial(spec: JuiceDropSpec, seed: number): THREE.Shade
       uCreaminess: { value: spec.creaminess },
       uPulp: { value: spec.pulp },
       uSeed: { value: seed },
+      uSeeds: { value: spec.seeds ?? 0 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorldPos;
@@ -439,6 +452,7 @@ function createJuiceDropMaterial(spec: JuiceDropSpec, seed: number): THREE.Shade
       uniform float uCreaminess;
       uniform float uPulp;
       uniform float uSeed;
+      uniform float uSeeds;
 
       varying vec3 vWorldPos;
       varying vec3 vWorldNormal;
@@ -468,11 +482,28 @@ function createJuiceDropMaterial(spec: JuiceDropSpec, seed: number): THREE.Shade
         float causticAmt = causticZone * (0.55 + 0.55 * bellyFocus) * (1.0 - uCreaminess * 0.82);
         jewelCol = mix(jewelCol, uCaustic, clamp(causticAmt * 0.78, 0.0, 0.84));
 
-        // Subtle organic suspended juice pulp shimmer (mango / orange / lemon)
+        // Subtle organic suspended juice pulp shimmer (mango / orange / lemon / kiwi)
         if (uPulp > 0.02) {
           float pN = noise3(vLocalPos * 12.5 + vec3(uSeed, -uSeed * 0.7, uSeed * 1.3));
           float pulpGlow = smoothstep(0.46, 0.86, pN) * uPulp * smoothstep(0.18, 0.72, ndv);
           jewelCol = mix(jewelCol, uCore * 1.16 + vec3(0.06), pulpGlow * 0.28);
+        }
+
+        // Tiny suspended black oval kiwi seeds inside the Kiwi juice droplet!
+        if (uSeeds > 0.5) {
+          vec2 sp = vLocalPos.xy - V.xy * 0.08;
+          float sMask = 0.0;
+          vec2 d0 = (sp - vec2(-0.18, -0.14)) * vec2(1.0, 1.55);
+          sMask = max(sMask, 1.0 - smoothstep(0.036, 0.064, length(d0)));
+          vec2 d1 = (sp - vec2( 0.16, -0.24)) * vec2(1.45, 1.0);
+          sMask = max(sMask, 1.0 - smoothstep(0.036, 0.062, length(d1)));
+          vec2 d2 = (sp - vec2( 0.04,  0.04)) * vec2(1.15, 1.50);
+          sMask = max(sMask, 1.0 - smoothstep(0.034, 0.060, length(d2)));
+          vec2 d3 = (sp - vec2(-0.08, -0.36)) * vec2(1.50, 1.05);
+          sMask = max(sMask, 1.0 - smoothstep(0.032, 0.058, length(d3)));
+          vec2 d4 = (sp - vec2( 0.22,  0.08)) * vec2(1.0, 1.45);
+          sMask = max(sMask, 1.0 - smoothstep(0.030, 0.054, length(d4)));
+          jewelCol = mix(jewelCol, vec3(0.024, 0.016, 0.008), sMask * smoothstep(0.18, 0.56, ndv) * 0.88);
         }
 
         // Creamy glossy liquid shading for banana puree & melted dark chocolate ganache

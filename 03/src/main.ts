@@ -1558,17 +1558,18 @@ const OBJ_PEN_PATHS = [
   'M84 15 C55 7, 19 18, 11 44 C4 68, 22 92, 51 95 C81 98, 107 80, 108 55 C109 30, 88 12, 60 11',
 ];
 
-// Clean, organized 3×3 organic constellation for the 9 uniform-size 3D juice droplets (left wing)
+// Clean, symmetrical 3 + 4 + 3 organic constellation for all 10 uniform-size 3D juice droplets (left wing)
 const TASTE_FLOAT_LAYOUT: Array<{ x: number; y: number; size: number; rot: number }> = [
-  { x: 18, y: 8, size: 68, rot: -4 },       // mango
-  { x: 110, y: 4, size: 68, rot: 4 },       // lemon
-  { x: 202, y: 10, size: 68, rot: -3 },     // orange
-  { x: 14, y: 102, size: 68, rot: 3 },      // watermelon
-  { x: 108, y: 98, size: 68, rot: -4 },     // strawberry
-  { x: 200, y: 104, size: 68, rot: 4 },     // raspberry
-  { x: 18, y: 196, size: 68, rot: -3 },     // blueberry
-  { x: 110, y: 192, size: 68, rot: 4 },     // banana
-  { x: 202, y: 198, size: 68, rot: -4 },    // chocolate
+  { x: 42, y: 6, size: 64, rot: -4 },       // mango
+  { x: 126, y: 2, size: 64, rot: 4 },       // lemon
+  { x: 210, y: 8, size: 64, rot: -3 },      // orange
+  { x: 4, y: 94, size: 64, rot: 3 },        // kiwi
+  { x: 86, y: 90, size: 64, rot: -4 },      // watermelon
+  { x: 168, y: 96, size: 64, rot: 4 },      // strawberry
+  { x: 250, y: 90, size: 64, rot: -3 },     // raspberry
+  { x: 42, y: 182, size: 64, rot: 3 },      // blueberry
+  { x: 126, y: 178, size: 64, rot: -4 },    // banana
+  { x: 210, y: 184, size: 64, rot: 4 },     // chocolate
 ];
 
 // Clean, balanced 2×3 organic constellation for the 6 real 3D toppings (right wing; harmonized sizes!)

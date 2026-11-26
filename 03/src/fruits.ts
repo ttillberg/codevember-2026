@@ -419,34 +419,16 @@ function createStrawberrySliceGeometry(seed: number, thickness = 0.16, variant =
 }
 
 /**
- * Generates a sculpted 3D blueberry with oblate shape, organic lumpiness,
- * a true 3D recessed 5-pointed star calyx crown at +Y pole, and natural squashed variants:
- * - variant 0: plump whole blueberry
- * - variant 1: gently squashed / pressed against mold wall (flat pressed cheek + wider bulge)
- * - variant 2: heavily squashed / pinched berry (compressed disc-oval with soft crease fold)
+ * Generates a plump, sculpted 3D blueberry with natural slightly oblate roundness,
+ * subtle organic lumpiness, and a recessed 5-pointed star calyx crown at the +Y pole.
  */
 function createBlueberryGeometry(seed: number, variant = 0): THREE.BufferGeometry {
   const rand = mulberry32(seed + variant * 151);
   const off = rand() * 40;
   const starPhase = rand() * Math.PI * 2;
-  const isPressed = variant === 1;
-  const isHeavilySquashed = variant === 2;
-  const oblate = isHeavilySquashed
-    ? 0.50 + rand() * 0.12
-    : isPressed
-      ? 0.66 + rand() * 0.10
-      : 0.84 + rand() * 0.08;
-  const latSpreadX = isHeavilySquashed ? 1.18 + rand() * 0.16 : isPressed ? 1.08 + rand() * 0.12 : 0.96 + rand() * 0.08;
-  const latSpreadZ = isHeavilySquashed ? 1.12 + rand() * 0.16 : isPressed ? 1.04 + rand() * 0.12 : 0.96 + rand() * 0.08;
-
-  // Random side-press direction for organic squashed cheek & soft crease fold
-  let pressX = rand() * 2 - 1;
-  let pressY = (rand() - 0.5) * 0.8;
-  let pressZ = rand() * 2 - 1;
-  const pLen = Math.hypot(pressX, pressY, pressZ) || 1;
-  pressX /= pLen;
-  pressY /= pLen;
-  pressZ /= pLen;
+  const oblate = 0.85 + rand() * 0.08;
+  const latSpreadX = 0.96 + rand() * 0.07;
+  const latSpreadZ = 0.96 + rand() * 0.07;
 
   const segU = 32;
   const segV = 24;
@@ -461,9 +443,7 @@ function createBlueberryGeometry(seed: number, variant = 0): THREE.BufferGeometr
     const phi = Math.acos(clamp(vy, -1, 1)); // 0 at +Y calyx pole, PI at -Y stem pole
     const theta = Math.atan2(vz, vx);
 
-    // Organic berry lumpiness (stronger soft wrinkling on squashed berries!)
-    const lumpAmp = isHeavilySquashed ? 0.16 : isPressed ? 0.12 : 0.085;
-    const lump = 1.0 + (fbm3(vx * 2.6 + off, vy * 2.6, vz * 2.6, 3) - 0.5) * lumpAmp;
+    const lump = 1.0 + (fbm3(vx * 2.6 + off, vy * 2.6, vz * 2.6, 3) - 0.5) * 0.08;
 
     // 5-pointed star calyx crown at north pole (phi < 0.52)
     let rMod = lump;
@@ -482,26 +462,9 @@ function createBlueberryGeometry(seed: number, variant = 0): THREE.BufferGeometr
       rMod *= 1.0 - dimp * 0.09;
     }
 
-    let x = vx * rMod * latSpreadX;
-    let y = vy * oblate * rMod + yLift;
-    let z = vz * rMod * latSpreadZ;
-
-    // Flatten a natural pressed cheek / subtle bruised dent on squashed berries
-    if (isPressed || isHeavilySquashed) {
-      const sideDot = vx * pressX + vy * pressY + vz * pressZ;
-      if (sideDot > 0.28) {
-        const flatAmt = smoothstep(0.28, 0.92, sideDot) * (isHeavilySquashed ? 0.34 : 0.20);
-        x -= pressX * flatAmt;
-        y -= pressY * flatAmt * oblate;
-        z -= pressZ * flatAmt;
-      }
-      if (isHeavilySquashed) {
-        // Subtle soft skin crease pinch along the squished lobe
-        const crease = Math.exp(-Math.pow((sideDot - 0.15) / 0.18, 2.0)) * 0.085;
-        x *= 1.0 - crease;
-        z *= 1.0 - crease;
-      }
-    }
+    const x = vx * rMod * latSpreadX;
+    const y = vy * oblate * rMod + yLift;
+    const z = vz * rMod * latSpreadZ;
 
     pos.setXYZ(i, x, y, z);
   }
@@ -563,25 +526,30 @@ function createWoodStickGeometry(): THREE.BufferGeometry {
 function createStrawberryMaterial(textures: StrawberryTextures): {
   material: THREE.MeshPhysicalMaterial;
   uBend: { value: THREE.Vector3 };
+  uThaw: { value: number };
 } {
   const uBend = { value: new THREE.Vector3(0, 0, 0) };
+  const uThaw = { value: 0.0 };
   const material = new THREE.MeshPhysicalMaterial({
     map: textures.albedo,
     bumpMap: textures.bump,
     bumpScale: 0.016,
-    roughness: 0.28,
+    // Fresh natural matte-satin cut berry flesh when dry; turns glossier only as watery melt coats it!
+    roughness: 0.56,
     metalness: 0.0,
-    clearcoat: 0.78,
-    clearcoatRoughness: 0.16,
-    envMapIntensity: 0.85,
+    clearcoat: 0.16,
+    clearcoatRoughness: 0.36,
+    specularIntensity: 0.38,
+    envMapIntensity: 0.24,
   });
 
-  material.customProgramCacheKey = () => 'strawberry-softbend-v1';
+  material.customProgramCacheKey = () => 'strawberry-softbend-v2';
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTranslucencyMap = { value: textures.translucency };
     shader.uniforms.uBacklightDir = { value: new THREE.Vector3(0.0, 0.08, -1.0).normalize() };
     shader.uniforms.uBend = uBend;
+    shader.uniforms.uThaw = uThaw;
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -632,9 +600,15 @@ function createStrawberryMaterial(textures: StrawberryTextures): {
         `#include <common>
         uniform sampler2D uTranslucencyMap;
         uniform vec3 uBacklightDir;
+        uniform float uThaw;
         varying vec2 vBerryUv;
         varying vec3 vBerryWorldNormal;
         varying vec3 vBerryWorldPos;`,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>
+        roughnessFactor = mix(roughnessFactor, 0.22, clamp(uThaw, 0.0, 1.0) * 0.72);`,
       )
       .replace(
         '#include <lights_fragment_end>',
@@ -654,7 +628,7 @@ function createStrawberryMaterial(textures: StrawberryTextures): {
       );
   };
 
-  return { material, uBend };
+  return { material, uBend, uThaw };
 }
 
 /**
@@ -673,16 +647,15 @@ function createBlueberryMaterial(textures: BlueberryTextures): {
     bumpMap: textures.bump,
     bumpScale: 0.022,
     roughnessMap: textures.roughness,
-    roughness: 0.28,
+    // Predominantly velvety powdery-matte dusty-blue bloom when dry; transitions to watery sheen only as uThaw rises!
+    roughness: 0.90,
     metalness: 0.0,
-    // Keep clearcoat at 0 so Three.js clearcoatSpecularIndirect NEVER paints a blinding white Fresnel ring
-    // around spherical blueberry silhouettes! Crisp wet gloss is shaded explicitly below.
     clearcoat: 0.0,
-    specularIntensity: 0.32,
-    envMapIntensity: 0.12,
+    specularIntensity: 0.16,
+    envMapIntensity: 0.06,
   });
 
-  material.customProgramCacheKey = () => 'blueberry-wetthaw-v3';
+  material.customProgramCacheKey = () => 'blueberry-wetthaw-v5';
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uThaw = uThaw;
@@ -713,15 +686,16 @@ function createBlueberryMaterial(textures: BlueberryTextures): {
         '#include <color_fragment>',
         `#include <color_fragment>
         {
-          // Wetting uncovered blueberry skin deepens & saturates its midnight-indigo color (zero frosted haze!)
-          vec3 wetRich = pow(max(diffuseColor.rgb, vec3(0.0001)), vec3(1.18)) * vec3(0.60, 0.62, 0.84);
-          diffuseColor.rgb = mix(diffuseColor.rgb, wetRich, clamp(uThaw, 0.0, 1.0) * 0.85);
+          // Wetting uncovered blueberry skin deepens & saturates its indigo skin while keeping subtle dusty-blue bloom
+          vec3 wetRich = pow(max(diffuseColor.rgb, vec3(0.0001)), vec3(1.16)) * vec3(0.68, 0.74, 0.92);
+          diffuseColor.rgb = mix(diffuseColor.rgb, wetRich, clamp(uThaw, 0.0, 1.0) * 0.58);
         }`,
       )
       .replace(
         '#include <roughnessmap_fragment>',
         `#include <roughnessmap_fragment>
-        roughnessFactor = mix(roughnessFactor, min(roughnessFactor, 0.16), clamp(uThaw, 0.0, 1.0) * 0.85);`,
+        // Dry berry stays softly matte-powdery; watery meltwater fills the waxy bloom and turns skin glossier!
+        roughnessFactor = mix(roughnessFactor, min(roughnessFactor, 0.28), clamp(uThaw, 0.0, 1.0) * 0.76);`,
       )
       .replace(
         '#include <lights_fragment_end>',
@@ -734,20 +708,23 @@ function createBlueberryMaterial(textures: BlueberryTextures): {
 
           // Suppress grazing backlight & studio-env Fresnel wash at spherical rims so berries NEVER wear a white frozen halo!
           float rimMask = smoothstep(0.04, 0.56, ndv);
-          reflectedLight.indirectSpecular *= mix(0.08, 0.85, rimMask);
-          reflectedLight.directSpecular *= mix(0.10, 1.0, rimMask);
-          reflectedLight.indirectDiffuse *= mix(0.68, 1.0, smoothstep(0.04, 0.45, ndv));
+          reflectedLight.indirectSpecular *= mix(0.06, 0.65, rimMask);
+          reflectedLight.directSpecular *= mix(0.08, 0.85, rimMask);
+          reflectedLight.indirectDiffuse *= mix(0.72, 1.0, smoothstep(0.04, 0.45, ndv));
 
-          // Crisp localized wet studio pinpoint catchlights on fresh glossy uncovered blueberry skin
-          vec3 lA = normalize(vec3(-0.52, 0.54, 0.66));
-          vec3 lB = normalize(vec3(0.56, 0.38, 0.73));
-          vec3 hA = lA + vDir;
-          hA *= inversesqrt(max(dot(hA, hA), 1e-8));
-          vec3 hB = lB + vDir;
-          hB *= inversesqrt(max(dot(hB, hB), 1e-8));
-          float spA = pow(max(dot(nDir, hA), 0.0), 175.0);
-          float spB = pow(max(dot(nDir, hB), 0.0), 130.0);
-          reflectedLight.directSpecular += vec3(1.55, 1.58, 1.68) * (spA * 1.15 + spB * 0.60) * (0.28 + 0.72 * thaw);
+          // Watery wet catchlights appear ONLY when meltwater coats the emerging berry (zero shiny blobs when dry!)
+          float wetGloss = thaw * thaw;
+          if (wetGloss > 0.01) {
+            vec3 lA = normalize(vec3(-0.52, 0.54, 0.66));
+            vec3 lB = normalize(vec3(0.56, 0.38, 0.73));
+            vec3 hA = lA + vDir;
+            hA *= inversesqrt(max(dot(hA, hA), 1e-8));
+            vec3 hB = lB + vDir;
+            hB *= inversesqrt(max(dot(hB, hB), 1e-8));
+            float spA = pow(max(dot(nDir, hA), 0.0), 140.0);
+            float spB = pow(max(dot(nDir, hB), 0.0), 105.0);
+            reflectedLight.directSpecular += vec3(1.18, 1.24, 1.38) * (spA * 0.65 + spB * 0.34) * wetGloss;
+          }
         }`,
       );
   };
@@ -1233,49 +1210,38 @@ function createRaspberryGeometry(seed: number, variant = 0): THREE.BufferGeometr
 }
 
 /**
- * Generates an artisanal hand-chopped faceted dark chocolate chunk / shard.
+ * Generates a smooth, plump rounded dark-chocolate chip / pearl / button drop
+ * with gentle organic tempered-cocoa contours (no harsh jagged flat cuts).
  */
 function createChocolateChunkGeometry(seed: number): THREE.BufferGeometry {
   const rand = mulberry32(seed * 101 + 37);
-  // Indexed sphere gives smooth shared normals across bevels instead of triangulated flat facets!
-  const geo = new THREE.SphereGeometry(1.0, 26, 20);
+  const geo = new THREE.SphereGeometry(1.0, 22, 16);
   const pos = geo.attributes.position as THREE.BufferAttribute;
 
-  // Generate 5 soft planar cleavage cuts for hand-chopped artisan dark chocolate chunks (smooth bevels, never low-poly!)
-  const planes: Array<{ nx: number; ny: number; nz: number; d: number }> = [];
-  for (let p = 0; p < 5; p++) {
-    let nx = rand() * 2 - 1;
-    let ny = rand() * 2 - 1;
-    let nz = rand() * 2 - 1;
-    const len = Math.hypot(nx, ny, nz) || 1;
-    nx /= len;
-    ny /= len;
-    nz /= len;
-    planes.push({ nx, ny, nz, d: 0.56 + rand() * 0.24 });
-  }
   const off = rand() * 25;
-  const sx = 0.88 + rand() * 0.34;
-  const sy = 0.72 + rand() * 0.34;
-  const sz = 0.50 + rand() * 0.28;
+  // Mix of classic rounded chocolate pearls/pebbles and softly flattened chocolate button drops!
+  const isDropButton = rand() < 0.55;
+  const sx = 0.94 + rand() * 0.16;
+  const sy = isDropButton ? 0.78 + rand() * 0.16 : 0.90 + rand() * 0.18;
+  const sz = 0.88 + rand() * 0.16;
 
   for (let i = 0; i < pos.count; i++) {
     let x = pos.getX(i);
     let y = pos.getY(i);
     let z = pos.getZ(i);
 
-    for (const pl of planes) {
-      const proj = x * pl.nx + y * pl.ny + z * pl.nz;
-      if (proj > pl.d) {
-        // Smooth chamfered bevel near the cut plane instead of a harsh razor triangle seam
-        const excess = proj - pl.d;
-        const softCut = excess * (0.76 + 0.16 * smoothstep(0.0, 0.22, excess));
-        x -= pl.nx * softCut;
-        y -= pl.ny * softCut;
-        z -= pl.nz * softCut;
+    if (isDropButton) {
+      // Gently rounded domed button / chocolate chip drop (softly flattened underside, plump rounded crown)
+      if (y < 0) {
+        y *= 0.68;
+      } else {
+        const tipTaper = 1.0 - 0.18 * y * y;
+        x *= tipTaper;
+        z *= tipTaper;
       }
     }
-    const chip = 1.0 + (fbm3(x * 3.8 + off, y * 3.8, z * 3.8, 2) - 0.5) * 0.09;
-    pos.setXYZ(i, x * sx * chip, y * sy * chip, z * sz * chip);
+    const organic = 1.0 + (fbm3(x * 2.6 + off, y * 2.6, z * 2.6, 2) - 0.5) * 0.08;
+    pos.setXYZ(i, x * sx * organic, y * sy * organic, z * sz * organic);
   }
   geo.computeVertexNormals();
   return geo;
@@ -1387,12 +1353,13 @@ function createRaspberryMaterial(
     bumpMap: tex.bump,
     bumpScale: 0.024,
     roughnessMap: tex.roughness,
-    // Frosted velvety sea-glass skin (NO hard plastic billiard-ball highlights!)
-    roughness: 0.56,
+    // Velvety downy berry skin when dry; watery melt gloss builds smoothly with uThaw
+    roughness: 0.70,
     metalness: 0.0,
     clearcoat: 0.0,
+    specularIntensity: 0.22,
     vertexColors: true,
-    envMapIntensity: 0.06,
+    envMapIntensity: 0.05,
   });
   material.customProgramCacheKey = () => 'raspberry-sideglass-v8';
   material.onBeforeCompile = (shader) => {
@@ -1896,7 +1863,7 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
   ): boolean {
     const isSmallScatter =
       kind === 'shaved-lemon' ||
-      (kind === 'chocolate' && radius < 0.065) ||
+      kind === 'chocolate' ||
       (kind === 'kaksmulor' && variant >= 2) ||
       (kind === 'raspberry' && variant >= 4) ||
       (kind === 'strawberry' && variant === 3) ||
@@ -1908,11 +1875,13 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
       const marginMul =
         kind === 'shaved-lemon'
           ? 1.55
-          : kind === 'kaksmulor' && variant < 2
-            ? 1.24
-            : isSmallScatter
-              ? 1.10
-              : 1.08;
+          : kind === 'chocolate'
+            ? 1.42
+            : kind === 'kaksmulor' && variant < 2
+              ? 1.24
+              : isSmallScatter
+                ? 1.12
+                : 1.08;
       const xRange = Math.max(0.04, maxW - radius * marginMul);
       const x = (rand() * 2 - 1) * xRange;
 
@@ -1926,12 +1895,10 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
             : kind === 'kaksmulor' && variant < 2
               ? radius * 0.45
               : kind === 'chocolate'
-                ? radius * 0.62
-                : kind === 'blueberry' && variant >= 1
-                  ? radius * 0.68
-                  : radius * 0.92;
+                ? radius * 0.78
+                : radius * 0.92;
 
-      const isFineInlay = kind === 'shaved-lemon' || kind === 'kaksmulor' || (kind === 'chocolate' && radius < 0.068);
+      const isFineInlay = kind === 'shaved-lemon' || kind === 'kaksmulor' || kind === 'chocolate';
       // Account for the recessed vertical flute valleys & dome taper so shallow milk inlays never spawn outside the ice!
       const fluteIndent = 0.032 * Math.exp(-Math.pow((Math.abs(x) - POPSICLE.fluteX) / 0.085, 2));
       const domeIndent = smoothstep(0.66, 1.0, hNorm) * 0.055;
@@ -2011,10 +1978,10 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
           x,
           y,
           z,
-          scale: [radius, radius, radius * (variant >= 1 ? 0.90 : 0.94)],
+          scale: [radius, radius, radius * 0.96],
           rot: [0.95 + rand() * 0.85, (rand() - 0.5) * 1.6, (rand() - 0.5) * 1.4],
           radius,
-          variant,
+          variant: 0,
         });
       } else if (kind === 'raspberry') {
         const isCutCup = variant === 2 || variant === 3;
@@ -2039,7 +2006,7 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
           x,
           y,
           z,
-          scale: [radius * (0.95 + rand() * 0.35), radius * (0.85 + rand() * 0.32), radius * (0.80 + rand() * 0.28)],
+          scale: [radius * (0.94 + rand() * 0.14), radius * (0.94 + rand() * 0.14), radius * (0.86 + rand() * 0.18)],
           rot: [rand() * 3.14, rand() * 3.14, rand() * 3.14],
           radius,
         });
@@ -2076,14 +2043,15 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
   }
 
   const largePool: ToppingId[] = activeToppings.filter(
-    (t) => t === 'strawberry' || t === 'blueberry' || t === 'raspberry' || t === 'chocolate',
+    (t) => t === 'strawberry' || t === 'blueberry' || t === 'raspberry',
   );
+  const hasChocolate = activeToppings.includes('chocolate');
   const hasLemon = activeToppings.includes('shaved-lemon');
   const hasKaksmulor = activeToppings.includes('kaksmulor');
 
-  // Distribute large hero chunks/berries harmoniously across upper, mid, and lower zones
+  // Distribute large hero berries harmoniously across upper, mid, and lower zones
   if (largePool.length > 0) {
-    const perKind = largePool.length === 1 ? 10 : largePool.length === 2 ? 6 : largePool.length === 3 ? 4 : 3;
+    const perKind = largePool.length === 1 ? 10 : largePool.length === 2 ? 6 : 4;
     const zones: Array<[number, number]> = [
       [0.32, 0.88],
       [-0.22, 0.34],
@@ -2120,21 +2088,11 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
                 ? 0.13 + rand() * 0.03
                 : 0.14 + rand() * 0.032;
           tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.045 : -0.015, raspVariant);
-        } else if (kind === 'chocolate') {
-          const r = 0.066 + rand() * 0.028;
-          tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.052 : -0.010);
         }
       }
     }
 
-    // Extra natural scatter of small broken fruit pieces, baby blueberries, loose raspberry drupelet balls, and chocolate chips!
-    if (largePool.includes('chocolate')) {
-      const chipCount = largePool.length === 1 ? 14 : 10;
-      for (let n = 0; n < chipCount; n++) {
-        const r = 0.034 + rand() * 0.026;
-        tryPlace('chocolate', r, -0.86, 0.84, n % 3 === 0 ? -0.012 : 0.056);
-      }
-    }
+    // Extra natural scatter of small broken fruit pieces, baby blueberries, and loose raspberry drupelet balls!
     if (largePool.includes('raspberry')) {
       const bitCount = largePool.length === 1 ? 6 : 4;
       for (let n = 0; n < bitCount; n++) {
@@ -2161,6 +2119,22 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
         const v = rand() < 0.65 ? (rand() < 0.5 ? 1 : 2) : 0; // mostly squashed small baby blueberries
         tryPlace('blueberry', r, -0.86, 0.80, 0.048, v);
       }
+    }
+  }
+
+  // Chocolate: abundant smaller rounded dark-chocolate drops & pearls scattered harmoniously top to bottom!
+  if (hasChocolate) {
+    const dropCount = largePool.length === 0 ? 18 : 12;
+    for (let n = 0; n < dropCount; n++) {
+      const yMin = -0.84 + (n / dropCount) * 1.54;
+      const yMax = Math.min(0.80, yMin + 0.22);
+      const r = 0.040 + rand() * 0.016;
+      tryPlace('chocolate', r, yMin, yMax, n % 3 === 0 ? -0.012 : 0.056);
+    }
+    const pearlCount = largePool.length === 0 ? 54 : 38;
+    for (let n = 0; n < pearlCount; n++) {
+      const r = 0.020 + rand() * 0.018;
+      tryPlace('chocolate', r, -0.86, 0.84, n % 3 === 0 ? -0.014 : 0.060);
     }
   }
 
@@ -2419,6 +2393,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         const straw = createStrawberryMaterial(idx % 2 === 0 ? strawTexA : strawTexB);
         mat = straw.material;
         bendUniform = straw.uBend;
+        thawUniform = straw.uThaw;
         disposables.push(mat);
         break;
       }
@@ -4059,12 +4034,12 @@ export function createToppingThumbSpecimen(
     }
     case 'blueberry': {
       const blueA = createBlueberryMaterial(getCachedBlueberryTextures(seed));
-      blueA.uThaw.value = 1.0;
+      blueA.uThaw.value = 0.0;
       const blueB = createBlueberryMaterial(getCachedBlueberryTextures(seed + 1));
-      blueB.uThaw.value = 1.0;
+      blueB.uThaw.value = 0.0;
       disposables.push(blueA.material, blueB.material);
       add(createBlueberryGeometry(seed * 149 + 13, 0), blueA.material, [-0.14, 0.05, 0.08], [0.46, 0.34, -0.18], 0.44);
-      add(createBlueberryGeometry(seed * 149 + 29, 1), blueB.material, [0.24, -0.14, -0.04], [0.62, -0.45, 0.24], 0.34);
+      add(createBlueberryGeometry(seed * 149 + 29, 0), blueB.material, [0.24, -0.14, -0.04], [0.62, -0.45, 0.24], 0.34);
       break;
     }
     case 'raspberry': {
@@ -4084,8 +4059,9 @@ export function createToppingThumbSpecimen(
     case 'chocolate': {
       const mat = createChocolateMaterial(getCachedChocolateChunkTextures(seed));
       disposables.push(mat);
-      add(createChocolateChunkGeometry(seed * 163 + 17), mat, [-0.12, 0.06, 0.06], [0.36, 0.52, -0.22], 0.48);
-      add(createChocolateChunkGeometry(seed * 163 + 41), mat, [0.24, -0.16, -0.04], [-0.42, -0.36, 0.38], 0.36);
+      add(createChocolateChunkGeometry(seed * 163 + 17), mat, [-0.18, 0.14, 0.06], [0.42, 0.36, -0.18], 0.34);
+      add(createChocolateChunkGeometry(seed * 163 + 41), mat, [0.22, -0.04, -0.02], [-0.38, -0.44, 0.32], 0.30);
+      add(createChocolateChunkGeometry(seed * 163 + 73), mat, [-0.04, -0.26, 0.12], [0.55, -0.22, 0.44], 0.24);
       break;
     }
     case 'kaksmulor': {

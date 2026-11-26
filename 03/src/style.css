@@ -118,8 +118,8 @@ body.loading .plate .head > .loading-label {
 }
 
 .cust-wing-left {
-  left: max(26px, 4.5vw);
-  width: 286px;
+  left: max(22px, 3.6vw);
+  width: 318px;
 }
 
 .cust-wing-right {
@@ -155,15 +155,15 @@ body.loading .plate .head > .loading-label {
 /* Organized organic floating coordinate fields */
 .base-float-field {
   position: relative;
-  width: 286px;
+  width: 318px;
   height: 94px;
   pointer-events: none;
 }
 
 .taste-float-field {
   position: relative;
-  width: 286px;
-  height: 274px;
+  width: 318px;
+  height: 256px;
   pointer-events: none;
 }
 
