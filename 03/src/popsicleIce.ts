@@ -692,9 +692,24 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         float edgeRichness = pow(1.0 - N0dotV, 1.32);
         float fluteOptical = smoothstep(0.10, 0.34, abs(N0.x)) * revStep(0.76, 0.38, abs(N0.x));
 
-        // Organic dual-flavor layered/marbled swirl (Flavor A upper half -> Flavor B lower half)
+        // Organic dual-flavor layered swirl on Water ice vs bold hand-spooned 3D marbled distribution on Cream paletas!
         float swirlWave = (cloudMacro - 0.5) * 0.46 + (cloudMed - 0.5) * 0.24 + sin(icePos.x * 4.4 + uSeedOffset) * 0.08;
-        float dualMix = uIsDual > 0.5 ? smoothstep(-0.34, 0.34, -icePos.y + swirlWave) : 0.0;
+        float waterDualMix = smoothstep(-0.34, 0.34, -icePos.y + swirlWave);
+        float milkDualMix = waterDualMix;
+        float milkCreamPocket = 0.0;
+        if (isMilkBase > 0.01) {
+          vec3 swirlP = icePos * vec3(1.65, 1.32, 1.65) + vec3(uSeedOffset * 0.73, -uSeedOffset * 0.41, uSeedOffset * 0.59);
+          vec4 swW = texture(uNoise3D, swirlP * INV_P6);
+          vec3 swirlWarp = (swW.rgb - 0.5) * 2.25;
+          vec4 swF = texture(uNoise3D, (swirlP * 1.15 + swirlWarp) * INV_P6);
+          float dualField = swF.r * 0.62 + swF.g * 0.26 + swF.a * 0.12 - icePos.y * 0.07;
+          milkDualMix = smoothstep(0.38, 0.60, dualField);
+          // On single-flavor cream paletas, swirl 2-3 bold organic condensed-milk cream pockets right through the fruit puree!
+          vec4 swP = texture(uNoise3D, (swirlP * vec3(1.12, 1.16, 1.12) + swirlWarp * 0.90 + vec3(2.4, -1.7, 3.1)) * INV_P6);
+          float pocketField = swP.r * 0.60 + swP.g * 0.26 + swF.a * 0.14;
+          milkCreamPocket = smoothstep(0.49, 0.585, pocketField) * isMilkBase * (1.0 - uIsDual);
+        }
+        float dualMix = uIsDual > 0.5 ? mix(waterDualMix, milkDualMix, isMilkBase) : 0.0;
 
         vec3 flvSigma = mix(uSigmaA, uSigmaB, dualMix);
         vec3 flvCore = mix(uCoreA, uCoreB, dualMix);
@@ -901,13 +916,19 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           float milkRibbon = smoothstep(0.46, 0.84, milkSwirlRaw) * isMilkBase;
           float microMottle = (mottleFine - 0.5) * 0.30 + (velvetSugarTooth - 0.5) * 0.24 + (verticalFreezeGrain - 0.5) * 0.14;
 
-          // Distinct organic light/dark tonal richness without washing vibrant fruit hues into chalky pastel!
+          // Distinct organic light/dark tonal richness + hand-swirled condensed-milk cream pockets on single-flavor paletas!
           vec3 paleMilkTint = mix(flvCreamAlb * 1.24 + vec3(0.14, 0.12, 0.11), vec3(0.94, 0.89, 0.80), 0.32);
           vec3 deepJuiceTint = mix(flvCreamDeep * 0.66, flvCreamAlb * 0.52, 0.30);
           vec3 swirledAlb = mix(flvCreamAlb, deepJuiceTint, pigmentPocket * 0.44);
           swirledAlb = mix(swirledAlb, paleMilkTint, milkRibbon * 0.34);
           vec3 swirledDeep = mix(flvCreamDeep, flvCreamDeep * 0.64, pigmentPocket * 0.36);
           swirledDeep = mix(swirledDeep, mix(flvCreamDeep, vec3(0.60, 0.50, 0.38), 0.20), milkRibbon * 0.24);
+          if (milkCreamPocket > 0.005) {
+            vec3 pureCreamAlb = vec3(0.95, 0.91, 0.83);
+            vec3 pureCreamDeep = vec3(0.66, 0.58, 0.47);
+            swirledAlb = mix(swirledAlb, pureCreamAlb, milkCreamPocket * 0.84);
+            swirledDeep = mix(swirledDeep, pureCreamDeep, milkCreamPocket * 0.78);
+          }
           milkSheenTint = mix(vec3(1.04, 1.00, 0.96), swirledAlb * 1.12 + vec3(0.30), 0.48);
 
           // Tactile velvety frozen-cream grain + shallow mold-dimple shading
@@ -1046,7 +1067,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         // Renders at 3 true-3D parallax depths (crisp surface specks -> softly veiled deeper seeds)
         // masked strictly by the organic dual-flavor swirl boundary so Mango+Kiwi stays clean!
         if (uKiwiA + uKiwiB > 0.01) {
-          float kiwiZone = smoothstep(0.18, 0.72, mix(uKiwiA, uKiwiB, dualMix)) * (1.0 - hangClear * 0.90) * edgeMeltFade;
+          float kiwiZone = smoothstep(0.18, 0.72, mix(uKiwiA, uKiwiB, dualMix)) * (1.0 - milkCreamPocket * 0.85) * (1.0 - hangClear * 0.90) * edgeMeltFade;
           if (kiwiZone > 0.01) {
             // Subtle crushed-kiwi puree fiber micro-mottling
             iceBody *= 1.0 + (inSampFine.a - 0.5) * 0.10 * kiwiZone;
