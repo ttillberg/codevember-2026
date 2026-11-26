@@ -552,7 +552,7 @@ export class TelemetryOverlay {
         ey = by + 7;
       }
       const elbowX = verticallyStacked ? ex : anchorX + (ex - anchorX) * 0.42;
-      ctx.globalAlpha = alpha * 0.44;
+      ctx.globalAlpha = alpha * 0.32;
       ctx.strokeStyle = COLOR_INK;
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -562,25 +562,25 @@ export class TelemetryOverlay {
       ctx.stroke();
     }
 
-    // Ultra-subtle translucent studio tint behind text (no heavy box outline — floats cleanly like reference)
-    ctx.globalAlpha = alpha * 0.72;
-    ctx.fillStyle = 'rgba(236, 233, 226, 0.76)';
+    // Airy semitransparent studio veil behind text so 3D sphere & light show softly through
+    ctx.globalAlpha = alpha * 0.44;
+    ctx.fillStyle = 'rgba(236, 233, 226, 0.58)';
     ctx.fillRect(bx, by, boxW, boxH);
 
-    // Crisp 2px vertical accent hair-tick on left
-    ctx.globalAlpha = alpha * 0.92;
+    // Subtle 2px vertical accent hair-tick on left
+    ctx.globalAlpha = alpha * 0.68;
     ctx.fillStyle = accent;
     ctx.fillRect(bx, by + 2, 2, boxH - 4);
 
-    // Title line
-    ctx.globalAlpha = alpha;
+    // Semitransparent monospace title line
+    ctx.globalAlpha = alpha * 0.68;
     ctx.font = FONT_TITLE;
     ctx.fillStyle = COLOR_INK;
     ctx.textBaseline = 'top';
     ctx.fillText(title, bx + padX + 2, by + padY);
 
-    // Status / subtitle line
-    ctx.globalAlpha = alpha * 0.72;
+    // Semitransparent status / subtitle line
+    ctx.globalAlpha = alpha * 0.5;
     ctx.font = FONT_SUB;
     ctx.fillStyle = accent === COLOR_MUTED ? COLOR_MUTED : COLOR_INK;
     ctx.fillText(sub, bx + padX + 2, by + padY + 12);
@@ -696,10 +696,10 @@ export class TelemetryOverlay {
           );
           if (!overlaps) {
             placed.push({ x: bx, y: by, w: bw, h: bh });
-            ctx.globalAlpha = baseAlpha * 1.15;
-            ctx.fillStyle = 'rgba(236, 233, 226, 0.72)';
+            ctx.globalAlpha = baseAlpha * 0.58;
+            ctx.fillStyle = 'rgba(236, 233, 226, 0.55)';
             ctx.fillRect(bx, by, bw, bh);
-            ctx.globalAlpha = baseAlpha * 1.35;
+            ctx.globalAlpha = baseAlpha * 0.95;
             ctx.fillStyle = COLOR_INK;
             ctx.textBaseline = 'top';
             ctx.fillText(text, bx + 4, by + 2.5);
@@ -970,10 +970,10 @@ export class TelemetryOverlay {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
             const tw = ctx.measureText(dimText).width;
-            ctx.globalAlpha = Math.min(0.75, lineA * 1.15);
-            ctx.fillStyle = 'rgba(236, 233, 226, 0.72)';
+            ctx.globalAlpha = Math.min(0.42, lineA * 0.7);
+            ctx.fillStyle = 'rgba(236, 233, 226, 0.55)';
             ctx.fillRect(-tw * 0.5 - 3, -13, tw + 6, 10);
-            ctx.globalAlpha = Math.min(0.92, lineA * 1.55);
+            ctx.globalAlpha = Math.min(0.68, lineA * 1.18);
             ctx.fillStyle = accent;
             ctx.fillText(dimText, 0, -4);
             ctx.restore();
