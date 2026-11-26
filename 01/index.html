@@ -31,16 +31,16 @@
     </div>
 
     <div class="top-actions" aria-label="Sheet actions">
-      <button id="btn-next" class="icon-btn" title="Next fold step (Space)" aria-label="Next fold step"></button>
-      <button id="btn-reset" class="icon-btn" title="Unfold flat (R)" aria-label="Unfold flat"></button>
+      <button id="btn-next" class="icon-btn" title="Fold house (Space)" aria-label="Fold house"></button>
+      <button id="btn-reset" class="icon-btn" title="Reset to Layer 1 (R)" aria-label="Reset to Layer 1"></button>
       <button id="btn-help" class="icon-btn" title="Controls (?)" aria-label="Controls">?</button>
     </div>
 
     <div class="toolbar" role="toolbar" aria-label="Fold controls">
-      <button id="btn-action" class="action-btn" type="button">Fold walls</button>
+      <button id="btn-action" class="action-btn" type="button">Fold</button>
       <input id="progress-range" class="progress-range" type="range" min="0" max="1" step="0.002" value="0" aria-label="Fold progress" />
       <span class="sep" aria-hidden="true"></span>
-      <span id="status-label" class="status-label" aria-live="polite">Click or drag any flap to fold</span>
+      <span id="status-label" class="status-label" aria-live="polite">Click Fold or drag any flap</span>
     </div>
 
     <div class="help-backdrop" id="help-modal" hidden>
@@ -51,10 +51,10 @@
         </div>
         <dl class="help-list">
           <div><dt>Fold by hand</dt><dd>Click or drag any wall or roof flap directly up into place</dd></div>
-          <div><dt><span class="key">Space</span></dt><dd>Step cleanly through walls, roof, and unfold</dd></div>
-          <div><dt><span class="key">F</span></dt><dd>Fold or unfold the entire house at once</dd></div>
-          <div><dt><span class="key">R</span></dt><dd>Unfold flat and reset camera</dd></div>
-          <div><dt>Drag desk</dt><dd>Orbit 360° around the paper; scroll or pinch to zoom</dd></div>
+          <div><dt><span class="key">Space</span></dt><dd>Fold the whole house in one staggered wave and project onto the next sheet</dd></div>
+          <div><dt><span class="key">F</span></dt><dd>Toggle staggered fold / unfold</dd></div>
+          <div><dt><span class="key">R</span></dt><dd>Reset to Layer 1 and default camera</dd></div>
+          <div><dt>Drag sheet</dt><dd>Orbit 360° around the paper; scroll or pinch to zoom</dd></div>
         </dl>
       </div>
     </div>
