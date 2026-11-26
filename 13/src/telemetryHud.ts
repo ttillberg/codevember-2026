@@ -51,9 +51,9 @@ interface LabelRect {
   h: number;
 }
 
-const FONT_TITLE = '600 10.5px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
-const FONT_SUB = '500 9px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
-const FONT_MICRO = '500 7.5px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
+const FONT_TITLE = '600 7.5px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
+const FONT_SUB = '500 6.5px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
+const FONT_MICRO = '500 6.5px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
 // Matches the physical Ø120MM stamp on the polycarbonate outer shell (radius = 60mm)
 const MM_PER_UNIT = 60 / R_SHELL;
 
@@ -413,39 +413,39 @@ export class TelemetryOverlay {
   ) {
     if (alpha <= 0.02) return;
     const ctx = this.ctx;
-    const s = Math.round(halfSize * 2);
+    const s = Math.max(3, Math.round(halfSize * 2));
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 0.75;
     ctx.strokeRect(snap(cx - halfSize), snap(cy - halfSize), s, s);
 
     ctx.fillStyle = accentTick || strokeStyle;
-    ctx.fillRect(Math.round(cx) - 1, Math.round(cy) - 1, 2, 2);
+    ctx.fillRect(cx - 0.75, cy - 0.75, 1.5, 1.5);
 
     if (accentTick) {
-      const tx = snap(cx + halfSize + 5);
+      const tx = snap(cx + halfSize + 3);
       const ty = snap(cy);
       ctx.strokeStyle = accentTick;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 0.75;
       ctx.beginPath();
-      ctx.moveTo(tx - 2.5, ty);
-      ctx.lineTo(tx + 2.5, ty);
-      ctx.moveTo(tx, ty - 2.5);
-      ctx.lineTo(tx, ty + 2.5);
+      ctx.moveTo(tx - 1.6, ty);
+      ctx.lineTo(tx + 1.6, ty);
+      ctx.moveTo(tx, ty - 1.6);
+      ctx.lineTo(tx, ty + 1.6);
       ctx.stroke();
     }
     ctx.restore();
   }
 
-  /** Precision 1px vector connecting line (dashed when occluded / inactive) */
+  /** Precision hairline vector connecting line (dashed when occluded / inactive) */
   private drawLinkLine(
     a: ProjectedPoint,
     b: ProjectedPoint,
     strokeStyle: string,
     alpha: number,
     dashed = false,
-    lineWidth = 1,
+    lineWidth = 0.75,
   ) {
     if (alpha <= 0.02) return;
     const ctx = this.ctx;
@@ -453,7 +453,7 @@ export class TelemetryOverlay {
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = strokeStyle;
     ctx.lineWidth = lineWidth;
-    if (dashed) ctx.setLineDash([3, 4]);
+    if (dashed) ctx.setLineDash([2, 3]);
     ctx.beginPath();
     ctx.moveTo(snap(a.x), snap(a.y));
     ctx.lineTo(snap(b.x), snap(b.y));
@@ -462,8 +462,8 @@ export class TelemetryOverlay {
   }
 
   /**
-   * Floating borderless two-line monospace label (subtle alabaster halo for readability over bright walls)
-   * with automatic collision avoidance and clean thin leader line.
+   * Micro-scale floating borderless two-line monospace label (~50% Leica viewfinder proportions)
+   * with automatic collision avoidance and razor-thin leader line.
    */
   private drawCallout(
     anchorX: number,
@@ -483,32 +483,32 @@ export class TelemetryOverlay {
     const tw = ctx.measureText(title).width;
     ctx.font = FONT_SUB;
     const sw = ctx.measureText(sub).width;
-    const padX = 5;
-    const padY = 3;
-    const boxW = Math.ceil(Math.max(tw, sw) + padX * 2 + 4);
-    const boxH = 26;
+    const padX = 3.5;
+    const padY = 2.5;
+    const boxW = Math.ceil(Math.max(tw, sw) + padX * 2 + 2);
+    const boxH = 18;
 
     const rightBias = anchorX < this.width * 0.56 ? 1 : -1;
     const candidates: [number, number][] =
       prefer === 'top'
         ? [
-            [-boxW * 0.5, -48],
-            [24 * rightBias - (rightBias < 0 ? boxW : 0), -34],
-            [-boxW * 0.5, 24],
-            [24 * -rightBias - (-rightBias < 0 ? boxW : 0), -34],
+            [-boxW * 0.5, -26],
+            [14 * rightBias - (rightBias < 0 ? boxW : 0), -19],
+            [-boxW * 0.5, 13],
+            [14 * -rightBias - (-rightBias < 0 ? boxW : 0), -19],
           ]
         : prefer === 'bottom'
           ? [
-              [-boxW * 0.5, 24],
-              [24 * rightBias - (rightBias < 0 ? boxW : 0), 12],
-              [-boxW * 0.5, -46],
+              [-boxW * 0.5, 13],
+              [14 * rightBias - (rightBias < 0 ? boxW : 0), 7],
+              [-boxW * 0.5, -25],
             ]
           : [
-              [24 * rightBias - (rightBias < 0 ? boxW : 0), -30],
-              [-boxW * 0.5, -46],
-              [24 * rightBias - (rightBias < 0 ? boxW : 0), 12],
-              [24 * -rightBias - (-rightBias < 0 ? boxW : 0), -30],
-              [-boxW * 0.5, 24],
+              [14 * rightBias - (rightBias < 0 ? boxW : 0), -17],
+              [-boxW * 0.5, -25],
+              [14 * rightBias - (rightBias < 0 ? boxW : 0), 7],
+              [14 * -rightBias - (-rightBias < 0 ? boxW : 0), -17],
+              [-boxW * 0.5, 13],
             ];
 
     const marginX = 16;
@@ -521,7 +521,7 @@ export class TelemetryOverlay {
       const cx = Math.max(marginX, Math.min(this.width - boxW - marginX, anchorX + ox));
       const cy = Math.max(marginTop, Math.min(this.height - boxH - marginBottom, anchorY + oy));
       const overlaps = placed.some(
-        (r) => cx < r.x + r.w + 6 && cx + boxW + 6 > r.x && cy < r.y + r.h + 4 && cy + boxH + 4 > r.y,
+        (r) => cx < r.x + r.w + 4 && cx + boxW + 4 > r.x && cy < r.y + r.h + 3 && cy + boxH + 3 > r.y,
       );
       if (!overlaps) {
         bestX = cx;
@@ -534,27 +534,26 @@ export class TelemetryOverlay {
     const by = Math.round(bestY);
     placed.push({ x: bx, y: by, w: boxW, h: boxH });
 
-    // Thin crisp elbow leader line routed strictly to the nearest OUTSIDE edge (never crossing over text!)
     if (drawLeader) {
       const boxCx = bx + boxW * 0.5;
       const boxCy = by + boxH * 0.5;
       let ex = bx;
       let ey = boxCy;
-      const verticallyStacked = anchorX >= bx - 6 && anchorX <= bx + boxW + 6;
+      const verticallyStacked = anchorX >= bx - 4 && anchorX <= bx + boxW + 4;
       if (verticallyStacked) {
         ex = bx + 1;
         ey = anchorY > boxCy ? by + boxH : by;
       } else if (boxCx < anchorX) {
-        ex = bx + boxW + 2;
-        ey = by + 7;
+        ex = bx + boxW + 1;
+        ey = by + 4;
       } else {
-        ex = bx - 2;
-        ey = by + 7;
+        ex = bx - 1;
+        ey = by + 4;
       }
       const elbowX = verticallyStacked ? ex : anchorX + (ex - anchorX) * 0.42;
-      ctx.globalAlpha = alpha * 0.32;
+      ctx.globalAlpha = alpha * 0.3;
       ctx.strokeStyle = COLOR_INK;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 0.75;
       ctx.beginPath();
       ctx.moveTo(snap(anchorX), snap(anchorY));
       ctx.lineTo(snap(elbowX), snap(ey));
@@ -562,28 +561,28 @@ export class TelemetryOverlay {
       ctx.stroke();
     }
 
-    // Airy semitransparent studio veil behind text so 3D sphere & light show softly through
-    ctx.globalAlpha = alpha * 0.44;
-    ctx.fillStyle = 'rgba(236, 233, 226, 0.58)';
+    // Airy semitransparent studio veil behind micro text
+    ctx.globalAlpha = alpha * 0.42;
+    ctx.fillStyle = 'rgba(236, 233, 226, 0.56)';
     ctx.fillRect(bx, by, boxW, boxH);
 
-    // Subtle 2px vertical accent hair-tick on left
-    ctx.globalAlpha = alpha * 0.68;
+    // Subtle 1px vertical accent hair-tick on left
+    ctx.globalAlpha = alpha * 0.72;
     ctx.fillStyle = accent;
-    ctx.fillRect(bx, by + 2, 2, boxH - 4);
+    ctx.fillRect(bx, by + 1.5, 1.2, boxH - 3);
 
-    // Semitransparent monospace title line
-    ctx.globalAlpha = alpha * 0.68;
+    // Micro monospace title line
+    ctx.globalAlpha = alpha * 0.74;
     ctx.font = FONT_TITLE;
     ctx.fillStyle = COLOR_INK;
     ctx.textBaseline = 'top';
-    ctx.fillText(title, bx + padX + 2, by + padY);
+    ctx.fillText(title, bx + padX + 1, by + padY);
 
-    // Semitransparent status / subtitle line
-    ctx.globalAlpha = alpha * 0.5;
+    // Micro status / subtitle line
+    ctx.globalAlpha = alpha * 0.56;
     ctx.font = FONT_SUB;
     ctx.fillStyle = accent === COLOR_MUTED ? COLOR_MUTED : COLOR_INK;
-    ctx.fillText(sub, bx + padX + 2, by + padY + 12);
+    ctx.fillText(sub, bx + padX + 1, by + padY + 8);
     ctx.restore();
   }
 
@@ -640,7 +639,7 @@ export class TelemetryOverlay {
 
     ctx.save();
     ctx.strokeStyle = COLOR_INK;
-    ctx.lineWidth = 1.1;
+    ctx.lineWidth = 0.8;
     // Draw geodesic arc segments with subtle fade toward the gravity pole
     for (let i = 0; i < steps; i++) {
       const a = pts[i];
@@ -648,7 +647,7 @@ export class TelemetryOverlay {
       if (!a.visible || !b.visible) continue;
       const frontMid = 0.5 * (a.front + b.front);
       ctx.globalAlpha = baseAlpha * this.depthAlpha(frontMid, 1.0, 0.28);
-      ctx.setLineDash(frontMid < 0.04 ? [3, 4] : [5, 3]);
+      ctx.setLineDash(frontMid < 0.04 ? [2, 3] : [3.5, 2.5]);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -669,40 +668,40 @@ export class TelemetryOverlay {
         const uy = dy / len;
         const px = -uy;
         const py = ux;
-        const head = 5.5;
-        const wing = 3.2;
+        const head = 3.2;
+        const wing = 1.9;
         ctx.setLineDash([]);
         ctx.globalAlpha = baseAlpha * 1.35 * this.depthAlpha(p1.front, 1.0, 0.35);
         ctx.strokeStyle = COLOR_INK;
-        ctx.lineWidth = 1.25;
+        ctx.lineWidth = 0.85;
         ctx.beginPath();
         ctx.moveTo(p1.x - ux * head + px * wing, p1.y - uy * head + py * wing);
         ctx.lineTo(p1.x, p1.y);
         ctx.lineTo(p1.x - ux * head - px * wing, p1.y - uy * head - py * wing);
         ctx.stroke();
 
-        // Compact floating monospace force readout near the chevron
+        // Micro floating monospace force readout near the chevron
         if (theta > 0.14 && p1.front > 0.05) {
           const text = `GRAV ${gForce.toFixed(2)}G`;
           ctx.font = FONT_SUB;
           const tw = ctx.measureText(text).width;
           const side = px >= 0 ? 1 : -1;
-          const bx = Math.round(p1.x + side * (10 + (side > 0 ? 0 : tw + 8)));
-          const by = Math.round(p1.y + py * 8 - 7);
-          const bw = Math.ceil(tw + 8);
-          const bh = 14;
+          const bx = Math.round(p1.x + side * (6 + (side > 0 ? 0 : tw + 5)));
+          const by = Math.round(p1.y + py * 5 - 4);
+          const bw = Math.ceil(tw + 5);
+          const bh = 9;
           const overlaps = placed.some(
-            (r) => bx < r.x + r.w + 4 && bx + bw + 4 > r.x && by < r.y + r.h + 4 && by + bh + 4 > r.y,
+            (r) => bx < r.x + r.w + 3 && bx + bw + 3 > r.x && by < r.y + r.h + 3 && by + bh + 3 > r.y,
           );
           if (!overlaps) {
             placed.push({ x: bx, y: by, w: bw, h: bh });
-            ctx.globalAlpha = baseAlpha * 0.58;
+            ctx.globalAlpha = baseAlpha * 0.52;
             ctx.fillStyle = 'rgba(236, 233, 226, 0.55)';
             ctx.fillRect(bx, by, bw, bh);
-            ctx.globalAlpha = baseAlpha * 0.95;
+            ctx.globalAlpha = baseAlpha * 0.92;
             ctx.fillStyle = COLOR_INK;
             ctx.textBaseline = 'top';
-            ctx.fillText(text, bx + 4, by + 2.5);
+            ctx.fillText(text, bx + 2.5, by + 1.5);
           }
         }
       }
@@ -745,9 +744,9 @@ export class TelemetryOverlay {
     const swCount = level.toggles.length;
     const hasSw = swCount > 0;
 
-    // Compute arc positions (in radians around 3 o'clock, top -> bottom)
-    const dotStepPx = isCompact ? 18 : 21;
-    const sepGapPx = isCompact ? 12 : 14;
+    // Compute taller, airier arc positions (in radians around 3 o'clock, top -> bottom)
+    const dotStepPx = isCompact ? 25 : 32;
+    const sepGapPx = isCompact ? 16 : 20;
     const dAng = dotStepPx / arcR;
     const sepAng = sepGapPx / arcR;
 
@@ -756,17 +755,57 @@ export class TelemetryOverlay {
     const totalSpan = cpSpan + (hasSw ? sepAng * 2 + swSpan : 0);
     const startAng = -totalSpan * 0.5;
     const endAng = totalSpan * 0.5;
-    const railPad = (isCompact ? 13 : 16) / arcR;
+    const railPad = (isCompact ? 20 : 26) / arcR;
+    const dotR = isCompact ? 4.0 : 4.6;
+    const gapPx = isCompact ? 4.0 : 5.0;
+
+    // Collect every occupied angular interval [ang - halfGap, ang + halfGap] so curved rail segments
+    // stop cleanly with generous breathing space before & after every circle and tick (zero intersections!)
+    const gaps: { a0: number; a1: number }[] = [];
+    for (let i = 0; i < cpCount; i++) {
+      const ang = startAng + i * dAng;
+      const cleared = !!clearedMask[i] || allCleared;
+      const isNext = !cleared && i === nextCpIdx;
+      const outerR = isNext ? dotR + 3.4 : dotR + 0.6;
+      const halfAng = (outerR + gapPx) / arcR;
+      gaps.push({ a0: ang - halfAng, a1: ang + halfAng });
+    }
+    if (hasSw) {
+      const sepCenterAng = startAng + cpSpan + sepAng;
+      const sepHalf = 5.5 / arcR;
+      gaps.push({ a0: sepCenterAng - sepHalf, a1: sepCenterAng + sepHalf });
+
+      const swStartAng = sepCenterAng + sepAng;
+      for (let i = 0; i < swCount; i++) {
+        const ang = swStartAng + i * dAng;
+        const halfAng = (dotR + 0.6 + gapPx) / arcR;
+        gaps.push({ a0: ang - halfAng, a1: ang + halfAng });
+      }
+    }
+    gaps.sort((u, v) => u.a0 - v.a0);
 
     ctx.save();
 
-    // 1. Hairline precision instrument arc hugging the right limb of the sphere
+    // 1. Hairline precision instrument arc hugging the right limb, segmented cleanly around every circle
     ctx.strokeStyle = COLOR_INK;
-    ctx.globalAlpha = 0.2;
+    ctx.globalAlpha = 0.22;
     ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(cx, cy, arcR, startAng - railPad, endAng + railPad);
-    ctx.stroke();
+    let cursorAng = startAng - railPad;
+    const railEndAng = endAng + railPad;
+    for (let i = 0; i < gaps.length; i++) {
+      const g = gaps[i];
+      if (g.a0 > cursorAng + 0.002) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, arcR, cursorAng, Math.min(railEndAng, g.a0));
+        ctx.stroke();
+      }
+      cursorAng = Math.max(cursorAng, g.a1);
+    }
+    if (railEndAng > cursorAng + 0.002) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, arcR, cursorAng, railEndAng);
+      ctx.stroke();
+    }
 
     // Tiny radial end-cap ticks at top & bottom of the orbital rail
     const drawRadialTick = (ang: number, innerOff: number, outerOff: number, alpha: number) => {
@@ -781,20 +820,7 @@ export class TelemetryOverlay {
     drawRadialTick(startAng - railPad, 3.5, 3.5, 0.28);
     drawRadialTick(endAng + railPad, 3.5, 3.5, 0.28);
 
-    const dotR = isCompact ? 4.0 : 4.6;
-
-    // Helper to punch a clean studio backdrop gap in the rail behind hollow dots
-    const clearUnderDot = (x: number, y: number, r: number) => {
-      ctx.save();
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.fillStyle = '#000';
-      ctx.beginPath();
-      ctx.arc(x, y, r + 2.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    };
-
-    // 2. Checkpoint indicator dots along the arc
+    // 2. Checkpoint indicator dots along the arc (cleanly isolated in their rail gaps)
     for (let i = 0; i < cpCount; i++) {
       const cp = level.checkpoints[i];
       const ang = startAng + i * dAng;
@@ -805,8 +831,6 @@ export class TelemetryOverlay {
       const isNext = !cleared && i === nextCpIdx;
       const isPipe = cp.layer === 'pipe';
 
-      clearUnderDot(x, y, isNext ? dotR + 2.4 : dotR);
-
       if (cleared) {
         ctx.globalAlpha = 0.96;
         ctx.fillStyle = '#24cc7e';
@@ -815,7 +839,6 @@ export class TelemetryOverlay {
         ctx.fill();
       } else if (isNext) {
         const fillCol = isPipe ? '#24cfc0' : '#f58420';
-        // Crisp outer orbital selection ring (pure flat GUI, zero border on dot itself)
         ctx.globalAlpha = 0.52;
         ctx.strokeStyle = fillCol;
         ctx.lineWidth = 1;
@@ -843,7 +866,7 @@ export class TelemetryOverlay {
       const sepCenterAng = startAng + cpSpan + sepAng;
       ctx.strokeStyle = COLOR_INK;
       ctx.lineWidth = 1;
-      drawRadialTick(sepCenterAng, 5, 5, 0.32);
+      drawRadialTick(sepCenterAng, 4.5, 4.5, 0.32);
 
       const swStartAng = sepCenterAng + sepAng;
       for (let i = 0; i < swCount; i++) {
@@ -853,8 +876,6 @@ export class TelemetryOverlay {
         const ang = swStartAng + i * dAng;
         const x = cx + Math.cos(ang) * arcR;
         const y = cy + Math.sin(ang) * arcR;
-
-        clearUnderDot(x, y, dotR);
 
         ctx.beginPath();
         if (on) {
@@ -900,7 +921,7 @@ export class TelemetryOverlay {
     const startP = this.projectLocal(NORTH_DIR, R_FLOOR + 0.012, sphereRoot, camera);
     if (startP.visible && startP.front > 0.14) {
       const a = this.depthAlpha(startP.front, 0.72, 0.0);
-      this.drawNodeSquare(startP.x, startP.y, 5, COLOR_INK, a * 0.8);
+      this.drawNodeSquare(startP.x, startP.y, 2.8, COLOR_INK, a * 0.8);
       this.drawCallout(
         startP.x,
         startP.y,
@@ -926,16 +947,16 @@ export class TelemetryOverlay {
       const isPipe = nextCp.layer === 'pipe';
       const accent = nextCp.isFinish ? COLOR_MINT : isPipe ? COLOR_TEAL : COLOR_AMBER;
 
-      // Subtle tether from chrome ball -> active next target + super-small geeky ABS & A* distance readout
+      // Subtle tether from marble -> active next target + micro ABS & A* distance readout
       if (ballP.visible && p.visible) {
         const dx = p.x - ballP.x;
         const dy = p.y - ballP.y;
         const distPx = Math.hypot(dx, dy);
-        if (distPx > 26) {
+        if (distPx > 22) {
           const lineA = this.depthAlpha(p.front, 0.5, 0.2);
-          this.drawLinkLine(ballP, p, accent, lineA, p.front < 0.08, 1);
+          this.drawLinkLine(ballP, p, accent, lineA, p.front < 0.08, 0.75);
 
-          if (distPx > 72) {
+          if (distPx > 54) {
             const absMm =
               Math.acos(Math.max(-1, Math.min(1, st.ballDir.dot(nextCp.dir)))) * st.ballRadius * MM_PER_UNIT;
             const aStarMm = this.computeAStarDistanceMm(st);
@@ -943,7 +964,6 @@ export class TelemetryOverlay {
             const dimText = `ABS ${absMm.toFixed(1)}  A* ${aStarStr}mm`;
 
             let angle = Math.atan2(dy, dx);
-            // Keep rotated micro text always right-side up!
             if (angle > Math.PI * 0.5) angle -= Math.PI;
             else if (angle < -Math.PI * 0.5) angle += Math.PI;
 
@@ -957,12 +977,12 @@ export class TelemetryOverlay {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
             const tw = ctx.measureText(dimText).width;
-            ctx.globalAlpha = Math.min(0.42, lineA * 0.7);
+            ctx.globalAlpha = Math.min(0.4, lineA * 0.68);
             ctx.fillStyle = 'rgba(236, 233, 226, 0.55)';
-            ctx.fillRect(-tw * 0.5 - 3, -13, tw + 6, 10);
-            ctx.globalAlpha = Math.min(0.68, lineA * 1.18);
+            ctx.fillRect(-tw * 0.5 - 2.5, -10.5, tw + 5, 8.5);
+            ctx.globalAlpha = Math.min(0.72, lineA * 1.2);
             ctx.fillStyle = accent;
-            ctx.fillText(dimText, 0, -4);
+            ctx.fillText(dimText, 0, -3);
             ctx.restore();
           }
         }
@@ -970,9 +990,9 @@ export class TelemetryOverlay {
 
       if (p.visible) {
         const a = this.depthAlpha(p.front, 0.94, 0.3);
-        const bHalf = (nextCp.isFinish ? 22 : 18) + pulse * 1.6;
-        this.drawBrackets(p.x, p.y, bHalf, 6, p.front > 0.05 ? COLOR_INK : accent, a, 1.3);
-        this.drawNodeSquare(p.x, p.y, 4.5, COLOR_INK, a * 0.85, accent);
+        const bHalf = (nextCp.isFinish ? 11 : 9.5) + pulse * 0.9;
+        this.drawBrackets(p.x, p.y, bHalf, 3.5, p.front > 0.05 ? COLOR_INK : accent, a, 0.9);
+        this.drawNodeSquare(p.x, p.y, 2.5, COLOR_INK, a * 0.85, accent);
 
         const title = nextCp.isFinish ? 'EXIT' : `TARGET ${st.nextCpIdx + 1}`;
         const sub = nextCp.isFinish
@@ -1006,8 +1026,8 @@ export class TelemetryOverlay {
       const swAlpha = this.depthAlpha(swP.front, 0.92, 0.22);
 
       if (swP.front > -0.1 || emphasis > 0.1) {
-        this.drawBrackets(swP.x, swP.y, 14 + emphasis * 3, 5, swColor, Math.min(1, swAlpha + emphasis * 0.2), 1.25);
-        this.drawNodeSquare(swP.x, swP.y, 3.5, COLOR_INK, swAlpha, swColor);
+        this.drawBrackets(swP.x, swP.y, 7.5 + emphasis * 1.6, 3, swColor, Math.min(1, swAlpha + emphasis * 0.2), 0.85);
+        this.drawNodeSquare(swP.x, swP.y, 2.2, COLOR_INK, swAlpha, swColor);
         if (swP.front > 0.06 || emphasis > 0.1) {
           this.drawCallout(
             swP.x,
@@ -1038,10 +1058,10 @@ export class TelemetryOverlay {
           Math.max(swAlpha, this.depthAlpha(doorP.front, 0.84, 0.18)) * (bothFront ? 0.58 : 0.24) + emphasis * 0.38,
         );
 
-        this.drawLinkLine(swP, doorP, swColor, linkAlpha, !bothFront || !isClosed, emphasis > 0.15 ? 1.4 : 1);
+        this.drawLinkLine(swP, doorP, swColor, linkAlpha, !bothFront || !isClosed, emphasis > 0.15 ? 1.0 : 0.75);
 
         const dAlpha = Math.min(1, this.depthAlpha(doorP.front, 0.86, 0.2) + emphasis * 0.22);
-        this.drawNodeSquare(doorP.x, doorP.y, 4.5, swColor, dAlpha, isClosed ? swColor : COLOR_MINT);
+        this.drawNodeSquare(doorP.x, doorP.y, 2.5, swColor, dAlpha, isClosed ? swColor : COLOR_MINT);
 
         if (doorP.front > 0.16 || emphasis > 0.15) {
           this.drawCallout(
@@ -1071,10 +1091,10 @@ export class TelemetryOverlay {
           Math.max(swAlpha, this.depthAlpha(shP.front, 0.84, 0.18)) * (bothFront ? 0.56 : 0.24) + emphasis * 0.38,
         );
 
-        this.drawLinkLine(swP, shP, swColor, linkAlpha, !bothFront || !isOpen, emphasis > 0.15 ? 1.4 : 1);
+        this.drawLinkLine(swP, shP, swColor, linkAlpha, !bothFront || !isOpen, emphasis > 0.15 ? 1.0 : 0.75);
 
         const sAlpha = Math.min(1, this.depthAlpha(shP.front, 0.86, 0.2) + emphasis * 0.22);
-        this.drawNodeSquare(shP.x, shP.y, 5, swColor, sAlpha, isOpen ? COLOR_MINT : swColor);
+        this.drawNodeSquare(shP.x, shP.y, 2.8, swColor, sAlpha, isOpen ? COLOR_MINT : swColor);
 
         if (shP.front > 0.18 || emphasis > 0.15) {
           this.drawCallout(
@@ -1113,7 +1133,7 @@ export class TelemetryOverlay {
 
       if (needPipePortal && nextTargetP && nextCp?.layer === 'pipe') {
         const bothFront = shP.front > 0.05 && nextTargetP.front > 0.05;
-        this.drawLinkLine(shP, nextTargetP, COLOR_TEAL, bothFront ? 0.34 : 0.14, true, 1);
+        this.drawLinkLine(shP, nextTargetP, COLOR_TEAL, bothFront ? 0.34 : 0.14, true, 0.75);
       }
 
       if (linkedShutterSet.has(sh.id) && !isReadyHere) continue;
@@ -1121,9 +1141,9 @@ export class TelemetryOverlay {
       const sAlpha = this.depthAlpha(shP.front, 0.84, 0.16);
       if (shP.front > 0.08 || isReadyHere) {
         if (isReadyHere) {
-          this.drawBrackets(shP.x, shP.y, 18 + st.readyDwell * 3, 6, COLOR_MINT, 0.94, 1.35);
+          this.drawBrackets(shP.x, shP.y, 9.5 + st.readyDwell * 1.6, 3.5, COLOR_MINT, 0.94, 0.95);
         }
-        this.drawNodeSquare(shP.x, shP.y, 4.5, COLOR_INK, sAlpha * 0.82, COLOR_MINT);
+        this.drawNodeSquare(shP.x, shP.y, 2.5, COLOR_INK, sAlpha * 0.82, COLOR_MINT);
 
         if (shP.front > 0.2 || isReadyHere) {
           this.drawCallout(
@@ -1155,7 +1175,7 @@ export class TelemetryOverlay {
           : isLocked
             ? COLOR_MINT
             : COLOR_INK;
-      this.drawNodeSquare(ballP.x, ballP.y, 5.5, COLOR_INK, bAlpha * 0.68, isLocked ? accent : undefined);
+      this.drawNodeSquare(ballP.x, ballP.y, 3, COLOR_INK, bAlpha * 0.68, isLocked ? accent : undefined);
     }
   }
 }
