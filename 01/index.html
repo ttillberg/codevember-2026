@@ -40,7 +40,13 @@
 
     <div class="toolbar" role="toolbar" aria-label="Fold controls">
       <button id="btn-action" class="action-btn" type="button">Fold</button>
-      <input id="progress-range" class="progress-range" type="range" min="0" max="1" step="0.002" value="0" aria-label="Fold progress" />
+      <label class="auto-check" for="chk-auto" title="Continuously fold and project through houses (A)">
+        <input id="chk-auto" class="auto-check-input" type="checkbox" />
+        <span class="auto-check-box" aria-hidden="true">
+          <svg viewBox="0 0 12 12"><path d="M2.4 6.2 4.9 8.7 9.6 3.4" /></svg>
+        </span>
+        <span class="auto-check-label">Auto</span>
+      </label>
     </div>
 
     <div class="bottom-right">
@@ -217,9 +223,16 @@
           <span>Rotate</span>
           <input id="dbg-spin" class="debug-switch" type="checkbox" checked />
         </label>
-        <label class="debug-row" for="dbg-persp-cut" title="Jump camera directly to above 3/4 at the exact moment of projection">
-          <span>Jump view</span>
-          <input id="dbg-persp-cut" class="debug-switch" type="checkbox" />
+        <label class="debug-row debug-row-stack" for="dbg-camera-trick" title="Secretly teleport the camera at the exact moment of 1:1 projection (overhead, rolled, inverted, low horizon)">
+          <span>Camera trick</span>
+          <select id="dbg-camera-trick" class="debug-select" aria-label="Projection camera trick">
+            <option value="drastic">Extreme (all angles)</option>
+            <option value="overhead">Overhead (+85°)</option>
+            <option value="rolled">Inverted / Rolled</option>
+            <option value="low">Low horizon (+6°)</option>
+            <option value="subtle">Subtle 3/4</option>
+            <option value="off">Off</option>
+          </select>
         </label>
         <label class="debug-row" for="dbg-glide-fold" title="Smoothly re-transition camera perspective while the house folds">
           <span>Glide on fold</span>
@@ -240,7 +253,7 @@
     <header id="city-bar" class="city-bar" aria-label="City view controls" hidden>
       <div class="catalog-title-wrap">
         <h2>City</h2>
-        <span id="city-subtitle" class="catalog-sub">Seed 0 · Organic</span>
+        <span id="city-subtitle" class="catalog-sub">Seed 0 · Coastal</span>
       </div>
       <div class="catalog-controls">
         <div class="cat-seed-group" aria-label="City seed controls">
@@ -248,24 +261,26 @@
           <button id="city-seed-prev" class="cat-step-btn" type="button" aria-label="Previous city seed">−</button>
           <input id="city-seed-input" class="cat-seed-input" type="number" min="0" max="99999" value="0" aria-label="City seed" />
           <button id="city-seed-next" class="cat-step-btn" type="button" aria-label="Next city seed">+</button>
-          <button id="city-seed-roll" class="cat-pill-btn" type="button" title="Roll a random city">Roll</button>
+          <button id="city-seed-roll" class="cat-pill-btn" type="button" title="Roll a random coastal city">Roll</button>
         </div>
         <div id="city-style-seg" class="cat-seg" role="group" aria-label="Street topology">
-          <button type="button" class="cat-seg-btn active" data-city-style="organic">Organic</button>
+          <button type="button" class="cat-seg-btn active" data-city-style="mix" title="Seeded deterministic district topologies">Mix</button>
+          <button type="button" class="cat-seg-btn" data-city-style="organic">Organic</button>
           <button type="button" class="cat-seg-btn" data-city-style="grid">Grid</button>
           <button type="button" class="cat-seg-btn" data-city-style="radial">Radial</button>
         </div>
-        <label class="cat-consist-group" for="city-hills" title="Topography elevation relief">
+        <label class="cat-consist-group" for="city-hills" title="Coastal cliff & hillside elevation relief">
           <span class="cat-ctrl-label">Hills</span>
           <input id="city-hills" class="cat-range" type="range" min="0" max="100" step="5" value="55" />
           <span id="city-hills-val" class="cat-range-val">55%</span>
         </label>
-        <button id="city-fold-btn" class="cat-pill-btn" type="button" title="Toggle fold wave across the whole city">Unfold</button>
+        <button id="city-fly-btn" class="cat-pill-btn" type="button" aria-pressed="true" title="Curved coastal flyover (Space)">Fly</button>
+        <button id="city-fold-btn" class="cat-pill-btn" type="button" title="Cycle fold mode: Wave / Folded / Flat (W)">Wave</button>
         <button id="city-color-btn" class="cat-pill-btn" type="button" aria-pressed="false">Color</button>
         <button id="city-close" class="help-close" type="button" aria-label="Close city view">×</button>
       </div>
     </header>
-    <div id="city-status" class="city-status" aria-live="polite" hidden>Drag to orbit · Shift-drag to pan · Click any house to fold</div>
+    <div id="city-status" class="city-status" aria-live="polite" hidden>Flying along the coast · Drag to look · Space to pause · Click any house to fold</div>
 
     <div class="catalog-wall" id="catalog-modal" role="dialog" aria-modal="true" aria-label="Generations catalog" hidden>
       <header class="catalog-head">
@@ -311,8 +326,9 @@
           <div><dt>Fold by hand</dt><dd>Click or drag any wall or roof flap directly up into place</dd></div>
           <div><dt><span class="key">Space</span></dt><dd>Fold the whole house in one staggered wave and project onto the next sheet</dd></div>
           <div><dt><span class="key">F</span></dt><dd>Toggle staggered fold / unfold</dd></div>
+          <div><dt><span class="key">A</span></dt><dd>Toggle automatic continuous folding loop</dd></div>
           <div><dt><span class="key">G</span></dt><dd>Browse seeded generations grid and click any tile to fold</dd></div>
-          <div><dt><span class="key">C</span></dt><dd>Explore 3D paper city with hills &amp; randomized streets; click any house to inspect</dd></div>
+          <div><dt><span class="key">C</span></dt><dd>Fly infinitely along a deterministic paper city by the sea; houses fold as you pass</dd></div>
           <div><dt><span class="key">R</span></dt><dd>Reset to Layer 1 and default camera</dd></div>
           <div><dt>Drag sheet</dt><dd>Orbit 360° around the paper; scroll or pinch to zoom</dd></div>
         </dl>

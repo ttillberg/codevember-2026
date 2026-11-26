@@ -211,34 +211,87 @@ body {
   transform: scale(0.96);
 }
 
-.progress-range {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 112px;
-  height: 3px;
-  border-radius: 999px;
-  background: rgba(28, 28, 28, 0.18);
-  outline: none;
+.auto-check {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px 4px 2px;
   cursor: pointer;
+  user-select: none;
 }
 
-.progress-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--ink);
-  cursor: pointer;
+.auto-check-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
 }
 
-.progress-range::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border: none;
-  border-radius: 50%;
+.auto-check-box {
+  width: 15px;
+  height: 15px;
+  border-radius: 4.5px;
+  border: 1.5px solid rgba(28, 28, 28, 0.28);
+  background: rgba(255, 255, 255, 0.58);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 160ms ease, border-color 160ms ease, transform 120ms ease;
+  flex-shrink: 0;
+}
+
+.auto-check-box svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: #faf8f4;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 140ms ease, transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.auto-check-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: rgba(28, 28, 28, 0.56);
+  transition: color 140ms ease;
+}
+
+.auto-check:hover .auto-check-box {
+  border-color: rgba(28, 28, 28, 0.48);
+}
+
+.auto-check:hover .auto-check-label {
+  color: var(--ink);
+}
+
+.auto-check:active .auto-check-box {
+  transform: scale(0.92);
+}
+
+.auto-check-input:focus-visible + .auto-check-box {
+  box-shadow: 0 0 0 2px rgba(28, 28, 28, 0.22);
+}
+
+.auto-check-input:checked + .auto-check-box {
   background: var(--ink);
-  cursor: pointer;
+  border-color: var(--ink);
+}
+
+.auto-check-input:checked + .auto-check-box svg {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.auto-check-input:checked ~ .auto-check-label {
+  color: var(--ink);
 }
 
 .sep {
@@ -1081,9 +1134,6 @@ body {
   .top-actions {
     top: max(16px, env(safe-area-inset-top));
     right: max(16px, env(safe-area-inset-right));
-  }
-  .progress-range {
-    width: 84px;
   }
 }
 

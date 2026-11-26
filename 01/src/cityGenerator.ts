@@ -3,28 +3,54 @@ import {
   buildHouseNet,
   generateHouseSpec,
   polygonsOverlap,
+  type GableProfile,
   type HouseMixOptions,
   type HouseNetSpec,
   type RoofType,
   type V2,
 } from './origamiHouseNet';
 
-export type CityStreetStyle = 'organic' | 'grid' | 'radial';
+export const CITY_CHUNK_SIZE = 44;
 
-export const ALL_CITY_STREET_STYLES: readonly CityStreetStyle[] = ['organic', 'grid', 'radial'];
+export type CityStreetStyle = 'mix' | 'organic' | 'grid' | 'radial';
+export type ConcreteStreetStyle = 'organic' | 'grid' | 'radial';
+
+export const ALL_CITY_STREET_STYLES: readonly CityStreetStyle[] = ['mix', 'organic', 'grid', 'radial'];
+
+/**
+ * Analytic seeded coastal harmonics shared 1:1 between CPU terrain/chunk generation
+ * and the GPU paper sea shader for exact shoreline ripples and cove depth tinting.
+ */
+export interface CoastHarmonics {
+  a1: number;
+  f1: number;
+  p1: number;
+  a2: number;
+  f2: number;
+  p2: number;
+  a3: number;
+  f3: number;
+  p3: number;
+  a4: number;
+  f4: number;
+  p4: number;
+}
 
 export interface CityTerrainField {
   seed: number;
-  /** Normalized relief amplitude (`0` = flat, `1` = steep dramatic hillside) */
+  /** Normalized relief amplitude (`0` = flat coastal quay, `1` = dramatic terraced cliffs) */
   hills: number;
-  /** Active city radius where full elevation applies (world units) */
-  cityRadius: number;
-  /** Outer radius where terrain blends seamlessly back to `y = 0` studio paper */
-  fadeRadius: number;
-  /** Primary hilltop world coordinates `(x, z)` */
-  summit: [number, number];
-  /** Evaluate continuous paper elevation `y >= 0` at world `(x, z)` */
+  coastHarmonics: CoastHarmonics;
+  /** Deterministic shoreline X coordinate at world Z (`x < coastX(z)` is sea, `x > coastX(z)` is city) */
+  coastX(z: number): number;
+  /** Analytical derivative `d(coastX)/dz` for aligning promenades, piers, and seawalls */
+  coastSlopeZ(z: number): number;
+  /** Signed inland distance (`> 0` land, `< 0` sea) */
+  signedInland(x: number, z: number): number;
+  /** Evaluate continuous infinite elevation (`< 0` seafloor, `0` shoreline, `> 0` coastal city & hills) */
   heightAt(x: number, z: number): number;
+  /** Resolve deterministic district topology at world `(x, z)` */
+  districtStyleAt(x: number, z: number, styleOverride: CityStreetStyle): ConcreteStreetStyle;
 }
 
 export interface CityContourSegment {
@@ -36,7 +62,7 @@ export interface CityContourSegment {
 
 export interface CityStreet {
   id: string;
-  kind: 'avenue' | 'street' | 'lane';
+  kind: 'promenade' | 'avenue' | 'street' | 'lane';
   width: number;
   /** Ordered 2D world `(x, z)` polyline vertices */
   points: V2[];
@@ -48,8 +74,49 @@ export interface CityPlaza {
   radius: number;
 }
 
+export interface CityPier {
+  x: number;
+  z: number;
+  yaw: number;
+  length: number;
+  width: number;
+  deckY: number;
+}
+
+export interface CityBoat {
+  x: number;
+  z: number;
+  yaw: number;
+  scale: number;
+  phase: number;
+}
+
+/**
+ * Lightweight local-space architectural wing summary used by LOD1 & LOD2 merged chunk builders
+ * so distant buildings match LOD0 origami silhouettes (gable, stepped, mansard, spire, composite wings)
+ * without running `buildHouseNet` or creating per-building meshes.
+ */
+export interface CityWingMassing {
+  /** Center offset in building-local world units `(x, z)` */
+  cx: number;
+  cz: number;
+  /** Footprint extents in world units */
+  W: number;
+  D: number;
+  /** Wall eave height in world units */
+  H: number;
+  roofType: RoofType;
+  gableProfile: GableProfile;
+  pitch: number;
+  mansardRatio: number;
+  /** Palette slot offset (0..3) for multi-colored wall-to-wall composites */
+  colorSlot: number;
+}
+
 export interface CityBuildingPlot {
   id: string;
+  chunkKey: string;
+  /** Local index inside chunk (`0..27`) for GPU LOD0/LOD1 visibility handoff */
   index: number;
   x: number;
   z: number;
@@ -57,18 +124,24 @@ export interface CityBuildingPlot {
   baseY: number;
   /** Lowest terrain elevation under the footprint (plinth extends cleanly below this) */
   groundMinY: number;
-  /** Rotation around +Y so the building's street-facing front (`+Z`) faces its street curb */
+  /** Rotation around +Y so the building's street/sea-facing front (`+Z`) faces the curb */
   yaw: number;
   /** Exact 2D world `(x, z)` footprint polygon (4 corners, CCW) */
   footprint: V2[];
   /** Unrotated local `(W, D)` footprint extents in world units */
   footprintW: number;
   footprintD: number;
-  /** Exact generation + mix options so clicking this house loads it 1:1 in Fold View! */
+  /** Simplified architectural massing wings for GPU LOD1/LOD2 rendering */
+  wings: CityWingMassing[];
+  /** Deterministic paper palette index (`0..7`) */
+  colorIndex: number;
+  /** Deterministic wave phase jitter (world units) for organic cascading fold motion */
+  foldJitter: number;
+  /** Exact generation + mix options so clicking any house loads it 1:1 in Fold View! */
   generation: number;
   mixOpts: HouseMixOptions;
   spec: HouseNetSpec;
-  /** Radial/street wave delay order (`0..1`) for the city-wide origami fold bloom */
+  /** Normalized coastal proximity order (`0..1`) */
   foldOrder: number;
 }
 
@@ -81,21 +154,38 @@ export interface CityTree {
   variant: 0 | 1 | 2;
 }
 
-export interface CityLayout {
-  seed: number;
-  style: CityStreetStyle;
-  hills: number;
-  terrain: CityTerrainField;
+export interface CityChunkData {
+  cx: number;
+  cz: number;
+  key: string;
+  centerX: number;
+  centerZ: number;
+  districtStyle: ConcreteStreetStyle;
+  hasLand: boolean;
+  hasSea: boolean;
+  hasCoast: boolean;
   streets: CityStreet[];
   plazas: CityPlaza[];
   plots: CityBuildingPlot[];
   trees: CityTree[];
-  contours: CityContourSegment[];
-  /** Total distinct architectural rooftops (counting each wing inside composite houses!) */
+  piers: CityPier[];
+  boats: CityBoat[];
   rooftopCount: number;
 }
 
-export interface CityBuildOptions {
+export interface FlightSample {
+  pos: [number, number, number];
+  lookAt: [number, number, number];
+  /** Normalized horizontal flight forward vector `(fx, fz)` */
+  forward: [number, number];
+  /** Glider bank roll in radians (`+` right bank, `-` left bank) */
+  bankRoll: number;
+  /** Sweeping fold-wave anchor slightly ahead of the lens */
+  focusX: number;
+  focusZ: number;
+}
+
+export interface CoastalWorldOptions {
   seed: number;
   style: CityStreetStyle;
   hills: number;
@@ -105,7 +195,22 @@ export interface CityBuildOptions {
   windowDetail?: HouseMixOptions['windowDetail'];
 }
 
-function makeCityRng(seed: number) {
+export interface CoastalWorld {
+  seed: number;
+  style: CityStreetStyle;
+  hills: number;
+  options: CoastalWorldOptions;
+  terrain: CityTerrainField;
+  generateChunk(cx: number, cz: number): CityChunkData;
+  extractChunkContours(cx: number, cz: number, gridRes?: number, stepY?: number): CityContourSegment[];
+  sampleFlight(s: number): FlightSample;
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic Seeded PRNG & Smooth Noise Primitives
+// ---------------------------------------------------------------------------
+
+function makeRng(seed: number) {
   let s = (seed >>> 0) || 1;
   const next = () => {
     s = (s + 0x6d2b79f5) >>> 0;
@@ -122,10 +227,22 @@ function makeCityRng(seed: number) {
   };
 }
 
-function hash2i(ix: number, iz: number, seed: number): number {
-  let h = (Math.imul(ix, 374761393) + Math.imul(iz, 668265263) + Math.imul(seed | 1, 1442695041)) | 0;
+function hash1i(i: number, seed: number): number {
+  let h = (Math.imul(i | 0, 374761393) + Math.imul(seed | 1, 668265263)) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function hash2i(ix: number, iz: number, seed: number): number {
+  let h = (Math.imul(ix | 0, 374761393) + Math.imul(iz | 0, 668265263) + Math.imul(seed | 1, 1442695041)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function hash2u32(ix: number, iz: number, seed: number): number {
+  let h = (Math.imul(ix | 0, 374761393) + Math.imul(iz | 0, 668265263) + Math.imul(seed | 1, 1442695041)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) || 1;
 }
 
 function valueNoise2D(x: number, z: number, seed: number): number {
@@ -147,110 +264,169 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+// ---------------------------------------------------------------------------
+// Infinite Deterministic Coastal Terrain & Coastline Field
+// ---------------------------------------------------------------------------
+
 /**
- * Create a smooth, architectural seeded elevation field (`heightAt(x, z) >= 0`) featuring a sculptural
- * hilltop crown, gentle meandering valley, and smooth outer blend back to `y = 0` studio paper.
+ * Create a continuous, infinite, deterministic coastal paper topography:
+ *  - `x < coastX(z)` is the folded paper sea (with occasional sculptural offshore islets),
+ *  - `x ≈ coastX(z)` rises via a crisp architectural seawall quay shelf above `y = 0`,
+ *  - `x > coastX(z)` climbs into tiered rolling hills, valleys, and coastal headlands.
  */
 export function createTerrainField(seed: number, hills01: number): CityTerrainField {
+  const s = Math.max(0, Math.round(seed));
   const hills = Math.max(0, Math.min(1, hills01));
-  const rng = makeCityRng((seed * 7919 + 4129) >>> 0);
-  const cityRadius = 42;
-  const fadeRadius = 60;
+  const rng = makeRng((s * 7919 + 4129) >>> 0);
 
-  // Place primary acropolis hill slightly off-center + opposing gentle valley for dramatic skyline silhouette
-  const hillAng = rng.range(0, Math.PI * 2);
-  const hillDist = rng.range(5, 14);
-  const hillX = Math.cos(hillAng) * hillDist;
-  const hillZ = Math.sin(hillAng) * hillDist;
-  const hillSigma = rng.range(17, 23);
+  // 4 incommensurate seeded coastal harmonics — identical on CPU and GPU sea shader!
+  const coastHarmonics: CoastHarmonics = {
+    a1: rng.range(18.0, 25.0),
+    f1: 0.0041,
+    p1: rng.range(0, Math.PI * 2),
+    a2: rng.range(10.5, 16.0),
+    f2: 0.0097,
+    p2: rng.range(0, Math.PI * 2),
+    a3: rng.range(5.2, 8.8),
+    f3: 0.0183,
+    p3: rng.range(0, Math.PI * 2),
+    a4: rng.range(2.0, 3.8),
+    f4: 0.0317,
+    p4: rng.range(0, Math.PI * 2),
+  };
 
-  const valAng = hillAng + Math.PI + rng.range(-0.65, 0.65);
-  const valDist = rng.range(10, 18);
-  const valX = Math.cos(valAng) * valDist;
-  const valZ = Math.sin(valAng) * valDist;
-  const valSigma = rng.range(15, 21);
+  const nSeed1 = (s * 131 + 17) >>> 0;
+  const nSeed2 = (s * 521 + 97) >>> 0;
+  const nSeed3 = (s * 997 + 211) >>> 0;
+  const isletSeed = (s * 1613 + 389) >>> 0;
 
-  const ridgeAng = rng.range(0, Math.PI);
-  const ridgeCos = Math.cos(ridgeAng);
-  const ridgeSin = Math.sin(ridgeAng);
+  const coastX = (z: number): number =>
+    coastHarmonics.a1 * Math.sin(z * coastHarmonics.f1 + coastHarmonics.p1) +
+    coastHarmonics.a2 * Math.sin(z * coastHarmonics.f2 + coastHarmonics.p2) +
+    coastHarmonics.a3 * Math.cos(z * coastHarmonics.f3 + coastHarmonics.p3) +
+    coastHarmonics.a4 * Math.sin(z * coastHarmonics.f4 + coastHarmonics.p4);
 
-  const nSeed1 = (seed * 131 + 17) >>> 0;
-  const nSeed2 = (seed * 521 + 97) >>> 0;
-  const maxAmp = hills * 8.6;
+  const coastSlopeZ = (z: number): number =>
+    coastHarmonics.a1 * coastHarmonics.f1 * Math.cos(z * coastHarmonics.f1 + coastHarmonics.p1) +
+    coastHarmonics.a2 * coastHarmonics.f2 * Math.cos(z * coastHarmonics.f2 + coastHarmonics.p2) -
+    coastHarmonics.a3 * coastHarmonics.f3 * Math.sin(z * coastHarmonics.f3 + coastHarmonics.p3) +
+    coastHarmonics.a4 * coastHarmonics.f4 * Math.cos(z * coastHarmonics.f4 + coastHarmonics.p4);
+
+  const signedInland = (x: number, z: number): number => x - coastX(z);
 
   const heightAt = (x: number, z: number): number => {
-    if (hills <= 1e-4) return 0;
-    const r = Math.hypot(x, z);
-    if (r >= fadeRadius) return 0;
-    const fade = 1 - smoothstep(cityRadius - 2, fadeRadius, r);
+    const cx = coastX(z);
+    const d = x - cx;
 
-    const dh2 = (x - hillX) * (x - hillX) + (z - hillZ) * (z - hillZ);
-    const primaryHill = Math.exp(-dh2 / (2 * hillSigma * hillSigma));
+    if (d <= 0) {
+      // Gentle sloping seabed + occasional sculptural coastal paper islets offshore!
+      const seaDepth = -smoothstep(0, 14, -d) * 2.2 - 0.06;
+      if (d < -16 && d > -95) {
+        const isl = valueNoise2D(x * 0.026 + 4.2, z * 0.026 - 9.1, isletSeed);
+        if (isl > 0.77) {
+          const mound = smoothstep(0.77, 0.94, isl) * (2.6 + hills * 4.4);
+          return seaDepth + mound;
+        }
+      }
+      return seaDepth;
+    }
 
-    const dv2 = (x - valX) * (x - valX) + (z - valZ) * (z - valZ);
-    const valleyDip = Math.exp(-dv2 / (2 * valSigma * valSigma)) * 0.42;
+    // Crisp architectural paper quay / seawall step right at the water's edge
+    const quayRise = smoothstep(0, 2.2, d) * 0.82;
+    if (hills <= 1e-4) {
+      return quayRise;
+    }
 
-    const along = x * ridgeCos + z * ridgeSin;
-    const across = -x * ridgeSin + z * ridgeCos;
-    const ridgeWave = Math.sin(along * 0.095 + 0.6) * Math.exp(-(across * across) / (2 * 24 * 24)) * 0.22;
+    // Headland factor: promontories jutting seaward (lower coastX) rise slightly bolder into cliffs
+    const headlandBoost = smoothstep(14, -22, cx) * 0.36;
 
-    const n1 = (valueNoise2D(x * 0.048 + 11.3, z * 0.048 - 7.1, nSeed1) - 0.35) * 0.48;
-    const n2 = (valueNoise2D(x * 0.105 - 3.7, z * 0.105 + 19.2, nSeed2) - 0.5) * 0.16;
+    // Multi-octave smooth coastal hills & amphitheater rising gently inland
+    const n1 = valueNoise2D(x * 0.0135 + 11.3, z * 0.0135 - 7.1, nSeed1);
+    const n2 = valueNoise2D(x * 0.030 - 3.7, z * 0.030 + 19.2, nSeed2);
+    const n3 = valueNoise2D(x * 0.064 + 23.5, z * 0.064 - 14.8, nSeed3);
 
-    const raw = Math.max(0, 0.22 + primaryHill * 0.78 - valleyDip + ridgeWave + n1 + n2);
-    return raw * maxAmp * fade;
+    const fbm = n1 * 0.62 + n2 * 0.27 + n3 * 0.11;
+    // Keep the waterfront promenade & first row of harbor houses gently sloped before rolling up into coastal hills!
+    const coastalTerrace = smoothstep(4.5, 26, d) * (0.36 + headlandBoost * 0.85);
+    const inlandRamp = smoothstep(14, 108, d);
+    const relief =
+      (coastalTerrace * (0.48 + fbm * 0.72) + inlandRamp * (0.44 + fbm * 1.28 + headlandBoost * 0.45)) *
+      (hills * 10.6);
+
+    return quayRise + relief;
+  };
+
+  const districtStyleAt = (_x: number, z: number, styleOverride: CityStreetStyle): ConcreteStreetStyle => {
+    if (styleOverride !== 'mix') return styleOverride;
+    // Deterministic coastal districts every ~132 world units (3 chunks) along the coastline!
+    const distIdx = Math.floor(z / (CITY_CHUNK_SIZE * 3));
+    const r = hash1i(distIdx, s * 313 + 71);
+    if (r < 0.44) return 'organic';
+    if (r < 0.74) return 'grid';
+    return 'radial';
   };
 
   return {
-    seed,
+    seed: s,
     hills,
-    cityRadius,
-    fadeRadius,
-    summit: [hillX, hillZ],
+    coastHarmonics,
+    coastX,
+    coastSlopeZ,
+    signedInland,
     heightAt,
+    districtStyleAt,
   };
 }
 
-/**
- * Extract crisp Marching Squares architectural contour polylines from `terrain` for subtle laser-etched
- * elevation rings across the rolling white paper landscape.
- */
-export function extractContourSegments(
+// ---------------------------------------------------------------------------
+// Marching Squares Chunk Contour Extractor (Seam-Free Across Chunks!)
+// ---------------------------------------------------------------------------
+
+export function extractChunkContours(
   terrain: CityTerrainField,
-  gridRes = 76,
-  extent = 54,
-  stepY = 0.55,
+  cx: number,
+  cz: number,
+  gridRes = 24,
+  stepY = 0.65,
 ): CityContourSegment[] {
-  if (terrain.hills <= 0.02) return [];
-  const step = (extent * 2) / gridRes;
-  const heights = new Float32Array((gridRes + 1) * (gridRes + 1));
-  let maxH = 0;
+  const xStart = cx * CITY_CHUNK_SIZE;
+  const zStart = cz * CITY_CHUNK_SIZE;
+  const step = CITY_CHUNK_SIZE / gridRes;
+  const stride = gridRes + 1;
+  const heights = new Float32Array(stride * stride);
+
+  let maxH = -Infinity;
+  let minH = Infinity;
   for (let j = 0; j <= gridRes; j++) {
-    const z = -extent + j * step;
+    const z = zStart + j * step;
     for (let i = 0; i <= gridRes; i++) {
-      const x = -extent + i * step;
+      const x = xStart + i * step;
       const h = terrain.heightAt(x, z);
-      heights[j * (gridRes + 1) + i] = h;
+      heights[j * stride + i] = h;
       if (h > maxH) maxH = h;
+      if (h < minH) minH = h;
     }
   }
+  if (maxH < 0.35) return [];
 
-  const levels = Math.floor(maxH / stepY);
+  const minLv = Math.max(1, Math.floor(Math.max(0.45, minH) / stepY));
+  const maxLv = Math.floor(maxH / stepY);
   const segs: CityContourSegment[] = [];
 
-  for (let lv = 1; lv <= levels; lv++) {
+  for (let lv = minLv; lv <= maxLv; lv++) {
     const iso = lv * stepY;
+    if (iso < 0.65) continue;
     const isMajor = lv % 4 === 0;
     for (let j = 0; j < gridRes; j++) {
-      const z0 = -extent + j * step;
+      const z0 = zStart + j * step;
       const z1 = z0 + step;
       for (let i = 0; i < gridRes; i++) {
-        const x0 = -extent + i * step;
+        const x0 = xStart + i * step;
         const x1 = x0 + step;
-        const h00 = heights[j * (gridRes + 1) + i];
-        const h10 = heights[j * (gridRes + 1) + (i + 1)];
-        const h11 = heights[(j + 1) * (gridRes + 1) + (i + 1)];
-        const h01 = heights[(j + 1) * (gridRes + 1) + i];
+        const h00 = heights[j * stride + i];
+        const h10 = heights[j * stride + (i + 1)];
+        const h11 = heights[(j + 1) * stride + (i + 1)];
+        const h01 = heights[(j + 1) * stride + i];
 
         const m =
           (h00 >= iso ? 1 : 0) |
@@ -262,10 +438,10 @@ export function extractContourSegments(
         const interp = (a: number, b: number, ha: number, hb: number) =>
           Math.abs(hb - ha) < 1e-6 ? (a + b) * 0.5 : a + ((iso - ha) / (hb - ha)) * (b - a);
 
-        const e0: [number, number] = [interp(x0, x1, h00, h10), z0]; // top
-        const e1: [number, number] = [x1, interp(z0, z1, h10, h11)]; // right
-        const e2: [number, number] = [interp(x0, x1, h01, h11), z1]; // bottom
-        const e3: [number, number] = [x0, interp(z0, z1, h00, h01)]; // left
+        const e0: [number, number] = [interp(x0, x1, h00, h10), z0];
+        const e1: [number, number] = [x1, interp(z0, z1, h10, h11)];
+        const e2: [number, number] = [interp(x0, x1, h01, h11), z1];
+        const e3: [number, number] = [x0, interp(z0, z1, h00, h01)];
 
         const push = (a: [number, number], b: [number, number]) => {
           segs.push({ a, b, y: iso, isMajor });
@@ -311,22 +487,9 @@ export function extractContourSegments(
   return segs;
 }
 
-function segmentIntersection(a: V2, b: V2, c: V2, d: V2): { t: number; u: number; pt: V2 } | null {
-  const rx = b[0] - a[0];
-  const rz = b[1] - a[1];
-  const sx = d[0] - c[0];
-  const sz = d[1] - c[1];
-  const denom = rx * sz - rz * sx;
-  if (Math.abs(denom) < 1e-6) return null;
-  const qpx = c[0] - a[0];
-  const qpz = c[1] - a[1];
-  const t = (qpx * sz - qpz * sx) / denom;
-  const u = (qpx * rz - qpz * rx) / denom;
-  if (t > 0.02 && t <= 1.0 && u >= -0.02 && u <= 1.02) {
-    return { t, u, pt: [a[0] + t * rx, a[1] + t * rz] };
-  }
-  return null;
-}
+// ---------------------------------------------------------------------------
+// 2D Geometry & Street Helpers
+// ---------------------------------------------------------------------------
 
 function distPointToSeg(px: number, pz: number, a: V2, b: V2): number {
   const dx = b[0] - a[0];
@@ -337,7 +500,7 @@ function distPointToSeg(px: number, pz: number, a: V2, b: V2): number {
   return Math.hypot(px - (a[0] + t * dx), pz - (a[1] + t * dz));
 }
 
-function subdividePolyline(pts: V2[], maxSegLen = 1.65): V2[] {
+function subdividePolyline(pts: V2[], maxSegLen = 2.4): V2[] {
   if (pts.length < 2) return pts;
   const out: V2[] = [pts[0]];
   for (let i = 0; i < pts.length - 1; i++) {
@@ -351,14 +514,6 @@ function subdividePolyline(pts: V2[], maxSegLen = 1.65): V2[] {
     }
   }
   return out;
-}
-
-interface RawSegment {
-  a: V2;
-  b: V2;
-  width: number;
-  kind: CityStreet['kind'];
-  streetId: string;
 }
 
 function buildStreetRect(a: V2, b: V2, halfW: number, padEnd = 0): V2[] {
@@ -382,599 +537,1013 @@ function buildStreetRect(a: V2, b: V2, halfW: number, padEnd = 0): V2[] {
 }
 
 function makeBuildingOBB(cx: number, cz: number, yaw: number, halfW: number, halfD: number): V2[] {
-  // Local +X -> (cos(yaw), -sin(yaw)), Local +Z -> (sin(yaw), cos(yaw))
   const c = Math.cos(yaw);
   const s = Math.sin(yaw);
   const pt = (lx: number, lz: number): V2 => [cx + lx * c + lz * s, cz - lx * s + lz * c];
   return [pt(-halfW, -halfD), pt(halfW, -halfD), pt(halfW, halfD), pt(-halfW, halfD)];
 }
 
-/**
- * Generate randomized planar street topologies (`organic`, `grid`, or `radial`) with plazas and terrain-aware curves.
- */
-function generateStreetNetwork(
-  seed: number,
-  style: CityStreetStyle,
+/** Clip an arbitrary polyline to inland terrain (`signedInland >= minInland`) and chunk bounds */
+function clipPolylineToLandAndBox(
+  pts: V2[],
   terrain: CityTerrainField,
-): { streets: CityStreet[]; plazas: CityPlaza[]; rawSegments: RawSegment[] } {
-  const rng = makeCityRng((seed * 104729 + (style === 'organic' ? 11 : style === 'grid' ? 37 : 73)) >>> 0);
-  const streets: CityStreet[] = [];
-  const plazas: CityPlaza[] = [];
-  const rawSegments: RawSegment[] = [];
-  const R_MAX = 39.5;
+  minInland: number,
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number,
+): V2[][] {
+  const sub = subdividePolyline(pts, 2.2);
+  const runs: V2[][] = [];
+  let cur: V2[] = [];
 
-  const commitStreet = (id: string, kind: CityStreet['kind'], width: number, rawPts: V2[]) => {
-    if (rawPts.length < 2) return;
-    for (let i = 0; i < rawPts.length - 1; i++) {
-      if (Math.hypot(rawPts[i + 1][0] - rawPts[i][0], rawPts[i + 1][1] - rawPts[i][1]) > 0.25) {
-        rawSegments.push({ a: rawPts[i], b: rawPts[i + 1], width, kind, streetId: id });
-      }
-    }
-    streets.push({ id, kind, width, points: subdividePolyline(rawPts, 1.55) });
-  };
-
-  if (style === 'organic') {
-    // 1. Central plaza slightly shifted toward summit or city center
-    const px = terrain.summit[0] * 0.35 + rng.range(-2.8, 2.8);
-    const pz = terrain.summit[1] * 0.35 + rng.range(-2.8, 2.8);
-    const pRad = rng.range(3.8, 4.8);
-    plazas.push({ x: px, z: pz, radius: pRad });
-
-    // 2. 4–5 gently meandering main avenues radiating out from the plaza & hugging terrain contours!
-    const aveCount = rng.chance(0.55) ? 5 : 4;
-    const baseAngle = rng.range(0, Math.PI * 2);
-    const avenuePoints: Array<{ pt: V2; dir: number; streetIdx: number }> = [];
-
-    for (let a = 0; a < aveCount; a++) {
-      let ang = baseAngle + (a / aveCount) * Math.PI * 2 + rng.range(-0.22, 0.22);
-      const pts: V2[] = [[px + Math.cos(ang) * (pRad - 0.6), pz + Math.sin(ang) * (pRad - 0.6)]];
-      const stepLen = 5.2;
-      let drift = rng.range(-0.11, 0.11);
-
-      for (let s = 0; s < 9; s++) {
-        const prev = pts[pts.length - 1];
-        // Subtle terrain-contour gentle steering so avenues wind organically around hills
-        const hL = terrain.heightAt(prev[0] + Math.cos(ang + 0.5) * 4, prev[1] + Math.sin(ang + 0.5) * 4);
-        const hR = terrain.heightAt(prev[0] + Math.cos(ang - 0.5) * 4, prev[1] + Math.sin(ang - 0.5) * 4);
-        const contourNudge = Math.max(-0.08, Math.min(0.08, (hR - hL) * 0.035));
-        ang += drift + contourNudge + rng.range(-0.09, 0.09);
-        drift *= 0.86;
-
-        const next: V2 = [prev[0] + Math.cos(ang) * stepLen, prev[1] + Math.sin(ang) * stepLen];
-        if (Math.hypot(next[0], next[1]) > R_MAX) {
-          const rCur = Math.hypot(prev[0], prev[1]);
-          const scale = Math.max(0.25, (R_MAX - rCur) / stepLen);
-          pts.push([prev[0] + Math.cos(ang) * stepLen * scale, prev[1] + Math.sin(ang) * stepLen * scale]);
-          break;
-        }
-        pts.push(next);
-        if (s >= 1 && s <= 6) {
-          avenuePoints.push({ pt: next, dir: ang, streetIdx: a });
-        }
-      }
-      commitStreet(`ave_${a}`, 'avenue', 3.1, pts);
-    }
-
-    // 3. Branching organic secondary cross-streets & alleys terminating cleanly on intersections!
-    let branchIdx = 0;
-    for (const node of avenuePoints) {
-      for (const side of [-1, 1]) {
-        if (!rng.chance(0.68)) continue;
-        let ang = node.dir + side * (Math.PI * 0.5 + rng.range(-0.26, 0.26));
-        const pts: V2[] = [node.pt];
-        const stepLen = 4.4;
-        const maxSteps = rng.int(3, 6);
-        let tooClose = false;
-
-        // Don't sprout a branch almost on top of an existing street in the same direction
-        const probe: V2 = [node.pt[0] + Math.cos(ang) * 3.8, node.pt[1] + Math.sin(ang) * 3.8];
-        for (const seg of rawSegments) {
-          if (seg.streetId === `ave_${node.streetIdx}`) continue;
-          if (distPointToSeg(probe[0], probe[1], seg.a, seg.b) < 3.4) {
-            tooClose = true;
-            break;
-          }
-        }
-        if (tooClose) continue;
-
-        for (let st = 0; st < maxSteps; st++) {
-          const prev = pts[pts.length - 1];
-          ang += rng.range(-0.14, 0.14);
-          let next: V2 = [prev[0] + Math.cos(ang) * stepLen, prev[1] + Math.sin(ang) * stepLen];
-          if (Math.hypot(next[0], next[1]) > R_MAX - 1.5) break;
-
-          // Stop cleanly at first intersection with any existing street (creates real T-junctions & blocks!)
-          let hit: { t: number; pt: V2 } | null = null;
-          for (const seg of rawSegments) {
-            if (st === 0 && seg.streetId === `ave_${node.streetIdx}`) continue;
-            const inter = segmentIntersection(prev, next, seg.a, seg.b);
-            if (inter && (!hit || inter.t < hit.t)) {
-              hit = { t: inter.t, pt: inter.pt };
-            }
-          }
-          if (hit) {
-            pts.push(hit.pt);
-            break;
-          }
-          pts.push(next);
-        }
-
-        if (pts.length >= 2) {
-          const isLane = rng.chance(0.32);
-          commitStreet(`st_${branchIdx++}`, isLane ? 'lane' : 'street', isLane ? 1.75 : 2.25, pts);
-        }
-      }
-    }
-  } else if (style === 'grid') {
-    // Warped European/San-Francisco grid with randomized block spacings + diagonal grand boulevard!
-    const rot = rng.range(-0.42, 0.42);
-    const c = Math.cos(rot);
-    const s = Math.sin(rot);
-    const toWorld = (u: number, v: number): V2 => [u * c - v * s, u * s + v * c];
-
-    const xs: number[] = [];
-    let curX = -35;
-    while (curX <= 35) {
-      xs.push(curX);
-      curX += rng.range(13.2, 16.5);
-    }
-    const zs: number[] = [];
-    let curZ = -35;
-    while (curZ <= 35) {
-      zs.push(curZ);
-      curZ += rng.range(13.0, 16.2);
-    }
-
-    // Slightly jitter each grid intersection organically so blocks feel historic rather than sterile
-    const nodes: V2[][] = xs.map((ux, ix) =>
-      zs.map((vz, iz) => {
-        const jx = ix === 0 || ix === xs.length - 1 ? 0 : rng.range(-0.95, 0.95);
-        const jz = iz === 0 || iz === zs.length - 1 ? 0 : rng.range(-0.95, 0.95);
-        return toWorld(ux + jx, vz + jz);
-      }),
-    );
-
-    const midI = Math.floor(xs.length / 2);
-    const midJ = Math.floor(zs.length / 2);
-    const pNode = nodes[midI]?.[midJ] ?? [0, 0];
-    plazas.push({ x: pNode[0], z: pNode[1], radius: rng.range(3.6, 4.6) });
-
-    let idx = 0;
-    // Horizontal grid streets (prune occasional outer edge segments for organic boundary)
-    for (let j = 0; j < zs.length; j++) {
-      const isAve = j === midJ;
-      let run: V2[] = [];
-      for (let i = 0; i < xs.length; i++) {
-        const pt = nodes[i][j];
-        if (Math.hypot(pt[0], pt[1]) <= R_MAX + 2) {
-          run.push(pt);
-        } else if (run.length >= 2) {
-          commitStreet(`gx_${idx++}`, isAve ? 'avenue' : 'street', isAve ? 3.1 : 2.25, run);
-          run = [];
-        } else {
-          run = [];
-        }
-      }
-      if (run.length >= 2) commitStreet(`gx_${idx++}`, isAve ? 'avenue' : 'street', isAve ? 3.1 : 2.25, run);
-    }
-    // Vertical grid streets
-    for (let i = 0; i < xs.length; i++) {
-      const isAve = i === midI;
-      let run: V2[] = [];
-      for (let j = 0; j < zs.length; j++) {
-        const pt = nodes[i][j];
-        if (Math.hypot(pt[0], pt[1]) <= R_MAX + 2) {
-          run.push(pt);
-        } else if (run.length >= 2) {
-          commitStreet(`gz_${idx++}`, isAve ? 'avenue' : 'street', isAve ? 3.1 : 2.25, run);
-          run = [];
-        } else {
-          run = [];
-        }
-      }
-      if (run.length >= 2) commitStreet(`gz_${idx++}`, isAve ? 'avenue' : 'street', isAve ? 3.1 : 2.25, run);
-    }
-
-    // Dramatic diagonal Haussmann boulevard cutting across the central square!
-    const diagAng = rot + Math.PI * 0.25 + rng.range(-0.18, 0.18);
-    const diagPts: V2[] = [];
-    for (let t = -32; t <= 32; t += 8) {
-      const pt: V2 = [pNode[0] + Math.cos(diagAng) * t, pNode[1] + Math.sin(diagAng) * t];
-      if (Math.hypot(pt[0], pt[1]) <= R_MAX) diagPts.push(pt);
-    }
-    if (diagPts.length >= 2) {
-      commitStreet('diag_0', 'avenue', 3.2, diagPts);
-    }
-  } else {
-    // Radial hilltop star-ring town (`radial`)
-    const px = terrain.summit[0] * 0.45;
-    const pz = terrain.summit[1] * 0.45;
-    const pRad = rng.range(4.4, 5.4);
-    plazas.push({ x: px, z: pz, radius: pRad });
-
-    const spokes = rng.int(6, 7);
-    const baseAng = rng.range(0, Math.PI * 2);
-    const spokeAngles: number[] = [];
-    for (let k = 0; k < spokes; k++) {
-      spokeAngles.push(baseAng + (k / spokes) * Math.PI * 2 + rng.range(-0.14, 0.14));
-    }
-
-    // Concentric slightly elliptical ring roads
-    const ringRadii = [rng.range(15.2, 17.4), rng.range(29.0, 31.8)];
-    const ellipScale = rng.range(0.88, 1.12);
-    const ellipRot = rng.range(0, Math.PI);
-    const ec = Math.cos(ellipRot);
-    const es = Math.sin(ellipRot);
-    const ringPt = (rad: number, ang: number): V2 => {
-      const lx = Math.cos(ang) * rad;
-      const lz = Math.sin(ang) * rad * ellipScale;
-      return [px + lx * ec - lz * es, pz + lx * es + lz * ec];
-    };
-
-    for (let rIdx = 0; rIdx < ringRadii.length; rIdx++) {
-      const rad = ringRadii[rIdx];
-      const pts: V2[] = [];
-      const steps = 20;
-      for (let i = 0; i <= steps; i++) {
-        const pt = ringPt(rad, (i / steps) * Math.PI * 2);
-        if (Math.hypot(pt[0], pt[1]) <= R_MAX + 1.5) pts.push(pt);
-      }
-      if (pts.length >= 3) {
-        commitStreet(`ring_${rIdx}`, rIdx === 0 ? 'avenue' : 'street', rIdx === 0 ? 2.8 : 2.2, pts);
-      }
-    }
-
-    // Radiating boulevards from central plaza out to rim
-    for (let k = 0; k < spokeAngles.length; k++) {
-      const ang = spokeAngles[k];
-      const pts: V2[] = [];
-      for (let r = pRad - 0.5; r <= R_MAX; r += 5.5) {
-        const pt: V2 = [px + Math.cos(ang) * r, pz + Math.sin(ang) * r];
-        if (Math.hypot(pt[0], pt[1]) > R_MAX) break;
-        pts.push(pt);
-      }
-      if (pts.length >= 2) {
-        commitStreet(`spoke_${k}`, k % 2 === 0 ? 'avenue' : 'street', k % 2 === 0 ? 3.0 : 2.25, pts);
-      }
+  for (let i = 0; i < sub.length; i++) {
+    const p = sub[i];
+    const inLand = terrain.signedInland(p[0], p[1]) >= minInland;
+    const inBox = p[0] >= minX && p[0] <= maxX && p[1] >= minZ && p[1] <= maxZ;
+    if (inLand && inBox) {
+      cur.push(p);
+    } else {
+      if (cur.length >= 2) runs.push(cur);
+      cur = [];
     }
   }
+  if (cur.length >= 2) runs.push(cur);
+  return runs;
+}
 
-  return { streets, plazas, rawSegments };
+interface RawSegment {
+  a: V2;
+  b: V2;
+  width: number;
+  kind: CityStreet['kind'];
 }
 
 /**
- * Generate a complete, zero-overlap, street-aligned architectural paper city layout with hills,
- * contours, randomized streets, plazas, single + wall-to-wall composite buildings, and origami trees.
+ * Generate seamless, infinite, cross-chunk deterministic street networks for chunk `(cx, cz)`
+ * according to the resolved district topology (`organic`, `grid`, or `radial`), plus the continuous
+ * waterfront corniche promenade, coastal piers, and bay sailboats!
  */
-export function generateCityLayout(opts: CityBuildOptions): CityLayout {
-  const seed = Math.max(0, Math.round(opts.seed));
-  const style = opts.style;
-  const hills = Math.max(0, Math.min(1, opts.hills));
+function generateChunkStreets(
+  cx: number,
+  cz: number,
+  districtStyle: ConcreteStreetStyle,
+  terrain: CityTerrainField,
+): {
+  streets: CityStreet[];
+  plazas: CityPlaza[];
+  rawSegments: RawSegment[];
+  piers: CityPier[];
+  boats: CityBoat[];
+} {
+  const x0 = cx * CITY_CHUNK_SIZE;
+  const x1 = x0 + CITY_CHUNK_SIZE;
+  const z0 = cz * CITY_CHUNK_SIZE;
+  const z1 = z0 + CITY_CHUNK_SIZE;
+  const pad = 2.6;
+  const seed = terrain.seed;
 
-  const terrain = createTerrainField(seed, hills);
-  const { streets, plazas, rawSegments } = generateStreetNetwork(seed, style, terrain);
-  const contours = extractContourSegments(terrain, 76, 56, 0.55);
+  const streets: CityStreet[] = [];
+  const plazas: CityPlaza[] = [];
+  const rawSegments: RawSegment[] = [];
+  const piers: CityPier[] = [];
+  const boats: CityBoat[] = [];
+  let sid = 0;
 
-  const rng = makeCityRng((seed * 2654435761 + (style === 'organic' ? 101 : style === 'grid' ? 211 : 307)) >>> 0);
-
-  // Precompute inflated street collision rectangles for ultra-fast OBB clearance checks
-  const roadBoxes: V2[][] = rawSegments.map((seg) => buildStreetRect(seg.a, seg.b, seg.width * 0.5 + 0.34, 0.2));
-
-  // Build candidate street-frontage sites prioritized: avenues -> streets -> lanes
-  interface FrontageCandidate {
-    px: number;
-    pz: number;
-    nx: number;
-    nz: number;
-    roadHalfW: number;
-    roadKind: CityStreet['kind'];
-    distToSummit: number;
-  }
-  const candidates: FrontageCandidate[] = [];
-
-  for (const st of streets) {
-    // Accumulate arc length and sample frontage sites every ~3.4–4.6 units for rich continuous streetscapes
-    let accum = rng.range(1.2, 2.4);
-    for (let i = 0; i < st.points.length - 1; i++) {
-      const a = st.points[i];
-      const b = st.points[i + 1];
-      const dx = b[0] - a[0];
-      const dz = b[1] - a[1];
-      const len = Math.hypot(dx, dz);
-      if (len < 1e-4) continue;
-      const tx = dx / len;
-      const tz = dz / len;
-      let cursor = accum;
-      while (cursor < len) {
-        const px = a[0] + tx * cursor;
-        const pz = a[1] + tz * cursor;
-        if (Math.hypot(px, pz) <= 37.5) {
-          for (const side of [-1, 1]) {
-            candidates.push({
-              px,
-              pz,
-              nx: -tz * side,
-              nz: tx * side,
-              roadHalfW: st.width * 0.5,
-              roadKind: st.kind,
-              distToSummit: Math.hypot(px - terrain.summit[0], pz - terrain.summit[1]),
-            });
-          }
-        }
-        cursor += rng.range(3.4, 4.6);
+  const commitRun = (kind: CityStreet['kind'], width: number, pts: V2[]) => {
+    if (pts.length < 2) return;
+    const id = `s_${cx}_${cz}_${sid++}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) > 0.25) {
+        rawSegments.push({ a: pts[i], b: pts[i + 1], width, kind });
       }
-      accum = cursor - len;
     }
-  }
-
-  // Sort avenues & hilltop sites earlier so landmark towers & wall-to-wall composite manors claim prime lots!
-  candidates.sort((a, b) => {
-    const ka = a.roadKind === 'avenue' ? 0 : a.roadKind === 'street' ? 1 : 2;
-    const kb = b.roadKind === 'avenue' ? 0 : b.roadKind === 'street' ? 1 : 2;
-    if (ka !== kb) return ka - kb;
-    return a.distToSummit - b.distToSummit;
-  });
-
-  const plots: CityBuildingPlot[] = [];
-  const placedPaddedOBBs: V2[][] = [];
-  const MAX_PLOTS = 36;
-  let rooftopCount = 0;
-
-  const chooseMixForSite = (cand: FrontageCandidate, slotIdx: number): { gen: number; mixOpts: HouseMixOptions } => {
-    const houseSeed = ((seed * 977 + slotIdx * 131 + 19) % 99989) + 1;
-    const gen = (slotIdx % 14) + 1;
-    const baseGrammar: HouseMixOptions = {
-      seed: houseSeed,
-      consistency: opts.consistency ?? null,
-      windowStyle: opts.windowStyle ?? null,
-      windowOpening: opts.windowOpening ?? null,
-      windowDetail: opts.windowDetail ?? null,
-    };
-
-    const nearSummit = cand.distToSummit < 13;
-    const r = rng.next();
-
-    // Prime avenues get rich wall-to-wall 2- & 3-house composite rowhouses (~34%)!
-    if (cand.roadKind === 'avenue' && r < 0.34) {
-      const hCount: 2 | 3 = rng.chance(0.52) ? 3 : 2;
-      return {
-        gen,
-        mixOpts: {
-          ...baseGrammar,
-          topology: 'village',
-          houses: hCount,
-        },
-      };
-    }
-
-    // Hilltop / plaza crown sites favor landmark spires, setbacks, octagonal/hexagonal pavilions, and stepped gables!
-    if (nearSummit && r < 0.56) {
-      const landmarkChoice = rng.pick(['spire', 'setback', 'oct', 'mansard', 'stepped', 'hex', 'mansard'] as const);
-      if (landmarkChoice === 'setback') return { gen: 4, mixOpts: { ...baseGrammar, topology: 'setback' } };
-      if (landmarkChoice === 'oct') return { gen: 3, mixOpts: { ...baseGrammar, topology: 'oct' } };
-      if (landmarkChoice === 'hex') return { gen: 7, mixOpts: { ...baseGrammar, topology: 'hex' } };
-      if (landmarkChoice === 'stepped') {
-        return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'gable', gableProfile: 'stepped' } };
-      }
-      if (landmarkChoice === 'spire') {
-        return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'spire' } };
-      }
-      return { gen: 2, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'mansard' } };
-    }
-
-    // Secondary streets occasionally get 2-house twin composites or L-wings!
-    if (cand.roadKind === 'street' && r < 0.18) {
-      return {
-        gen,
-        mixOpts: {
-          ...baseGrammar,
-          topology: 'village',
-          houses: 2,
-        },
-      };
-    }
-    if (r < 0.28) {
-      return { gen: 5, mixOpts: { ...baseGrammar, topology: 'lwing' } };
-    }
-
-    // Diverse single architectural typologies across every street block
-    const roofPool: RoofType[] = ['gable', 'gable', 'mansard', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
-    const roofType = rng.pick(roofPool);
-    const gableProfile =
-      roofType === 'gable' ? rng.pick(['classic', 'gambrel', 'stepped', 'barrel', 'saltbox'] as const) : null;
-    return {
-      gen,
-      mixOpts: {
-        ...baseGrammar,
-        topology: rng.chance(0.6) ? 'ribbon' : 'cross',
-        roofType,
-        gableProfile,
-      },
-    };
+    streets.push({ id, kind, width, points: pts });
   };
 
-  let attemptIdx = 0;
-  const tryPlaceSpecAt = (
-    cand: FrontageCandidate,
-    gen: number,
-    mixOpts: HouseMixOptions,
-    rawSpec: HouseNetSpec,
-  ): boolean => {
-    const spec: HouseNetSpec = { ...rawSpec, yawOffset: 0 };
-    const net = buildHouseNet(spec);
+  // 1. Continuous Waterfront Corniche / Coastal Promenade running seamlessly along `coastX(z) + 3.8`!
+  const promPts: V2[] = [];
+  const zSteps = 18;
+  for (let i = 0; i <= zSteps; i++) {
+    const z = z0 - 2 + (i / zSteps) * (CITY_CHUNK_SIZE + 4);
+    const px = terrain.coastX(z) + 3.8;
+    if (px >= x0 - pad && px <= x1 + pad) {
+      promPts.push([px, z]);
+    } else if (promPts.length >= 2) {
+      commitRun('promenade', 2.85, promPts.slice());
+      promPts.length = 0;
+    } else {
+      promPts.length = 0;
+    }
+  }
+  if (promPts.length >= 2) {
+    commitRun('promenade', 2.85, promPts);
+  }
 
-    // Compute exact folded 3D footprint extents from all `base` panels in `net` (world units!)
+  // 2. Deterministic Coastal Piers & Folded Paper Sailboats in sheltered coves!
+  const coastRng = makeRng(hash2u32(cx, cz, seed * 29 + 503));
+  for (let pTry = 0; pTry < 2; pTry++) {
+    const pz = z0 + 9 + pTry * 22 + coastRng.range(-4, 4);
+    const edgeX = terrain.coastX(pz);
+    if (edgeX >= x0 + 3 && edgeX <= x1 - 3 && Math.abs(terrain.coastSlopeZ(pz)) < 0.72) {
+      if (coastRng.chance(0.58)) {
+        const slope = terrain.coastSlopeZ(pz);
+        // Seaward normal of `x = coastX(z)` points roughly `-X`: `(-1, slope)` normalized
+        const nx = -1 / Math.hypot(1, slope);
+        const nz = slope / Math.hypot(1, slope);
+        const yaw = Math.atan2(nx, nz);
+        const length = coastRng.range(8.5, 14.5);
+        piers.push({
+          x: edgeX + 2.2,
+          z: pz,
+          yaw,
+          length,
+          width: coastRng.range(1.75, 2.35),
+          deckY: 0.78,
+        });
+      }
+    }
+  }
+
+  // Deterministic folded origami sailboats anchored offshore in the bay
+  for (let bTry = 0; bTry < 5; bTry++) {
+    const bx = x0 + coastRng.range(4, CITY_CHUNK_SIZE - 4);
+    const bz = z0 + coastRng.range(4, CITY_CHUNK_SIZE - 4);
+    const inland = terrain.signedInland(bx, bz);
+    if (inland < -7 && inland > -96 && terrain.heightAt(bx, bz) < -0.25 && coastRng.chance(0.55)) {
+      boats.push({
+        x: bx,
+        z: bz,
+        yaw: coastRng.range(0, Math.PI * 2),
+        scale: coastRng.range(0.95, 1.65),
+        phase: coastRng.range(0, Math.PI * 2),
+      });
+    }
+  }
+
+  // Early exit if the entire chunk is deep open sea (no land streets needed)
+  let anyLand = false;
+  for (let gz = z0; gz <= z1; gz += CITY_CHUNK_SIZE * 0.5) {
+    if (x1 > terrain.coastX(gz) + 2) {
+      anyLand = true;
+      break;
+    }
+  }
+  if (!anyLand) {
+    return { streets, plazas, rawSegments, piers, boats };
+  }
+
+  // 3. District-specific deterministic infinite street topology!
+  if (districtStyle === 'organic') {
+    // Warped jittered lattice (cell = 22) -> organically curved hillside streets & hilltop plazas, ZERO seams!
+    const CELL = 22;
+    const nodePos = (ix: number, iz: number): V2 => {
+      const jx = (hash2i(ix, iz, seed * 17 + 31) - 0.5) * 7.8;
+      const jz = (hash2i(ix, iz, seed * 17 + 97) - 0.5) * 7.8;
+      return [ix * CELL + jx, iz * CELL + jz];
+    };
+
+    const ix0 = Math.floor((x0 - 12) / CELL);
+    const ix1 = Math.ceil((x1 + 12) / CELL);
+    const iz0 = Math.floor((z0 - 12) / CELL);
+    const iz1 = Math.ceil((z1 + 12) / CELL);
+
+    const emitCurvedEdge = (a: V2, b: V2, edgeHash: number, isAve: boolean) => {
+      const midX = (a[0] + b[0]) * 0.5;
+      const midZ = (a[1] + b[1]) * 0.5;
+      const dx = b[0] - a[0];
+      const dz = b[1] - a[1];
+      const len = Math.hypot(dx, dz) || 1;
+      const bow = (edgeHash - 0.5) * Math.min(5.2, len * 0.24);
+      const ctrl: V2 = [midX + (-dz / len) * bow, midZ + (dx / len) * bow];
+      const curvePts: V2[] = [];
+      const steps = 6;
+      for (let k = 0; k <= steps; k++) {
+        const t = k / steps;
+        const inv = 1 - t;
+        curvePts.push([
+          inv * inv * a[0] + 2 * inv * t * ctrl[0] + t * t * b[0],
+          inv * inv * a[1] + 2 * inv * t * ctrl[1] + t * t * b[1],
+        ]);
+      }
+      const clipped = clipPolylineToLandAndBox(curvePts, terrain, 3.6, x0 - pad, x1 + pad, z0 - pad, z1 + pad);
+      const kind: CityStreet['kind'] = isAve ? 'avenue' : edgeHash > 0.78 ? 'lane' : 'street';
+      const width = kind === 'avenue' ? 2.75 : kind === 'street' ? 2.15 : 1.65;
+      for (const run of clipped) commitRun(kind, width, run);
+    };
+
+    for (let ix = ix0; ix <= ix1; ix++) {
+      for (let iz = iz0; iz <= iz1; iz++) {
+        const p = nodePos(ix, iz);
+        // Occasional hilltop / neighborhood plazas at inland intersections
+        if (
+          p[0] >= x0 + 3 &&
+          p[0] <= x1 - 3 &&
+          p[1] >= z0 + 3 &&
+          p[1] <= z1 - 3 &&
+          terrain.signedInland(p[0], p[1]) > 14 &&
+          hash2i(ix, iz, seed * 53 + 19) > 0.84
+        ) {
+          plazas.push({ x: p[0], z: p[1], radius: 3.3 + hash2i(ix, iz, seed + 7) * 1.3 });
+        }
+
+        const hE = hash2i(ix, iz, seed * 101 + 11);
+        if (hE > 0.16) {
+          emitCurvedEdge(p, nodePos(ix + 1, iz), hE, iz % 3 === 0);
+        }
+        const hN = hash2i(ix, iz, seed * 101 + 43);
+        if (hN > 0.16) {
+          emitCurvedEdge(p, nodePos(ix, iz + 1), hN, ix % 3 === 0);
+        }
+      }
+    }
+  } else if (districtStyle === 'grid') {
+    // Deterministic rotated coastal grid with historic corner jitter & periodic diagonal boulevards!
+    const rot = (hash1i(7, seed + 41) - 0.5) * 0.42;
+    const c = Math.cos(rot);
+    const s = Math.sin(rot);
+    const U_STEP = 19.5;
+    const V_STEP = 21.0;
+
+    const toUV = (wx: number, wz: number): V2 => [wx * c + wz * s, -wx * s + wz * c];
+    const toWorld = (u: number, v: number): V2 => [u * c - v * s, u * s + v * c];
+
+    const corners: V2[] = [
+      toUV(x0 - 8, z0 - 8),
+      toUV(x1 + 8, z0 - 8),
+      toUV(x1 + 8, z1 + 8),
+      toUV(x0 - 8, z1 + 8),
+    ];
+    const uMin = Math.floor(Math.min(...corners.map((p) => p[0])) / U_STEP) - 1;
+    const uMax = Math.ceil(Math.max(...corners.map((p) => p[0])) / U_STEP) + 1;
+    const vMin = Math.floor(Math.min(...corners.map((p) => p[1])) / V_STEP) - 1;
+    const vMax = Math.ceil(Math.max(...corners.map((p) => p[1])) / V_STEP) + 1;
+
+    const gNode = (iu: number, iv: number): V2 => {
+      const ju = (hash2i(iu, iv, seed * 31 + 5) - 0.5) * 1.4;
+      const jv = (hash2i(iu, iv, seed * 31 + 19) - 0.5) * 1.4;
+      return toWorld(iu * U_STEP + ju, iv * V_STEP + jv);
+    };
+
+    for (let iu = uMin; iu <= uMax; iu++) {
+      for (let iv = vMin; iv <= vMax; iv++) {
+        const a = gNode(iu, iv);
+        if (
+          a[0] >= x0 + 4 &&
+          a[0] <= x1 - 4 &&
+          a[1] >= z0 + 4 &&
+          a[1] <= z1 - 4 &&
+          terrain.signedInland(a[0], a[1]) > 14 &&
+          iu % 3 === 0 &&
+          iv % 3 === 0
+        ) {
+          plazas.push({ x: a[0], z: a[1], radius: 3.7 });
+        }
+
+        const bU = gNode(iu + 1, iv);
+        const isAveU = ((iv % 3) + 3) % 3 === 0;
+        for (const run of clipPolylineToLandAndBox([a, bU], terrain, 3.6, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
+          commitRun(isAveU ? 'avenue' : 'street', isAveU ? 2.8 : 2.15, run);
+        }
+
+        const bV = gNode(iu, iv + 1);
+        const isAveV = ((iu % 3) + 3) % 3 === 0;
+        for (const run of clipPolylineToLandAndBox([a, bV], terrain, 3.6, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
+          commitRun(isAveV ? 'avenue' : 'street', isAveV ? 2.8 : 2.15, run);
+        }
+      }
+    }
+  } else {
+    // Radial chain of deterministic star-ring hilltop acropolis hubs (`HUB_STEP = 84`)!
+    const HUB_STEP = 84;
+    const hx0 = Math.floor((x0 - 52) / HUB_STEP);
+    const hx1 = Math.ceil((x1 + 52) / HUB_STEP);
+    const hz0 = Math.floor((z0 - 52) / HUB_STEP);
+    const hz1 = Math.ceil((z1 + 52) / HUB_STEP);
+
+    for (let hx = hx0; hx <= hx1; hx++) {
+      for (let hz = hz0; hz <= hz1; hz++) {
+        const hubRng = makeRng(hash2u32(hx, hz, seed * 73 + 29));
+        let px = (hx + 0.5) * HUB_STEP + hubRng.range(-14, 14);
+        const pz = (hz + 0.5) * HUB_STEP + hubRng.range(-14, 14);
+        const minLandX = terrain.coastX(pz) + 18;
+        if (px < minLandX - 24) continue; // deep-sea macro cell has no inland hub
+        if (px < minLandX) px = minLandX + hubRng.range(0, 12);
+
+        const pRad = hubRng.range(3.8, 4.8);
+        if (px >= x0 - 4 && px <= x1 + 4 && pz >= z0 - 4 && pz <= z1 + 4) {
+          plazas.push({ x: px, z: pz, radius: pRad });
+        }
+
+        const spokes = 6;
+        const baseAng = hubRng.range(0, Math.PI * 2);
+        const ellip = hubRng.range(0.88, 1.12);
+        const ringRadii = [17.5, 34.0];
+
+        for (let rIdx = 0; rIdx < ringRadii.length; rIdx++) {
+          const rad = ringRadii[rIdx];
+          const ringPts: V2[] = [];
+          const steps = 28;
+          for (let k = 0; k <= steps; k++) {
+            const ang = (k / steps) * Math.PI * 2;
+            ringPts.push([px + Math.cos(ang) * rad, pz + Math.sin(ang) * rad * ellip]);
+          }
+          for (const run of clipPolylineToLandAndBox(ringPts, terrain, 3.8, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
+            commitRun(rIdx === 0 ? 'avenue' : 'street', rIdx === 0 ? 2.65 : 2.1, run);
+          }
+        }
+
+        for (let k = 0; k < spokes; k++) {
+          const ang = baseAng + (k / spokes) * Math.PI * 2 + hubRng.range(-0.12, 0.12);
+          const spokePts: V2[] = [
+            [px + Math.cos(ang) * (pRad - 0.4), pz + Math.sin(ang) * (pRad - 0.4)],
+            [px + Math.cos(ang) * 46, pz + Math.sin(ang) * 46],
+          ];
+          for (const run of clipPolylineToLandAndBox(spokePts, terrain, 3.6, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
+            commitRun(k % 2 === 0 ? 'avenue' : 'street', k % 2 === 0 ? 2.7 : 2.1, run);
+          }
+        }
+      }
+    }
+  }
+
+  return { streets, plazas, rawSegments, piers, boats };
+}
+
+// ---------------------------------------------------------------------------
+// Fast Deterministic Footprint & Multi-Wing Massing Extraction
+// ---------------------------------------------------------------------------
+
+function extractFootprintAndWings(spec: HouseNetSpec): {
+  fpW: number;
+  fpD: number;
+  wings: CityWingMassing[];
+} {
+  // For multi-house flush composites (`village`), extract exact base-panel sub-footprints so
+  // LOD1/LOD2 massing matches LOD0 wall-to-wall rowhouses cleanly!
+  if (spec.topology === 'village') {
+    const net = buildHouseNet(spec);
     let minBx = Infinity;
     let maxBx = -Infinity;
     let minBz = Infinity;
     let maxBz = -Infinity;
-    for (const p of net.panels) {
-      if (p.stage !== 'base') continue;
+    const basePanels = net.panels.filter((p) => p.stage === 'base');
+    const wings: CityWingMassing[] = [];
+    const roofCycle: RoofType[] = ['gable', 'mansard', 'gable', 'spire'];
+    const profileCycle: GableProfile[] = ['classic', 'stepped', 'gambrel', 'classic'];
+
+    basePanels.forEach((p, idx) => {
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      let z0 = Infinity;
+      let z1 = -Infinity;
       for (const [px, py] of p.poly) {
         const wx = px * MM;
         const wz = -py * MM;
-        if (wx < minBx) minBx = wx;
-        if (wx > maxBx) maxBx = wx;
-        if (wz < minBz) minBz = wz;
-        if (wz > maxBz) maxBz = wz;
+        if (wx < x0) x0 = wx;
+        if (wx > x1) x1 = wx;
+        if (wz < z0) z0 = wz;
+        if (wz > z1) z1 = wz;
       }
-    }
-    if (!Number.isFinite(minBx)) return false;
-    const fpW = maxBx - minBx;
-    const fpD = maxBz - minBz;
-    const halfW = fpW * 0.5;
-    const halfD = fpD * 0.5;
-
-    // Position building behind the curb so its street-facing front (`+Z`) aligns cleanly along the sidewalk!
-    const sidewalk = rng.range(0.42, 0.78);
-    const cx = cand.px + cand.nx * (cand.roadHalfW + sidewalk + halfD);
-    const cz = cand.pz + cand.nz * (cand.roadHalfW + sidewalk + halfD);
-    if (Math.hypot(cx, cz) + Math.hypot(halfW, halfD) > 40.0) return false;
-
-    // Face local `+Z` directly toward the street (`-nx, -nz`)!
-    const yaw = Math.atan2(-cand.nx, -cand.nz);
-    const footprint = makeBuildingOBB(cx, cz, yaw, halfW, halfD);
-    const paddedCheck = makeBuildingOBB(cx, cz, yaw, halfW + 0.34, halfD + 0.34);
-    const roadCheck = makeBuildingOBB(cx, cz, yaw, halfW + 0.14, halfD + 0.14);
-
-    // 1. Check plaza clearance
-    for (const pl of plazas) {
-      for (const [fx, fz] of paddedCheck) {
-        if (Math.hypot(fx - pl.x, fz - pl.z) < pl.radius + 0.35) return false;
-      }
-      if (Math.hypot(cx - pl.x, cz - pl.z) < pl.radius + Math.max(halfW, halfD) * 0.62) return false;
-    }
-
-    // 2. Check zero overlap with ALL road segments
-    for (const rBox of roadBoxes) {
-      if (polygonsOverlap(roadCheck, rBox)) return false;
-    }
-
-    // 3. Check zero overlap with ALL already-placed buildings
-    for (const other of placedPaddedOBBs) {
-      if (polygonsOverlap(paddedCheck, other)) return false;
-    }
-
-    // 4. Sample terrain elevation under all 4 footprint corners + center for exact retaining-plinth grounding
-    const ys = [terrain.heightAt(cx, cz), ...footprint.map(([fx, fz]) => terrain.heightAt(fx, fz))];
-    const groundMinY = Math.min(...ys);
-    const groundMaxY = Math.max(...ys);
-    const baseY = groundMaxY + 0.06;
-
-    const plotIndex = plots.length;
-    const distFromCenter = Math.hypot(cx, cz);
-    plots.push({
-      id: `plot_${plotIndex}`,
-      index: plotIndex,
-      x: cx,
-      z: cz,
-      baseY,
-      groundMinY,
-      yaw,
-      footprint,
-      footprintW: fpW,
-      footprintD: fpD,
-      generation: gen,
-      mixOpts,
-      spec,
-      foldOrder: Math.min(1, distFromCenter / 40),
+      if (x0 < minBx) minBx = x0;
+      if (x1 > maxBx) maxBx = x1;
+      if (z0 < minBz) minBz = z0;
+      if (z1 > maxBz) maxBz = z1;
+      const wW = Math.max(1.2, x1 - x0);
+      const wD = Math.max(1.2, z1 - z0);
+      const hScale = idx === 0 ? 1.0 : idx === 1 ? 1.12 : idx === 2 ? 0.92 : 1.06;
+      wings.push({
+        cx: (x0 + x1) * 0.5,
+        cz: (z0 + z1) * 0.5,
+        W: wW,
+        D: wD,
+        H: Math.max(1.8, spec.H * MM * hScale),
+        roofType: idx === 0 ? spec.roofType : roofCycle[(idx + (spec.village?.seed ?? 0)) % roofCycle.length],
+        gableProfile: idx === 0 ? (spec.gableProfile ?? 'classic') : profileCycle[idx % profileCycle.length],
+        pitch: spec.pitch,
+        mansardRatio: spec.mansardRatio || 0.34,
+        colorSlot: idx % 4,
+      });
     });
-    placedPaddedOBBs.push(paddedCheck);
-    rooftopCount += spec.topology === 'village' && spec.village ? spec.village.count : 1;
-    return true;
+
+    if (Number.isFinite(minBx) && wings.length > 0) {
+      return { fpW: maxBx - minBx, fpD: maxBz - minBz, wings };
+    }
+  }
+
+  // O(1) exact footprints for single-house topologies (zero `buildHouseNet` overhead during far chunk streaming!)
+  const W = spec.W * MM;
+  const D = spec.D * MM;
+  const H = spec.H * MM;
+
+  if (spec.topology === 'lwing') {
+    const Ww = W * 0.62;
+    const Dw = D * 0.52;
+    const ox = Ww * 0.22;
+    return {
+      fpW: W + Ww,
+      fpD: D,
+      wings: [
+        {
+          cx: -ox,
+          cz: 0,
+          W,
+          D,
+          H,
+          roofType: 'gable',
+          gableProfile: spec.gableProfile ?? 'classic',
+          pitch: spec.pitch,
+          mansardRatio: 0,
+          colorSlot: 0,
+        },
+        {
+          cx: W * 0.5 + Ww * 0.5 - ox,
+          cz: D * 0.5 - Dw * 0.5,
+          W: Ww,
+          D: Dw,
+          H: H * 0.68,
+          roofType: 'shed',
+          gableProfile: 'classic',
+          pitch: 0.38,
+          mansardRatio: 0,
+          colorSlot: 0,
+        },
+      ],
+    };
+  }
+
+  if (spec.topology === 'setback') {
+    return {
+      fpW: W,
+      fpD: W,
+      wings: [
+        {
+          cx: 0,
+          cz: 0,
+          W,
+          D: W,
+          H: H * 0.52,
+          roofType: 'flat',
+          gableProfile: 'classic',
+          pitch: 0,
+          mansardRatio: 0,
+          colorSlot: 0,
+        },
+        {
+          cx: 0,
+          cz: 0,
+          W: W * 0.58,
+          D: W * 0.58,
+          H,
+          roofType: spec.roofType === 'mansard' ? 'mansard' : 'spire',
+          gableProfile: 'classic',
+          pitch: spec.pitch,
+          mansardRatio: spec.mansardRatio || 0.35,
+          colorSlot: 0,
+        },
+      ],
+    };
+  }
+
+  if (spec.topology === 'hex' || spec.topology === 'oct') {
+    const dia = Math.max(W, D) * 0.96;
+    return {
+      fpW: dia,
+      fpD: dia,
+      wings: [
+        {
+          cx: 0,
+          cz: 0,
+          W: dia * 0.88,
+          D: dia * 0.88,
+          H,
+          roofType: spec.roofType === 'flat' ? 'flat' : 'spire',
+          gableProfile: 'classic',
+          pitch: Math.max(0.55, spec.pitch),
+          mansardRatio: spec.mansardRatio,
+          colorSlot: 0,
+        },
+      ],
+    };
+  }
+
+  return {
+    fpW: W,
+    fpD: D,
+    wings: [
+      {
+        cx: 0,
+        cz: 0,
+        W,
+        D,
+        H,
+        roofType: spec.roofType,
+        gableProfile: spec.gableProfile ?? 'classic',
+        pitch: spec.pitch,
+        mansardRatio: spec.mansardRatio,
+        colorSlot: 0,
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic Infinite Chunk Generator
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a 100% deterministic, zero-overlap chunk `(cx, cz)` of the infinite coastal paper city.
+ * Building footprints are strictly contained inside `[x0+0.35, x1-0.35] x [z0+0.35, z1-0.35]`,
+ * mathematically guaranteeing zero overlaps both within and across adjacent chunks in any visit order.
+ */
+export function generateCityChunk(
+  cx: number,
+  cz: number,
+  terrain: CityTerrainField,
+  opts: CoastalWorldOptions,
+): CityChunkData {
+  const x0 = cx * CITY_CHUNK_SIZE;
+  const x1 = x0 + CITY_CHUNK_SIZE;
+  const z0 = cz * CITY_CHUNK_SIZE;
+  const z1 = z0 + CITY_CHUNK_SIZE;
+  const centerX = x0 + CITY_CHUNK_SIZE * 0.5;
+  const centerZ = z0 + CITY_CHUNK_SIZE * 0.5;
+  const key = `${cx},${cz}`;
+  const districtStyle = terrain.districtStyleAt(centerX, centerZ, opts.style);
+
+  // Sample land/sea presence across the chunk
+  let hasLand = false;
+  let hasSea = false;
+  for (let j = 0; j <= 4; j++) {
+    const z = z0 + (j / 4) * CITY_CHUNK_SIZE;
+    const cX = terrain.coastX(z);
+    if (x1 > cX - 1) hasLand = true;
+    if (x0 < cX + 1) hasSea = true;
+  }
+  const hasCoast = hasLand && hasSea;
+
+  const { streets, plazas, rawSegments, piers, boats } = generateChunkStreets(cx, cz, districtStyle, terrain);
+  const chunkSeed = hash2u32(cx, cz, terrain.seed * 613 + (districtStyle === 'organic' ? 11 : districtStyle === 'grid' ? 37 : 73));
+  const rng = makeRng(chunkSeed);
+
+  const plots: CityBuildingPlot[] = [];
+  const placedPaddedOBBs: V2[][] = [];
+  let rooftopCount = 0;
+
+  // Compute urban density dropoff far inland so the city grades naturally from vibrant coastal town into hillside groves
+  const avgInland = terrain.signedInland(centerX, centerZ);
+  const maxPlotsInChunk =
+    !hasLand || avgInland > 185
+      ? 0
+      : avgInland < 26
+        ? 18
+        : avgInland < 95
+          ? 15
+          : 9;
+
+  if (maxPlotsInChunk > 0 && streets.length > 0) {
+    const roadBoxes: V2[][] = rawSegments.map((seg) => buildStreetRect(seg.a, seg.b, seg.width * 0.5 + 0.34, 0.2));
+
+    interface FrontageCandidate {
+      px: number;
+      pz: number;
+      nx: number;
+      nz: number;
+      roadHalfW: number;
+      roadKind: CityStreet['kind'];
+      inlandDist: number;
+    }
+
+    const candidates: FrontageCandidate[] = [];
+    for (const st of streets) {
+      let accum = rng.range(1.4, 2.8);
+      for (let i = 0; i < st.points.length - 1; i++) {
+        const a = st.points[i];
+        const b = st.points[i + 1];
+        const dx = b[0] - a[0];
+        const dz = b[1] - a[1];
+        const len = Math.hypot(dx, dz);
+        if (len < 1e-4) continue;
+        const tx = dx / len;
+        const tz = dz / len;
+        let cursor = accum;
+        while (cursor < len) {
+          const px = a[0] + tx * cursor;
+          const pz = a[1] + tz * cursor;
+          if (px >= x0 + 2 && px <= x1 - 2 && pz >= z0 + 2 && pz <= z1 - 2) {
+            const inlandDist = terrain.signedInland(px, pz);
+            // On the coastal promenade, only place houses on the INLAND side facing the sea (`nx > 0`)!
+            const sides = st.kind === 'promenade' ? [1, -1] : [-1, 1];
+            for (const side of sides) {
+              const nx = -tz * side;
+              const nz = tx * side;
+              if (st.kind === 'promenade' && nx < 0.1) continue;
+              candidates.push({
+                px,
+                pz,
+                nx,
+                nz,
+                roadHalfW: st.width * 0.5,
+                roadKind: st.kind,
+                inlandDist,
+              });
+            }
+          }
+          cursor += rng.range(4.2, 5.8);
+        }
+        accum = cursor - len;
+      }
+    }
+
+    // Prioritize scenic coastal promenade & avenues first!
+    candidates.sort((a, b) => {
+      const rank = (k: CityStreet['kind']) => (k === 'promenade' ? 0 : k === 'avenue' ? 1 : k === 'street' ? 2 : 3);
+      const rk = rank(a.roadKind) - rank(b.roadKind);
+      if (rk !== 0) return rk;
+      return a.inlandDist - b.inlandDist;
+    });
+
+    const chooseMixForSite = (cand: FrontageCandidate, slotIdx: number): { gen: number; mixOpts: HouseMixOptions } => {
+      const hSeed = ((hash2u32(cx * 31 + slotIdx, cz * 37 + Math.round(cand.px), terrain.seed + 19) % 99989) + 1);
+      const gen = ((Math.abs(cx * 7 + cz * 13) + slotIdx) % 14) + 1;
+      const baseGrammar: HouseMixOptions = {
+        seed: hSeed,
+        consistency: opts.consistency ?? null,
+        windowStyle: opts.windowStyle ?? null,
+        windowOpening: opts.windowOpening ?? null,
+        windowDetail: opts.windowDetail ?? null,
+      };
+      const r = rng.next();
+      const isWaterfront = cand.roadKind === 'promenade' || cand.inlandDist < 18;
+      const isHilltop = terrain.heightAt(cand.px, cand.pz) > 4.2;
+
+      // Waterfront promenade: charming 2- & 3-house wall-to-wall coastal rowhouses, stepped harbor gables & lighthouses!
+      if (isWaterfront) {
+        if (r < 0.30) {
+          return { gen, mixOpts: { ...baseGrammar, topology: 'village', houses: rng.chance(0.45) ? 3 : 2 } };
+        }
+        if (r < 0.44) {
+          return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'gable', gableProfile: 'stepped' } };
+        }
+        if (r < 0.54) {
+          return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'spire' } };
+        }
+        if (r < 0.68) {
+          return { gen: 2, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'mansard' } };
+        }
+      }
+
+      // Coastal ridges & headlands: belvederes, setback towers, octagonal pavilions & spires!
+      if (isHilltop && r < 0.42) {
+        const pick = rng.pick(['spire', 'setback', 'oct', 'hex', 'mansard', 'stepped'] as const);
+        if (pick === 'setback') return { gen: 4, mixOpts: { ...baseGrammar, topology: 'setback' } };
+        if (pick === 'oct') return { gen: 3, mixOpts: { ...baseGrammar, topology: 'oct' } };
+        if (pick === 'hex') return { gen: 7, mixOpts: { ...baseGrammar, topology: 'hex' } };
+        if (pick === 'spire') return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'spire' } };
+        if (pick === 'stepped') {
+          return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'gable', gableProfile: 'stepped' } };
+        }
+        return { gen: 2, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'mansard' } };
+      }
+
+      if (cand.roadKind === 'avenue' && r < 0.22) {
+        return { gen, mixOpts: { ...baseGrammar, topology: 'village', houses: 2 } };
+      }
+      if (r < 0.28) {
+        return { gen: 5, mixOpts: { ...baseGrammar, topology: 'lwing' } };
+      }
+
+      const roofPool: RoofType[] = ['gable', 'gable', 'mansard', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
+      const roofType = rng.pick(roofPool);
+      const gableProfile =
+        roofType === 'gable' ? rng.pick(['classic', 'gambrel', 'stepped', 'barrel', 'saltbox'] as const) : null;
+      return {
+        gen,
+        mixOpts: {
+          ...baseGrammar,
+          topology: rng.chance(0.62) ? 'ribbon' : 'cross',
+          roofType,
+          gableProfile,
+        },
+      };
+    };
+
+    const tryPlaceSpecAt = (
+      cand: FrontageCandidate,
+      gen: number,
+      mixOpts: HouseMixOptions,
+      rawSpec: HouseNetSpec,
+    ): boolean => {
+      const spec: HouseNetSpec = { ...rawSpec, yawOffset: 0 };
+      const { fpW, fpD, wings } = extractFootprintAndWings(spec);
+      const halfW = fpW * 0.5;
+      const halfD = fpD * 0.5;
+
+      const sidewalk = rng.range(0.45, 0.85);
+      const bx = cand.px + cand.nx * (cand.roadHalfW + sidewalk + halfD);
+      const bz = cand.pz + cand.nz * (cand.roadHalfW + sidewalk + halfD);
+      const yaw = Math.atan2(-cand.nx, -cand.nz);
+
+      const footprint = makeBuildingOBB(bx, bz, yaw, halfW, halfD);
+
+      // Strict chunk containment + coastline clearance => mathematically ZERO cross-chunk overlaps & ZERO wet buildings!
+      for (const [fx, fz] of footprint) {
+        if (fx < x0 + 0.42 || fx > x1 - 0.42 || fz < z0 + 0.42 || fz > z1 - 0.42) return false;
+        if (terrain.signedInland(fx, fz) < 4.6) return false;
+      }
+
+      const paddedCheck = makeBuildingOBB(bx, bz, yaw, halfW + 0.42, halfD + 0.42);
+      const roadCheck = makeBuildingOBB(bx, bz, yaw, halfW + 0.16, halfD + 0.16);
+
+      for (const pl of plazas) {
+        if (Math.hypot(bx - pl.x, bz - pl.z) < pl.radius + Math.max(halfW, halfD) * 0.65) return false;
+      }
+      for (const rBox of roadBoxes) {
+        if (polygonsOverlap(roadCheck, rBox)) return false;
+      }
+      for (const other of placedPaddedOBBs) {
+        if (polygonsOverlap(paddedCheck, other)) return false;
+      }
+
+      const ys = [terrain.heightAt(bx, bz), ...footprint.map(([fx, fz]) => terrain.heightAt(fx, fz))];
+      const groundMinY = Math.min(...ys);
+      const groundMaxY = Math.max(...ys);
+      if (groundMinY < 0.25 || groundMaxY - groundMinY > 2.8) return false;
+      const baseY = groundMaxY + 0.04;
+
+      const localIdx = plots.length;
+      const colorIndex = Math.floor(hash2i(cx * 17 + localIdx, cz * 29 + Math.round(bz), terrain.seed + 83) * 8) % 8;
+      const foldJitter = (hash2i(cx * 41 + localIdx, cz * 19, terrain.seed + 211) - 0.5) * 26;
+
+      plots.push({
+        id: `c${cx}_${cz}_p${localIdx}`,
+        chunkKey: key,
+        index: localIdx,
+        x: bx,
+        z: bz,
+        baseY,
+        groundMinY,
+        yaw,
+        footprint,
+        footprintW: fpW,
+        footprintD: fpD,
+        wings,
+        colorIndex,
+        foldJitter,
+        generation: gen,
+        mixOpts,
+        spec,
+        foldOrder: Math.max(0, Math.min(1, terrain.signedInland(bx, bz) / 90)),
+      });
+      placedPaddedOBBs.push(paddedCheck);
+      rooftopCount += spec.topology === 'village' && spec.village ? spec.village.count : 1;
+      return true;
+    };
+
+    let attemptIdx = 0;
+    for (const cand of candidates) {
+      if (plots.length >= maxPlotsInChunk) break;
+      attemptIdx++;
+      const { gen, mixOpts } = chooseMixForSite(cand, attemptIdx);
+      const primarySpec = generateHouseSpec(gen, mixOpts);
+      if (tryPlaceSpecAt(cand, gen, mixOpts, primarySpec)) continue;
+
+      // Compact coastal townhouse fallback for tighter lots
+      const compactMix: HouseMixOptions = {
+        seed: mixOpts.seed,
+        topology: 'ribbon',
+        roofType: rng.pick(['gable', 'gable', 'mansard', 'hip', 'flat', 'shed'] as const),
+        gableProfile: rng.pick(['classic', 'gambrel', 'stepped', 'barrel', 'saltbox'] as const),
+        consistency: opts.consistency ?? null,
+        windowStyle: opts.windowStyle ?? null,
+        windowOpening: opts.windowOpening ?? null,
+        windowDetail: opts.windowDetail ?? null,
+      };
+      const compactRaw = generateHouseSpec(1, compactMix);
+      const compactSpec: HouseNetSpec =
+        compactRaw.roofType === 'spire'
+          ? { ...compactRaw, W: 28, D: 28 }
+          : { ...compactRaw, W: Math.min(compactRaw.W, 32), D: Math.min(compactRaw.D, 36) };
+      tryPlaceSpecAt(cand, 1, compactMix, compactSpec);
+    }
+  }
+
+  // 4. Occasional solitary folded coastal lighthouse/pavilion on offshore paper islets!
+  if (hasSea && plots.length < 24) {
+    const isletX = x0 + rng.range(10, CITY_CHUNK_SIZE - 10);
+    const isletZ = z0 + rng.range(10, CITY_CHUNK_SIZE - 10);
+    if (terrain.signedInland(isletX, isletZ) < -20 && terrain.heightAt(isletX, isletZ) > 0.9) {
+      const hSeed = ((chunkSeed % 99989) + 1);
+      const mixOpts: HouseMixOptions = {
+        seed: hSeed,
+        topology: rng.chance(0.55) ? 'oct' : 'ribbon',
+        roofType: 'spire',
+      };
+      const spec: HouseNetSpec = { ...generateHouseSpec(1, mixOpts), W: 28, D: 28, yawOffset: 0 };
+      const { fpW, fpD, wings } = extractFootprintAndWings(spec);
+      const yaw = rng.range(0, Math.PI * 2);
+      const footprint = makeBuildingOBB(isletX, isletZ, yaw, fpW * 0.5, fpD * 0.5);
+      const ys = [terrain.heightAt(isletX, isletZ), ...footprint.map(([fx, fz]) => terrain.heightAt(fx, fz))];
+      if (Math.min(...ys) > 0.2) {
+        const localIdx = plots.length;
+        plots.push({
+          id: `c${cx}_${cz}_islet`,
+          chunkKey: key,
+          index: localIdx,
+          x: isletX,
+          z: isletZ,
+          baseY: Math.max(...ys) + 0.05,
+          groundMinY: Math.min(...ys),
+          yaw,
+          footprint,
+          footprintW: fpW,
+          footprintD: fpD,
+          wings,
+          colorIndex: localIdx % 8,
+          foldJitter: -8,
+          generation: 1,
+          mixOpts,
+          spec,
+          foldOrder: 0,
+        });
+        placedPaddedOBBs.push(makeBuildingOBB(isletX, isletZ, yaw, fpW * 0.5 + 0.5, fpD * 0.5 + 0.5));
+        rooftopCount += 1;
+      }
+    }
+  }
+
+  // 5. Grounded Minimalist Folded Origami Trees tucked into hillside clearings, coves & upper ridges!
+  const trees: CityTree[] = [];
+  if (hasLand || hasSea) {
+    const treeRng = makeRng(hash2u32(cx, cz, terrain.seed * 48271 + 911));
+    const maxTrees = avgInland > 65 ? 24 : 18;
+    for (let attempt = 0; attempt < 72 && trees.length < maxTrees; attempt++) {
+      const tx = x0 + treeRng.range(1.8, CITY_CHUNK_SIZE - 1.8);
+      const tz = z0 + treeRng.range(1.8, CITY_CHUNK_SIZE - 1.8);
+      const ty = terrain.heightAt(tx, tz);
+      if (ty < 0.45) continue;
+
+      let ok = true;
+      for (const seg of rawSegments) {
+        if (distPointToSeg(tx, tz, seg.a, seg.b) < seg.width * 0.5 + 0.85) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+
+      const treeBox: V2[] = [
+        [tx - 0.7, tz - 0.7],
+        [tx + 0.7, tz - 0.7],
+        [tx + 0.7, tz + 0.7],
+        [tx - 0.7, tz + 0.7],
+      ];
+      for (const b of placedPaddedOBBs) {
+        if (polygonsOverlap(treeBox, b)) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+
+      for (const other of trees) {
+        if (Math.hypot(tx - other.x, tz - other.z) < 2.2) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+
+      trees.push({
+        x: tx,
+        z: tz,
+        y: ty,
+        scale: treeRng.range(0.74, 1.38),
+        rotY: treeRng.range(0, Math.PI * 2),
+        variant: (attempt % 3) as 0 | 1 | 2,
+      });
+    }
+  }
+
+  return {
+    cx,
+    cz,
+    key,
+    centerX,
+    centerZ,
+    districtStyle,
+    hasLand,
+    hasSea,
+    hasCoast,
+    streets,
+    plazas,
+    plots,
+    trees,
+    piers,
+    boats,
+    rooftopCount,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic Infinite Coastal World + Sweeping Curved Flight Spline
+// ---------------------------------------------------------------------------
+
+/**
+ * Create an infinite deterministic coastal paper world:
+ *  - Deterministic shoreline, multi-octave hills, and district topologies from `seed`,
+ *  - On-demand deterministic chunk generation (`generateChunk(cx, cz)`),
+ *  - Smooth curved glider flight trajectory (`sampleFlight(s)`) weaving gracefully between sea and hills!
+ */
+export function createCoastalWorld(opts: CoastalWorldOptions): CoastalWorld {
+  const seed = Math.max(0, Math.round(opts.seed));
+  const style = opts.style;
+  const hills = Math.max(0, Math.min(1, opts.hills));
+  const normalizedOpts: CoastalWorldOptions = { ...opts, seed, style, hills };
+  const terrain = createTerrainField(seed, hills);
+
+  // Deterministic flight curve phase offsets — starts framing the shoreline & harbor cinematically at s = 0!
+  const fRng = makeRng((seed * 1299709 + 773) >>> 0);
+  const fp1 = fRng.range(-0.35, 0.35);
+  const fp2 = fRng.range(-0.45, 0.45);
+  const fp3 = fRng.range(0, Math.PI * 2);
+
+  // Smoothly averaged coastline center so the curved glider anticipates sweeping headlands and coves
+  const smoothCoastX = (z: number): number =>
+    (terrain.coastX(z - 42) +
+      terrain.coastX(z - 21) * 1.6 +
+      terrain.coastX(z) * 2.2 +
+      terrain.coastX(z + 21) * 1.6 +
+      terrain.coastX(z + 42)) /
+    7.4;
+
+  // Sweeping S-curves weaving from out over the folded paper sea (`-28`) to over coastal hillsides (`+22`)
+  const flightXAt = (s: number): number => {
+    const z = -s;
+    const base = smoothCoastX(z);
+    const curve1 = Math.sin(s * 0.0155 + fp1 - 0.55) * 24.0;
+    const curve2 = Math.cos(s * 0.0074 + fp2 + 1.1) * 12.5;
+    return base + curve1 + curve2 - 4.5;
   };
 
-  for (const cand of candidates) {
-    if (plots.length >= MAX_PLOTS) break;
-    attemptIdx++;
+  const sampleFlight = (s: number): FlightSample => {
+    const z = -s;
+    const camX = flightXAt(s);
 
-    const { gen, mixOpts } = chooseMixForSite(cand, attemptIdx);
-    const primarySpec = generateHouseSpec(gen, mixOpts);
-    if (tryPlaceSpecAt(cand, gen, mixOpts, primarySpec)) continue;
+    // Terrain-hugging elevated coastal glider vista showing foreground detail, active fold wave & far headlands!
+    const g0 = Math.max(0, terrain.heightAt(camX, z));
+    const g1 = Math.max(0, terrain.heightAt(camX, z - 16));
+    const g2 = Math.max(0, terrain.heightAt(camX + 10, z - 10));
+    const groundClear = Math.max(g0, g1, g2);
+    const camY = Math.max(24.5, groundClear + 18.5) + Math.sin(s * 0.012 + fp3) * 3.4;
 
-    // Compact corner-lot fallback: if a wide composite or mansion clips a cross-street, try a sleek townhouse!
-    const compactMix: HouseMixOptions = {
-      seed: mixOpts.seed,
-      topology: 'ribbon',
-      roofType: rng.pick(['gable', 'gable', 'mansard', 'hip', 'flat', 'shed'] as const),
-      gableProfile: rng.pick(['classic', 'gambrel', 'stepped', 'barrel', 'saltbox'] as const),
-      consistency: opts.consistency ?? null,
-      windowStyle: opts.windowStyle ?? null,
-      windowOpening: opts.windowOpening ?? null,
-      windowDetail: opts.windowDetail ?? null,
+    // Look ahead along a smooth coastal ribbon framing sea + sailboats on left, folding hillside city ahead-right!
+    const lookLead = 72;
+    const zLook = -(s + lookLead);
+    const lookX =
+      smoothCoastX(zLook) +
+      14.5 +
+      Math.sin((s + lookLead) * 0.011 + fp1) * 10.5 +
+      (camX - smoothCoastX(z)) * 0.16;
+    const lookY = Math.max(2.2, terrain.heightAt(lookX, zLook) * 0.52 + 2.4);
+
+    // Normalized horizontal forward direction (along flight tangent)
+    const ds = 2.0;
+    const xPrev = flightXAt(s - ds);
+    const xNext = flightXAt(s + ds);
+    const dx = xNext - xPrev;
+    const dz = -2 * ds;
+    const fLen = Math.hypot(dx, dz) || 1;
+    const fx = dx / fLen;
+    const fz = dz / fLen;
+
+    // Subtle aircraft banking into horizontal turns (`±5.8°`)
+    const d2x = (xNext - 2 * camX + xPrev) / (ds * ds);
+    const bankRoll = Math.max(-0.105, Math.min(0.105, -d2x * 16.0));
+
+    // Focus point for the origami fold wave — sits right in the hero mid-ground ahead of the lens!
+    const focusX = camX * 0.42 + lookX * 0.58;
+    const focusZ = z - 44;
+
+    return {
+      pos: [camX, camY, z],
+      lookAt: [lookX, lookY, zLook],
+      forward: [fx, fz],
+      bankRoll,
+      focusX,
+      focusZ,
     };
-    const compactRaw = generateHouseSpec(1, compactMix);
-    const compactSpec: HouseNetSpec =
-      compactRaw.roofType === 'spire'
-        ? { ...compactRaw, W: 28, D: 28 }
-        : { ...compactRaw, W: Math.min(compactRaw.W, 32), D: Math.min(compactRaw.D, 36) };
-    tryPlaceSpecAt(cand, 1, compactMix, compactSpec);
-  }
-
-  // Scatter minimalist origami paper trees in plazas, pocket parks, and open hillside clearings!
-  const trees: CityTree[] = [];
-  const treeRng = makeCityRng((seed * 48271 + 911) >>> 0);
-  const MAX_TREES = 46;
-  for (let attempt = 0; attempt < 260 && trees.length < MAX_TREES; attempt++) {
-    const r = Math.sqrt(treeRng.next()) * 33.5;
-    const a = treeRng.range(0, Math.PI * 2);
-    const tx = Math.cos(a) * r;
-    const tz = Math.sin(a) * r;
-
-    // Clear all roads
-    let ok = true;
-    for (const seg of rawSegments) {
-      if (distPointToSeg(tx, tz, seg.a, seg.b) < seg.width * 0.5 + 0.85) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-
-    // Clear all buildings
-    const treeBox: V2[] = [
-      [tx - 0.65, tz - 0.65],
-      [tx + 0.65, tz - 0.65],
-      [tx + 0.65, tz + 0.65],
-      [tx - 0.65, tz + 0.65],
-    ];
-    for (const b of placedPaddedOBBs) {
-      if (polygonsOverlap(treeBox, b)) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-
-    // Don't stack trees right on top of each other
-    for (const other of trees) {
-      if (Math.hypot(tx - other.x, tz - other.z) < 2.2) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-
-    trees.push({
-      x: tx,
-      z: tz,
-      y: terrain.heightAt(tx, tz),
-      scale: treeRng.range(0.72, 1.32),
-      rotY: treeRng.range(0, Math.PI * 2),
-      variant: (attempt % 3) as 0 | 1 | 2,
-    });
-  }
+  };
 
   return {
     seed,
     style,
     hills,
+    options: normalizedOpts,
     terrain,
-    streets,
-    plazas,
-    plots,
-    trees,
-    contours,
-    rooftopCount,
+    generateChunk: (cx: number, cz: number) => generateCityChunk(cx, cz, terrain, normalizedOpts),
+    extractChunkContours: (cx: number, cz: number, gridRes = 24, stepY = 0.65) =>
+      extractChunkContours(terrain, cx, cz, gridRes, stepY),
+    sampleFlight,
   };
 }

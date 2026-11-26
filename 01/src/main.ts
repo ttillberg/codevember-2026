@@ -29,15 +29,15 @@ import {
   buildOrigamiHouseRig,
   createOrigamiMaterials,
   type OrigamiHouseRig,
+  type OrigamiMaterials,
 } from './origamiPaperMesh';
 import { CatalogThumbRenderer, THUMB_SIZE, type CatalogViewMode } from './catalogThumbRenderer';
 import {
   ALL_CITY_STREET_STYLES,
   type CityBuildingPlot,
-  type CityLayout,
   type CityStreetStyle,
 } from './cityGenerator';
-import { CityView } from './cityView';
+import { CityView, type CityViewStats, type CityWaveMode } from './cityView';
 
 // URL query parameters
 const params = new URLSearchParams(window.location.search);
@@ -55,7 +55,7 @@ const btnHelp = document.getElementById('btn-help') as HTMLButtonElement;
 const helpModal = document.getElementById('help-modal') as HTMLDivElement;
 const helpClose = document.getElementById('help-close') as HTMLButtonElement;
 const btnAction = document.getElementById('btn-action') as HTMLButtonElement;
-const progressRange = document.getElementById('progress-range') as HTMLInputElement;
+const chkAuto = document.getElementById('chk-auto') as HTMLInputElement;
 const statusEl = document.getElementById('status-label') as HTMLSpanElement;
 const btnDebug = document.getElementById('btn-debug') as HTMLButtonElement;
 const debugPanel = document.getElementById('debug-panel') as HTMLElement;
@@ -83,7 +83,7 @@ const dbgHeightVal = document.getElementById('dbg-height-val') as HTMLElement;
 const dbgSeed = document.getElementById('dbg-seed') as HTMLInputElement;
 const dbgColor = document.getElementById('dbg-color') as HTMLInputElement;
 const dbgSpin = document.getElementById('dbg-spin') as HTMLInputElement;
-const dbgPerspCut = document.getElementById('dbg-persp-cut') as HTMLInputElement;
+const dbgCameraTrick = document.getElementById('dbg-camera-trick') as HTMLSelectElement;
 const dbgGlideFold = document.getElementById('dbg-glide-fold') as HTMLInputElement;
 const dbgFadeProj = document.getElementById('dbg-fade-proj') as HTMLInputElement;
 const dbgShuffle = document.getElementById('dbg-shuffle') as HTMLButtonElement;
@@ -102,6 +102,7 @@ const cityStyleSeg = document.getElementById('city-style-seg') as HTMLDivElement
 const cityStyleBtns = Array.from(cityStyleSeg.querySelectorAll<HTMLButtonElement>('.cat-seg-btn'));
 const cityHillsInput = document.getElementById('city-hills') as HTMLInputElement;
 const cityHillsVal = document.getElementById('city-hills-val') as HTMLSpanElement;
+const cityFlyBtn = document.getElementById('city-fly-btn') as HTMLButtonElement;
 const cityFoldBtn = document.getElementById('city-fold-btn') as HTMLButtonElement;
 const cityColorBtn = document.getElementById('city-color-btn') as HTMLButtonElement;
 const cityClose = document.getElementById('city-close') as HTMLButtonElement;
@@ -149,6 +150,8 @@ const SETTINGS_STORAGE_KEY = 'codevember-2026:01:settings:v1';
 
 const VALID_TOPOLOGIES: readonly NetTopology[] = ['cross', 'ribbon', 'hex', 'oct', 'lwing', 'setback', 'village'];
 const VALID_ROOFS: readonly RoofType[] = ['gable', 'mansard', 'spire', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
+type CameraTrickMode = 'off' | 'drastic' | 'overhead' | 'rolled' | 'low' | 'subtle';
+const VALID_CAMERA_TRICKS: readonly CameraTrickMode[] = ['off', 'drastic', 'overhead', 'rolled', 'low', 'subtle'];
 
 interface DebugSettings {
   model: number | null;
@@ -169,9 +172,10 @@ interface DebugSettings {
   seed: number;
   color: boolean;
   spin: boolean;
-  perspectiveCut: boolean;
+  cameraTrick: CameraTrickMode;
   glideOnFold: boolean;
   fadeProjOnFold: boolean;
+  autoFold: boolean;
 }
 
 const FACTORY_SETTINGS: DebugSettings = {
@@ -193,9 +197,10 @@ const FACTORY_SETTINGS: DebugSettings = {
   seed: 0,
   color: false,
   spin: true,
-  perspectiveCut: false,
+  cameraTrick: 'drastic',
   glideOnFold: false,
   fadeProjOnFold: true,
+  autoFold: false,
 };
 
 function loadSavedSettings(): DebugSettings {
@@ -262,9 +267,12 @@ function loadSavedSettings(): DebugSettings {
       }
       if (typeof parsed.color === 'boolean') s.color = parsed.color;
       if (typeof parsed.spin === 'boolean') s.spin = parsed.spin;
-      if (typeof parsed.perspectiveCut === 'boolean') s.perspectiveCut = parsed.perspectiveCut;
+      if (typeof parsed.cameraTrick === 'string' && VALID_CAMERA_TRICKS.includes(parsed.cameraTrick as CameraTrickMode)) {
+        s.cameraTrick = parsed.cameraTrick as CameraTrickMode;
+      }
       if (typeof parsed.glideOnFold === 'boolean') s.glideOnFold = parsed.glideOnFold;
       if (typeof parsed.fadeProjOnFold === 'boolean') s.fadeProjOnFold = parsed.fadeProjOnFold;
+      if (typeof parsed.autoFold === 'boolean') s.autoFold = parsed.autoFold;
     }
   } catch {
     // Ignore storage access errors (private mode, restricted iframe, etc.)
@@ -351,8 +359,15 @@ let debugColorEnabled =
   params.get('color') !== null ? params.get('color') !== '0' : initialSettings.color;
 let debugSpinEnabled =
   params.get('spin') !== null ? params.get('spin') !== '0' : initialSettings.spin;
-let debugPerspCutEnabled =
-  params.get('perspCut') !== null ? params.get('perspCut') !== '0' : initialSettings.perspectiveCut;
+const pCamTrick = params.get('cameraTrick');
+let debugCameraTrick: CameraTrickMode =
+  pCamTrick !== null && VALID_CAMERA_TRICKS.includes(pCamTrick as CameraTrickMode)
+    ? (pCamTrick as CameraTrickMode)
+    : params.get('perspCut') !== null
+      ? params.get('perspCut') !== '0'
+        ? 'drastic'
+        : 'off'
+      : initialSettings.cameraTrick;
 let debugGlideOnFoldEnabled =
   params.get('glide') !== null
     ? params.get('glide') !== '0'
@@ -363,6 +378,17 @@ let debugFadeProjEnabled =
   params.get('fadePrint') !== null
     ? params.get('fadePrint') !== '0'
     : initialSettings.fadeProjOnFold;
+let autoFoldEnabled =
+  params.get('auto') !== null
+    ? params.get('auto') !== '0'
+    : initialSettings.autoFold;
+const FOLD_BPM = 115;
+const FOLD_BEAT_SEC = 60 / FOLD_BPM; // ~0.52174s per quarter-note beat
+const FOLD_BAR_SEC = FOLD_BEAT_SEC * 4; // ~2.08696s bar cadence @ 115 BPM (launches next house around ~74–78%!)
+const FOLD_HOUSE_SEC = FOLD_BEAT_SEC * 6.4; // ~3.33913s smooth full fold curve (2.4-beat live texture overlap!)
+const MANUAL_LEAD_DELAY_SEC = 0.08;
+let autoBeatElapsed = 0;
+let autoBeatRunning = false;
 
 function computeProjectionFade(fold01: number): number {
   if (!debugFadeProjEnabled) return 1;
@@ -433,9 +459,10 @@ function syncDebugControls(): void {
   dbgColor.checked = debugColorEnabled;
   catColorBtn.setAttribute('aria-pressed', debugColorEnabled ? 'true' : 'false');
   dbgSpin.checked = debugSpinEnabled;
-  dbgPerspCut.checked = debugPerspCutEnabled;
+  dbgCameraTrick.value = debugCameraTrick;
   dbgGlideFold.checked = debugGlideOnFoldEnabled;
   dbgFadeProj.checked = debugFadeProjEnabled;
+  chkAuto.checked = autoFoldEnabled;
 }
 
 function saveDebugSettings(): void {
@@ -459,9 +486,10 @@ function saveDebugSettings(): void {
       seed: mixSeed,
       color: debugColorEnabled,
       spin: debugSpinEnabled,
-      perspectiveCut: debugPerspCutEnabled,
+      cameraTrick: debugCameraTrick,
       glideOnFold: debugGlideOnFoldEnabled,
       fadeProjOnFold: debugFadeProjEnabled,
+      autoFold: autoFoldEnabled,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   } catch {
@@ -526,9 +554,19 @@ const fill = new THREE.DirectionalLight('#f8f7f2', 0.24);
 fill.position.set(-14, 9, -10);
 scene.add(fill);
 
-// Build duplex pastel/white paper materials for the floating pre-cut nets & falling cutout sheets!
-// No static ground floor — the open #f5f4f0 studio void lets each cutout sheet fall freely downward!
-const materials = createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy());
+// Soft warm studio under-bounce light so underside worm's-eye camera views sculpt eaves & paper facades crisply!
+const underFill = new THREE.DirectionalLight('#fbfaf6', 0.44);
+underFill.position.set(12, -22, 14);
+scene.add(underFill);
+
+// Build TWO ping-pong duplex paper material sets so an outgoing house (finishing 77% -> 100% live into an FBO)
+// and the incoming house (folding 0% -> 25% sampling that live FBO) NEVER collide on shared uniforms or textures!
+const materialsPool: [OrigamiMaterials, OrigamiMaterials] = [
+  createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy()),
+  createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy()),
+];
+let activeMatIdx: 0 | 1 = 0;
+let materials: OrigamiMaterials = materialsPool[0];
 
 let curShadowExtent = 14;
 let swapShadowExtent = 14;
@@ -555,15 +593,17 @@ applyShadowFrustum(curShadowExtent);
 const BASE_LOOK_Y = 1.2;
 const defaultYaw = params.get('yaw') !== null ? Number(params.get('yaw')) : 0.44;
 const defaultPitch = params.get('pitch') !== null ? Number(params.get('pitch')) : 0.60;
-const defaultDist = params.get('dist') !== null ? Number(params.get('dist')) : 42.0;
+const defaultDist = params.get('dist') !== null ? Number(params.get('dist')) : 31.0;
 
 let targetYaw = defaultYaw;
 let targetPitch = defaultPitch;
+let targetRoll = 0;
 let targetDist = defaultDist;
 let targetLookY = BASE_LOOK_Y;
 
 let curYaw = targetYaw;
 let curPitch = targetPitch;
+let curRoll = targetRoll;
 let curDist = targetDist;
 let curLookY = targetLookY;
 
@@ -574,9 +614,10 @@ let finalDist = defaultDist;
 let finalLookY = BASE_LOOK_Y;
 let userZoomDelta = 0;
 
-// Optional per-slide camera shift & instant perspective jump-cut on projection
+// Optional per-slide camera shift & drastic top/bottom/rolled perspective jump-cut on projection
 let slideYawDelta = 0;
 let slidePitchDelta = 0;
+let slideRollDelta = 0;
 let prevSlideEase = 0;
 const AUTO_SPIN_RAD_PER_SEC = 0.11;
 
@@ -602,16 +643,80 @@ function computeHeroElevation(net: BuiltHouseNet): { yawOffsetFromCut: number; t
   return { yawOffsetFromCut, targetPitch };
 }
 
-function computeProjectionAerialView(net: BuiltHouseNet): { toYaw: number; toPitch: number; toDist: number } {
-  // Snap directly to a high Above-3/4 aerial vantage (`~48°`) & jump yaw across the diagonal
-  // at the exact moment of projection!
+function computeProjectionJumpView(
+  net: BuiltHouseNet,
+  mode: CameraTrickMode,
+): { toYaw: number; toPitch: number; toRoll: number; toDist: number } {
   const g = net.spec.generation;
-  const yawDir = g % 2 === 1 ? 1 : -1;
-  const toYaw = curYaw + yawDir * (0.76 + ((g * 19) % 3) * 0.10);
-  const toPitch = 0.84;
   const ideal = computeIdealFraming(net);
-  const toDist = Math.max(curDist, ideal.dist * 1.04);
-  return { toYaw, toPitch, toDist };
+  const baseDist = ideal.dist;
+
+  if (mode === 'overhead') {
+    // Straight bird's-eye plan view directly ON TOP of the paper (`+85°`)!
+    const yawDir = g % 2 === 1 ? 1 : -1;
+    return {
+      toYaw: curYaw + yawDir * (1.15 + ((g * 17) % 3) * 0.16),
+      toPitch: 1.48,
+      toRoll: 0,
+      toDist: baseDist * 1.02,
+    };
+  }
+
+  if (mode === 'rolled') {
+    // Dramatic 180° upside-down & 90° sideways rolled perspectives (strictly above ground!)
+    const rollSeq = [Math.PI, Math.PI * 0.5, -Math.PI * 0.5, Math.PI];
+    const pitchSeq = [1.42, 1.18, 0.52, 0.34];
+    const k = ((g - 1) % rollSeq.length + rollSeq.length) % rollSeq.length;
+    return {
+      toYaw: curYaw + (k % 2 === 0 ? 1.25 : -1.35),
+      toPitch: pitchSeq[k],
+      toRoll: rollSeq[k],
+      toDist: baseDist * 1.02,
+    };
+  }
+
+  if (mode === 'low') {
+    // Dramatic ground-level architectural horizon jump (`+6°` to `+11°`) swinging to opposite face!
+    const yawDir = g % 2 === 1 ? -1 : 1;
+    return {
+      toYaw: curYaw + yawDir * (2.25 + ((g * 13) % 3) * 0.22),
+      toPitch: 0.11 + ((g * 7) % 3) * 0.03,
+      toRoll: 0,
+      toDist: baseDist,
+    };
+  }
+
+  if (mode === 'drastic') {
+    // Extreme above-ground Escher cycle (NEVER under the house!):
+    //   0. Straight Overhead Plan (`+85°`) — front view shatters & folds straight up toward the lens!
+    //   1. Low Ground-Level Horizon (`+7°`, `165°` opposite yaw) — overhead plan erects across the horizon!
+    //   2. Inverted Overhead Flip (`+83°` + `180°` roll!) — upright house folds completely UPSIDE-DOWN!
+    //   3. Sideways 90° Rolled Axonometric (`+58°` + `-90°` roll!) — cracks open & folds SIDEWAYS!
+    //   4. Banked Heroic Low Street (`+14°` + `+34°` Dutch roll + `145°` yaw) — dramatic cinema sweep!
+    const step = ((g - 1) % 5 + 5) % 5;
+    if (step === 0) {
+      return { toYaw: curYaw + 1.25, toPitch: 1.48, toRoll: 0, toDist: baseDist * 1.02 };
+    }
+    if (step === 1) {
+      return { toYaw: curYaw - 2.65, toPitch: 0.12, toRoll: 0, toDist: baseDist };
+    }
+    if (step === 2) {
+      return { toYaw: curYaw + 1.05, toPitch: 1.44, toRoll: Math.PI, toDist: baseDist * 1.02 };
+    }
+    if (step === 3) {
+      return { toYaw: curYaw - 1.55, toPitch: 1.02, toRoll: -Math.PI * 0.5, toDist: baseDist };
+    }
+    return { toYaw: curYaw + 2.35, toPitch: 0.24, toRoll: 0.58, toDist: baseDist };
+  }
+
+  // Original milder `'subtle'` Above-3/4 diagonal jump (`+48°`)
+  const yawDir = g % 2 === 1 ? 1 : -1;
+  return {
+    toYaw: curYaw + yawDir * (0.76 + ((g * 19) % 3) * 0.10),
+    toPitch: 0.84,
+    toRoll: 0,
+    toDist: baseDist,
+  };
 }
 
 function computeSlideViewShift(net: BuiltHouseNet): { yawDelta: number; targetPitch: number } {
@@ -638,10 +743,10 @@ function computeIdealFraming(net: BuiltHouseNet): { dist: number; lookY: number;
   const aspect = Math.max(0.65, Math.min(camera.aspect || 1.6, 1.38));
   const tanH = tanV * aspect;
 
-  // Keep the same calm zoomed-out gallery margin (~24% screen height of the FOLDED 3D house) at ANY scale!
-  // Multi-house villages get slightly closer framing (`0.33`) so all 3–4 miniature buildings read crisply!
-  const widthFill = net.spec.topology === 'village' ? 0.33 : 0.25;
-  const distForHeight = hWorld / (0.24 * 2 * tanV);
+  // Crisp, intimate architectural gallery framing (~34% screen height of the FOLDED 3D house) at ANY scale!
+  // Multi-house composites get generous width framing (`0.42`) so all wall-to-wall wings read clearly!
+  const widthFill = net.spec.topology === 'village' ? 0.42 : 0.33;
+  const distForHeight = hWorld / (0.34 * 2 * tanV);
   const distForWidth = rWorld / (widthFill * tanH);
   const dist = Math.max(defaultDist, distForHeight, distForWidth);
   const lookY = Math.max(BASE_LOOK_Y, (hWorld - 0.6) * 0.30);
@@ -652,12 +757,16 @@ function computeIdealFraming(net: BuiltHouseNet): { dist: number; lookY: number;
 }
 
 function syncCameraFromOrbit(): void {
+  camera.up.set(0, 1, 0);
   camera.position.set(
     curDist * Math.cos(curPitch) * Math.sin(curYaw),
     curLookY + curDist * Math.sin(curPitch),
     curDist * Math.cos(curPitch) * Math.cos(curYaw),
   );
   camera.lookAt(0, curLookY, 0);
+  if (Math.abs(curRoll) > 1e-5) {
+    camera.rotateZ(curRoll);
+  }
 
   // Keep white-on-white studio fog scaled strictly from `curDist` so big zoomed-out houses stay crisp
   // and fog NEVER shifts on the exact swap frame!
@@ -679,18 +788,46 @@ interface PanelState {
   delay: number;
 }
 
+interface OutgoingLiveHouse {
+  rig: OrigamiHouseRig;
+  mats: OrigamiMaterials;
+  panelState: Map<FoldablePanelId, PanelState>;
+  targetRT: THREE.WebGLRenderTarget;
+  camera: THREE.PerspectiveCamera;
+  yaw: number;
+  pitch: number;
+  roll: number;
+  dist: number;
+  lookY: number;
+  swapDist: number;
+  finalDist: number;
+  swapLookY: number;
+  finalLookY: number;
+  userZoomDelta: number;
+  shadowExtent: number;
+  spinEnabled: boolean;
+  liveFramesRendered: number;
+}
+
 let generation = 1;
 let rig: OrigamiHouseRig;
-let preparedNext: { generation: number; mixKey: string; rig: OrigamiHouseRig } | null = null;
+let outgoing: OutgoingLiveHouse | null = null;
+let preparedNext: { generation: number; mixKey: string; matIdx: 0 | 1; rig: OrigamiHouseRig } | null = null;
 let prepareTimerId: number | null = null;
 const panelState = new Map<FoldablePanelId, PanelState>();
 let hoveredPanel: FoldablePanelId | null = null;
-let isScrubbing = false;
 let justProjected = false;
 let curPaperRelief = 1;
 let targetPaperRelief = 1;
 let cutoutDropState: 'none' | 'waiting' | 'falling' | 'done' = 'none';
 let cutoutDropElapsed = 0;
+
+function clearOutgoing(): void {
+  if (!outgoing) return;
+  scene.remove(outgoing.rig.root);
+  outgoing.rig.dispose();
+  outgoing = null;
+}
 
 function clearPreparedNext(): void {
   if (prepareTimerId !== null) {
@@ -704,26 +841,39 @@ function clearPreparedNext(): void {
 }
 
 /**
- * Pre-build the next generation's complete flat-net + cutout + punched window chad rig ahead of time!
- * Because `aFlatPos` depends only on the house's own flat geometry (not the live camera angle),
- * pre-building removes ALL synchronous `ExtrudeGeometry` / earcut CPU work from the JIT cut frame!
+ * Pre-build the next generation's complete flat-net + cutout + punched window chad rig ahead of time
+ * using the INACTIVE ping-pong material slot so live overlap handoffs stay 100% hitch-free!
  */
 function prepareNextGenerationNow(gen: number): OrigamiHouseRig {
   const mixKey = getMixCacheKey();
-  if (preparedNext && preparedNext.generation === gen && preparedNext.mixKey === mixKey) {
+  const nextMatIdx: 0 | 1 = activeMatIdx === 0 ? 1 : 0;
+  if (
+    preparedNext &&
+    preparedNext.generation === gen &&
+    preparedNext.mixKey === mixKey &&
+    preparedNext.matIdx === nextMatIdx
+  ) {
     return preparedNext.rig;
   }
   clearPreparedNext();
   const spec = generateHouseSpec(gen, getCurrentMixOptions());
   const net = buildHouseNet(spec);
-  const nextRig = buildOrigamiHouseRig(net, materials, true);
-  preparedNext = { generation: gen, mixKey, rig: nextRig };
+  const nextRig = buildOrigamiHouseRig(net, materialsPool[nextMatIdx], true);
+  preparedNext = { generation: gen, mixKey, matIdx: nextMatIdx, rig: nextRig };
   return nextRig;
 }
 
 function schedulePrepareNext(gen: number, delayMs = 90): void {
   const mixKey = getMixCacheKey();
-  if (preparedNext && preparedNext.generation === gen && preparedNext.mixKey === mixKey) return;
+  const nextMatIdx: 0 | 1 = activeMatIdx === 0 ? 1 : 0;
+  if (
+    preparedNext &&
+    preparedNext.generation === gen &&
+    preparedNext.mixKey === mixKey &&
+    preparedNext.matIdx === nextMatIdx
+  ) {
+    return;
+  }
   if (prepareTimerId !== null) window.clearTimeout(prepareTimerId);
   prepareTimerId = window.setTimeout(() => {
     prepareTimerId = null;
@@ -735,23 +885,36 @@ function schedulePrepareNext(gen: number, delayMs = 90): void {
   }, delayMs);
 }
 
-function applyActiveOutsideColor(): void {
-  if (!rig) return;
+function applyPaperColorsTo(mats: OrigamiMaterials, targetRig: OrigamiHouseRig): void {
   if (debugColorEnabled) {
-    if (rig.net.spec.topology === 'village') {
-      const baseIdx = Math.max(0, ARCHITECTURAL_PAPER_PALETTE.indexOf(rig.net.spec.outsideColor));
+    if (targetRig.net.spec.topology === 'village') {
+      const baseIdx = Math.max(0, ARCHITECTURAL_PAPER_PALETTE.indexOf(targetRig.net.spec.outsideColor));
       const len = ARCHITECTURAL_PAPER_PALETTE.length;
-      materials.setOutsideColors([
+      mats.setOutsideColors([
         ARCHITECTURAL_PAPER_PALETTE[baseIdx % len],
         ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 2) % len],
         ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 5) % len],
         ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 3) % len],
       ]);
     } else {
-      materials.setOutsideColor(rig.net.spec.outsideColor);
+      mats.setOutsideColor(targetRig.net.spec.outsideColor);
     }
-    materials.edge.color.set('#fbfaf7');
-    materials.projUniforms.uProjGain.value = 1.0;
+    mats.edge.color.set('#fbfaf7');
+    mats.projUniforms.uProjGain.value = 1.0;
+  } else {
+    mats.setOutsideColor('#f5f4f0');
+    mats.edge.color.set('#f8f7f3');
+    mats.projUniforms.uProjGain.value = 0.86;
+  }
+}
+
+function applyActiveOutsideColor(includeOutgoing = true): void {
+  if (!rig) return;
+  applyPaperColorsTo(materials, rig);
+  if (includeOutgoing && outgoing) {
+    applyPaperColorsTo(outgoing.mats, outgoing.rig);
+  }
+  if (debugColorEnabled) {
     sunDirActive.copy(SUN_DIR_COLOR);
     hemi.color.set('#fffdf8');
     hemi.groundColor.set('#e0ddd6');
@@ -764,9 +927,6 @@ function applyActiveOutsideColor(): void {
   } else {
     // Same warm ivory "white" as the #f5f4f0 studio paper backdrop: sunlit roofs match #f5f4f0
     // seamlessly while raking 56° gallery sun carves warm ivory sculptural planes & shadows!
-    materials.setOutsideColor('#f5f4f0');
-    materials.edge.color.set('#f8f7f3');
-    materials.projUniforms.uProjGain.value = 0.86;
     sunDirActive.copy(SUN_DIR_WHITE);
     hemi.color.set('#fffef9');
     hemi.groundColor.set('#dfd9ce');
@@ -780,13 +940,22 @@ function applyActiveOutsideColor(): void {
   applyShadowFrustum(curShadowExtent);
 }
 
-function mountHouseGeneration(gen: number, fromSwap = false): void {
-  if (rig) {
-    scene.remove(rig.root);
-    rig.dispose();
+function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = false): void {
+  if (!preservePrevRig) {
+    clearOutgoing();
+    if (rig) {
+      scene.remove(rig.root);
+      rig.dispose();
+    }
   }
   const mixKey = getMixCacheKey();
-  if (fromSwap && preparedNext && preparedNext.generation === gen && preparedNext.mixKey === mixKey) {
+  if (
+    fromSwap &&
+    preparedNext &&
+    preparedNext.generation === gen &&
+    preparedNext.mixKey === mixKey &&
+    preparedNext.matIdx === activeMatIdx
+  ) {
     rig = preparedNext.rig;
     preparedNext = null;
   } else {
@@ -794,7 +963,7 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
     const net = buildHouseNet(spec);
     rig = buildOrigamiHouseRig(net, materials, fromSwap);
   }
-  applyActiveOutsideColor();
+  applyActiveOutsideColor(!preservePrevRig);
   rig.setWindowOpen(mixWinOpenMode, mixWinOpen);
   const net = rig.net;
   scene.add(rig.root);
@@ -838,14 +1007,16 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
     swapShadowExtent = curShadowExtent;
     finalShadowExtent = ideal.shadowExtent;
 
-    if (debugPerspCutEnabled) {
+    if (debugCameraTrick !== 'off') {
       const hero = computeHeroElevation(net);
       slideYawDelta = hero.yawOffsetFromCut;
       slidePitchDelta = hero.targetPitch - targetPitch;
+      slideRollDelta = -targetRoll;
     } else {
       const shift = computeSlideViewShift(net);
       slideYawDelta = shift.yawDelta;
       slidePitchDelta = shift.targetPitch - targetPitch;
+      slideRollDelta = -targetRoll;
     }
     prevSlideEase = 0;
   } else {
@@ -898,9 +1069,10 @@ function makeProjTarget(w: number, h: number): THREE.WebGLRenderTarget {
   return rt;
 }
 
-let rtA = makeProjTarget(2, 2);
-let rtB = makeProjTarget(2, 2);
-let activeRTIndex: 0 | 1 = 0;
+// 3-slot HalfFloat FBO ring buffer guarantees ZERO WebGL feedback loop even during live overlap:
+// `rt[k-1]` (frozen older house) -> `outgoing` renders into `rt[k]` -> active house samples `rt[k]`!
+const rtPool: THREE.WebGLRenderTarget[] = [makeProjTarget(2, 2), makeProjTarget(2, 2), makeProjTarget(2, 2)];
+let activeRTIndex = 0;
 const snapVP = new THREE.Matrix4();
 
 function ensureProjTargetsSized(): { tw: number; th: number } {
@@ -908,23 +1080,25 @@ function ensureProjTargetsSized(): { tw: number; th: number } {
   renderer.getDrawingBufferSize(drawSize);
   const tw = Math.max(2, Math.round(drawSize.x));
   const th = Math.max(2, Math.round(drawSize.y));
-  if (rtA.width !== tw || rtA.height !== th) {
-    rtA.dispose();
-    rtA = makeProjTarget(tw, th);
+  let resized = false;
+  for (let i = 0; i < rtPool.length; i++) {
+    if (rtPool[i].width !== tw || rtPool[i].height !== th) {
+      rtPool[i].dispose();
+      rtPool[i] = makeProjTarget(tw, th);
+      resized = true;
+    }
   }
-  if (rtB.width !== tw || rtB.height !== th) {
-    rtB.dispose();
-    rtB = makeProjTarget(tw, th);
+  if (resized) {
+    clearOutgoing();
   }
   return { tw, th };
 }
 
 /**
  * Upfront GPU & geometry warmup run once at startup (before first composite):
- * 1. Allocates & warms BOTH 4x-MSAA HalfFloat ping-pong FBOs at exact drawing-buffer resolution.
- * 2. Pre-builds Gen 2 (with full silhouette-clipped cutout + punched window chads) and renders
- *    one microscopic hidden frame to BOTH the HalfFloat FBO and the main canvas swapchain so
- *    WebGL/Metal compiles all 9 material pipelines & uploads Gen 2 VBOs upfront — zero first-cut hitch!
+ * 1. Allocates & warms ALL 3 4x-MSAA HalfFloat ring-buffer FBOs at exact drawing-buffer resolution.
+ * 2. Pre-builds Gen 2 on the inactive ping-pong material slot and renders one microscopic hidden frame
+ *    so WebGL/Metal compiles all material pipelines & uploads Gen 2 VBOs upfront — zero first-cut hitch!
  */
 function warmupCutoutPipeline(): void {
   ensureProjTargetsSized();
@@ -933,65 +1107,64 @@ function warmupCutoutPipeline(): void {
   rig.root.updateMatrixWorld(true);
 
   const nextRig = prepareNextGenerationNow(generation + 1);
+  const nextMats = materialsPool[activeMatIdx === 0 ? 1 : 0];
   snapVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
 
   const prevToneMapping = renderer.toneMapping;
   const prevTarget = renderer.getRenderTarget();
 
-  // 1. Warm BOTH 4x-MSAA HalfFloat FBOs + resolve blit pipelines
+  // 1. Warm all 3 4x-MSAA HalfFloat FBOs + resolve blit pipelines
   renderer.toneMapping = THREE.NoToneMapping;
-  renderer.setRenderTarget(rtA);
-  renderer.render(scene, camera);
-  renderer.setRenderTarget(rtB);
-  renderer.render(scene, camera);
+  for (const rt of rtPool) {
+    renderer.setRenderTarget(rt);
+    renderer.render(scene, camera);
+  }
   renderer.setRenderTarget(prevTarget);
   renderer.toneMapping = prevToneMapping;
 
-  // 2. Warm ALL 9 material pipelines (cutout clip-tint, clip-mask, chads, paper reveal) on the main canvas
-  //    in both full-opacity (`depthWrite = true`) and fading (`depthWrite = false`) states using a microscopic
-  //    temporary pass (immediately overwritten by the clean Gen 1 frame before paint!)
+  // 2. Warm ALL material pipelines (both ping-pong material slots!) on the main canvas using a microscopic pass
   nextRig.root.scale.set(0.0005, 0.0005, 0.0005);
   nextRig.setFoldLinesVisible(false);
   nextRig.updateCutoutDrop(0);
   scene.add(nextRig.root);
-  materials.setProjection(rtA.texture, snapVP);
-  materials.projUniforms.uPaperReveal.value = 0;
+  nextMats.setProjection(rtPool[0].texture, snapVP);
+  nextMats.projUniforms.uPaperReveal.value = 0;
 
   renderer.render(scene, camera);
-  materials.setCutoutOpacity(0.5);
+  nextMats.setCutoutOpacity(0.5);
   renderer.render(scene, camera);
 
   // 3. Cleanly restore Gen 1 state while keeping `nextRig` hot & ready in `preparedNext`!
   scene.remove(nextRig.root);
   nextRig.root.scale.set(1, 1, 1);
   nextRig.setPaperRelief(1);
-  materials.setProjection(null);
-  materials.setCutoutOpacity(1);
+  nextMats.setProjection(null);
+  nextMats.setCutoutOpacity(1);
   rig.setPaperRelief(curPaperRelief);
   renderer.render(scene, camera);
 }
 
 /**
- * Just-In-Time (JIT) 1:1 camera projection:
- * Captures the EXACT current 3D view (`Camera A`) into the inactive ping-pong HalfFloat render target.
- * When `jumpToAerial` (`Jump view`) is active, immediately teleports the camera to `Camera B` (high
- * Above 3/4) and computes `snapVP` from `Camera B` while keeping `Camera A`'s texture — so at `t = 0`
- * NOTHING changes to the user's eyes (exact Front View pixel-for-pixel!), yet the 3D perspective has
- * secretly jumped to Above 3/4, causing the "Front View" house to crack open and fold in aerial 3D!
+ * Just-In-Time (JIT) 1:1 live camera projection with optional DUAL-HOUSE OVERLAP:
+ * - Captures the exact live pixels of House A (`Camera A`) into the next ring-buffer HalfFloat FBO.
+ * - When `keepOutgoingLive` is true and House A is still finishing its fold (~75–80% -> 100%),
+ *   House A stays ALIVE as `outgoing` and keeps re-rendering into `targetRT` every frame until 100%
+ *   settled — so House B starts folding underneath a LIVE-MOVING projection of House A finishing its roof!
  */
-function projectAndSpawnUnderneath(jumpToAerial = false): void {
+function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgoingLive = false): void {
+  // Dispose any older outgoing house before starting a new overlap handoff
+  clearOutgoing();
+
   const drawSize = new THREE.Vector2();
   renderer.getDrawingBufferSize(drawSize);
   const tw = Math.max(2, Math.round(drawSize.x));
   const th = Math.max(2, Math.round(drawSize.y));
-  const nextIdx: 0 | 1 = activeRTIndex === 0 ? 1 : 0;
-  let targetRT = nextIdx === 0 ? rtA : rtB;
-  if (targetRT.width !== tw || targetRT.height !== th) {
-    targetRT.dispose();
-    targetRT = makeProjTarget(tw, th);
-    if (nextIdx === 0) rtA = targetRT;
-    else rtB = targetRT;
+  const nextIdx = (activeRTIndex + 1) % rtPool.length;
+  if (rtPool[nextIdx].width !== tw || rtPool[nextIdx].height !== th) {
+    rtPool[nextIdx].dispose();
+    rtPool[nextIdx] = makeProjTarget(tw, th);
   }
+  const targetRT = rtPool[nextIdx];
 
   // 1. Capture the EXACT current pixels on screen from Camera A!
   syncCameraFromOrbit();
@@ -1008,27 +1181,67 @@ function projectAndSpawnUnderneath(jumpToAerial = false): void {
   renderer.setRenderTarget(prevTarget);
   renderer.toneMapping = prevToneMapping;
 
-  // 2. If `Jump view` is ON, secretly move camera to Camera B (Above 3/4) BEFORE building `snapVP`,
-  //    reprojecting Camera A's exact screen image onto the flat net from Camera B's perspective!
-  if (jumpToAerial) {
-    const aerial = computeProjectionAerialView(rig.net);
-    curYaw = targetYaw = aerial.toYaw;
-    curPitch = targetPitch = aerial.toPitch;
-    curDist = targetDist = aerial.toDist;
+  // 2. If House A isn't finished folding yet (~75-80%), promote it to live `outgoing` so it finishes
+  //    folding into `targetRT` every frame while House B already begins folding up underneath it!
+  const prevStillFolding = keepOutgoingLive && !allPanelsSettledFolded();
+  if (prevStillFolding) {
+    const clonedPanels = new Map<FoldablePanelId, PanelState>();
+    panelState.forEach((ps, id) => {
+      clonedPanels.set(id, { ...ps });
+    });
+    const outCam = camera.clone();
+    outCam.updateProjectionMatrix();
+    outCam.updateMatrixWorld(true);
+    rig.root.visible = false;
+    outgoing = {
+      rig,
+      mats: materials,
+      panelState: clonedPanels,
+      targetRT,
+      camera: outCam,
+      yaw: curYaw,
+      pitch: curPitch,
+      roll: curRoll,
+      dist: curDist,
+      lookY: curLookY,
+      swapDist,
+      finalDist,
+      swapLookY,
+      finalLookY,
+      userZoomDelta,
+      shadowExtent: curShadowExtent,
+      spinEnabled: debugSpinEnabled,
+      liveFramesRendered: 1,
+    };
+  }
+
+  // 3. Secretly teleport main camera to Camera B BEFORE computing `snapVP` so t=0 stays 100% pixel-locked!
+  if (trickMode !== 'off') {
+    const jump = computeProjectionJumpView(rig.net, trickMode);
+    curYaw = targetYaw = jump.toYaw;
+    curPitch = targetPitch = jump.toPitch;
+    curRoll = targetRoll = jump.toRoll;
+    curDist = targetDist = jump.toDist;
     curLookY = targetLookY = BASE_LOOK_Y;
     syncCameraFromOrbit();
     camera.updateMatrixWorld(true);
   }
 
+  const projSide: 1 | -1 = camera.position.y < 0 ? -1 : 1;
   snapVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   activeRTIndex = nextIdx;
 
-  // 3. INSTANT JIT SWAP: spawn the next DIFFERENT house flat + complementary cutout sheet with 1:1 projection!
+  // Swap to the alternate ping-pong material slot (zero uniform or texture collision with `outgoing`!)
+  activeMatIdx = activeMatIdx === 0 ? 1 : 0;
+  materials = materialsPool[activeMatIdx];
+
+  // 4. INSTANT JIT SWAP: spawn House B flat + complementary cutout sheet reading `targetRT.texture`!
   generation += 1;
   justProjected = true;
 
-  mountHouseGeneration(generation, true);
-  materials.setProjection(targetRT.texture, snapVP);
+  mountHouseGeneration(generation, true, prevStillFolding);
+  materials.setProjection(targetRT.texture, snapVP, projSide);
+  materials.setProjectionFade(1);
   syncUI();
 }
 
@@ -1045,13 +1258,13 @@ function clamp01(x: number): number {
 }
 
 function getZoomBounds(): { minDist: number; maxDist: number } {
-  return { minDist: 14, maxDist: Math.max(135, finalDist * 1.9) };
+  return { minDist: 11, maxDist: Math.max(135, finalDist * 1.9) };
 }
 
 function computeAutoZoom(foldProg: number): { autoDist: number; autoLookY: number; shadowExtent: number } {
-  // Smoothly zoom out as we approach the final folded stage (stays 100% locked at fold=0 for zero-transition swap!)
-  const zRaw = clamp01((foldProg - 0.16) / 0.78);
-  const zoomEase = zRaw * zRaw * (3 - 2 * zRaw);
+  // Smooth cosine breath synced across the full 115 BPM folding bar (100% locked at fold=0 for zero-transition swap!)
+  const zRaw = clamp01((foldProg - 0.03) / 0.94);
+  const zoomEase = 0.5 - 0.5 * Math.cos(Math.PI * zRaw);
   const autoDist = swapDist + (finalDist - swapDist) * zoomEase;
   const autoLookY = swapLookY + (finalLookY - swapLookY) * zoomEase;
 
@@ -1062,11 +1275,15 @@ function computeAutoZoom(foldProg: number): { autoDist: number; autoLookY: numbe
   return { autoDist, autoLookY, shadowExtent };
 }
 
-function revealCreasesAfterSwap(): void {
+function revealCreasesAfterSwap(interactiveHover = false): void {
   if (justProjected) {
     justProjected = false;
-    targetPaperRelief = 1;
     rig.setFoldLinesVisible(true);
+    // Keep flat projected sheet melted seamlessly into #f5f4f0 until panels genuinely begin raising!
+    // (Only reveal softly on manual hover/drag when the user wants to grab a waiting flat flap.)
+    if (interactiveHover) {
+      targetPaperRelief = Math.max(targetPaperRelief, 0.65);
+    }
   }
 }
 
@@ -1091,25 +1308,16 @@ function computeFoldProgress(): number {
 }
 
 /**
- * Silky architectural cubic-bezier easing `(0.45, 0.0, 0.16, 1.0)`:
- * unhurried lift off the flat paper, fluid arc, long cushioned settle with zero harsh bounce.
+ * Velvet-smooth continuous harmonic folding curve (`115 BPM` musical glide):
+ * lifts promptly on Beat 1 (so the incoming house starts raising early during the overlap!)
+ * then decelerates gracefully through 75% -> 100% into a soft seamless finish.
  */
 function easePaperFold(x: number): number {
   const u = clamp01(x);
   if (u <= 0 || u >= 1) return u;
-  const x1 = 0.45;
-  const x2 = 0.16;
-  let t = u;
-  for (let i = 0; i < 6; i++) {
-    const inv = 1 - t;
-    const bx = 3 * inv * inv * t * x1 + 3 * inv * t * t * x2 + t * t * t;
-    const dx = 3 * inv * inv * x1 + 6 * inv * t * (x2 - x1) + 3 * t * t * (1 - x2);
-    if (Math.abs(dx) < 1e-6) break;
-    t = clamp01(t - (bx - u) / dx);
-  }
-  const inv = 1 - t;
-  // y1 = 0.0, y2 = 1.0 -> 3*(1-t)*t^2 + t^3
-  return 3 * inv * t * t + t * t * t;
+  const shaped = Math.pow(u, 0.86);
+  const sine = 0.5 - 0.5 * Math.cos(Math.PI * shaped);
+  return sine * 0.86 + shaped * 0.14;
 }
 
 function startPanelCurve(ps: PanelState, target: number, durationSec: number, delaySec = 0): void {
@@ -1384,19 +1592,29 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
 
 let latchedScrubYaw = defaultYaw;
 
-function launchStaggeredFold(toFold: 0 | 1, leadDelaySec = 0): void {
+function launchStaggeredFold(toFold: 0 | 1, leadDelaySec = 0, targetTotalSec = FOLD_HOUSE_SEC): void {
   revealCreasesAfterSwap();
   latchedScrubYaw = curYaw;
   const schedule = getStaggerOrder(curYaw);
   const maxDelay = schedule.reduce((m, s) => Math.max(m, s.delaySec), 0);
 
+  // Normalize the entire stagger wave uniformly to fit EXACTLY inside `targetTotalSec` (1 bar @ 115 BPM = 2.087s)!
+  // Uniform scaling preserves every Z-pleat & mountain/valley zero-collision ordering guarantee while locking rhythm!
+  const effectiveLead = toFold === 1 ? Math.max(0, leadDelaySec) : 0;
+  const rawSpan = schedule.reduce((m, s) => {
+    const rawD = toFold === 1 ? s.delaySec : Math.max(0, maxDelay - s.delaySec);
+    return Math.max(m, rawD + s.durationSec);
+  }, 0.1);
+  const availableSec = Math.max(0.25, targetTotalSec - effectiveLead);
+  const norm = availableSec / rawSpan;
+
   for (const s of schedule) {
     const ps = panelState.get(s.id);
     if (!ps) continue;
     // When unfolding, reverse the curved stagger wave so roof cap & slopes bloom open ahead of the walls!
-    const delay =
-      toFold === 1 ? leadDelaySec + s.delaySec : Math.max(0, maxDelay - s.delaySec);
-    startPanelCurve(ps, toFold, s.durationSec, delay);
+    const rawDelay = toFold === 1 ? s.delaySec : Math.max(0, maxDelay - s.delaySec);
+    const delay = effectiveLead + rawDelay * norm;
+    startPanelCurve(ps, toFold, s.durationSec * norm, delay);
   }
   syncUI();
 }
@@ -1427,10 +1645,13 @@ function applyFoldScrub(t: number, snap = false): void {
 function resetAll(): void {
   generation = 1;
   justProjected = false;
+  autoBeatElapsed = 0;
+  autoBeatRunning = false;
   clearPreparedNext();
   materials.setProjection(null);
   targetYaw = curYaw = defaultYaw;
   targetPitch = curPitch = defaultPitch;
+  targetRoll = curRoll = 0;
   mountHouseGeneration(1, false);
   schedulePrepareNext(2, 120);
   syncUI();
@@ -1460,40 +1681,53 @@ function resetToFactory(): void {
   mixSeed = FACTORY_SETTINGS.seed;
   debugColorEnabled = FACTORY_SETTINGS.color;
   debugSpinEnabled = FACTORY_SETTINGS.spin;
-  debugPerspCutEnabled = FACTORY_SETTINGS.perspectiveCut;
+  debugCameraTrick = FACTORY_SETTINGS.cameraTrick;
   debugGlideOnFoldEnabled = FACTORY_SETTINGS.glideOnFold;
   debugFadeProjEnabled = FACTORY_SETTINGS.fadeProjOnFold;
+  autoFoldEnabled = FACTORY_SETTINGS.autoFold;
   syncDebugControls();
   resetAll();
   applyActiveOutsideColor();
   if (!catalogModal.hidden) rebuildCatalogGrid(true);
 }
 
-function triggerStepAction(): void {
-  // If the current 3D house is already folded & settled:
-  // - Captures the exact live pixels from Camera A, and if `Jump view` is ON, secretly reprojects
-  //   that exact image from Camera B (Above 3/4) so nothing changes at t=0 — then drops the cutout
-  //   and folds the new house in the new aerial perspective!
-  if (allPanelsSettledFolded()) {
-    projectAndSpawnUnderneath(debugPerspCutEnabled);
+function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
+  const leadSec = continuousAuto ? 0 : MANUAL_LEAD_DELAY_SEC;
+  const houseDur = Math.max(0.5, FOLD_HOUSE_SEC - (continuousAuto ? phaseCarrySec : 0));
+  const foldProg = computeFoldProgress();
+
+  // Trigger overlapping live handoff when:
+  // - Current house is settled, OR
+  // - Auto 115 BPM downbeat hits while current house is finishing (~77% -> 100%!), OR
+  // - Manual Space/Fold click while current house is already >= 72% folded!
+  if (allPanelsSettledFolded() || (allPanelsFoldedTarget() && (continuousAuto || foldProg >= 0.65))) {
+    projectAndSpawnUnderneath(debugCameraTrick, true);
     triggerCutoutDrop();
-    launchStaggeredFold(1, 0.44);
+    launchStaggeredFold(1, leadSec, houseDur);
+    if (continuousAuto) {
+      autoBeatElapsed = phaseCarrySec;
+      autoBeatRunning = true;
+    }
     return;
   }
   if (!allPanelsFoldedTarget()) {
-    const lead = cutoutDropState === 'waiting' ? 0.44 : 0;
+    const lead = cutoutDropState === 'waiting' ? leadSec : 0;
     if (cutoutDropState === 'waiting') triggerCutoutDrop();
-    launchStaggeredFold(1, lead);
+    launchStaggeredFold(1, lead, houseDur);
+    if (continuousAuto) {
+      autoBeatElapsed = phaseCarrySec;
+      autoBeatRunning = true;
+    }
   }
 }
 
 function toggleFoldAll(): void {
   if (!allPanelsFoldedTarget() && cutoutDropState === 'waiting') {
     triggerCutoutDrop();
-    launchStaggeredFold(1, 0.44);
+    launchStaggeredFold(1, MANUAL_LEAD_DELAY_SEC, FOLD_HOUSE_SEC);
     return;
   }
-  launchStaggeredFold(allPanelsFoldedTarget() ? 0 : 1);
+  launchStaggeredFold(allPanelsFoldedTarget() ? 0 : 1, 0, FOLD_HOUSE_SEC);
 }
 
 function syncUI(): void {
@@ -1535,10 +1769,6 @@ function syncUI(): void {
   } else {
     statusEl.textContent = `${prefix}Folded`;
   }
-
-  if (!isScrubbing) {
-    progressRange.value = computeFoldProgress().toFixed(3);
-  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1568,7 +1798,7 @@ function updateHover(clientX: number, clientY: number): void {
   const next = pickPanel3D(clientX, clientY);
   if (next !== hoveredPanel) {
     hoveredPanel = next;
-    if (next) revealCreasesAfterSwap();
+    if (next) revealCreasesAfterSwap(true);
     canvas.classList.toggle('can-fold', hoveredPanel !== null);
     syncUI();
   }
@@ -1665,9 +1895,9 @@ canvas.addEventListener('pointermove', (e) => {
     const dy = e.clientY - drag.lastY;
     drag.lastX = e.clientX;
     drag.lastY = e.clientY;
-    if (Math.hypot(dx, dy) > 1.5) revealCreasesAfterSwap();
+    if (Math.hypot(dx, dy) > 1.5) revealCreasesAfterSwap(true);
     targetYaw -= dx * 0.0072;
-    targetPitch = Math.max(0.16, Math.min(1.42, targetPitch + dy * 0.0068));
+    targetPitch = Math.max(0.06, Math.min(1.50, targetPitch + dy * 0.0068));
     return;
   }
 
@@ -1769,18 +1999,14 @@ btnReset.addEventListener('click', (e) => {
   resetAll();
 });
 
-progressRange.addEventListener('pointerdown', (e) => {
-  e.stopPropagation();
-  isScrubbing = true;
-  latchedScrubYaw = curYaw;
-});
-progressRange.addEventListener('pointerup', () => {
-  isScrubbing = false;
-  syncUI();
-});
-progressRange.addEventListener('input', () => {
-  applyFoldScrub(Number(progressRange.value) || 0, false);
-  syncUI();
+chkAuto.addEventListener('change', () => {
+  autoFoldEnabled = chkAuto.checked;
+  saveDebugSettings();
+  if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
+    if (!allPanelsFoldedTarget() || allPanelsSettledFolded()) {
+      triggerStepAction(true);
+    }
+  }
 });
 
 function remountWithCurrentMix(persist = true): void {
@@ -1996,6 +2222,7 @@ function selectCatalogSpecimen(tileId: string, gen: number, opts: HouseMixOption
   materials.setProjection(null);
   targetYaw = curYaw = defaultYaw;
   targetPitch = curPitch = defaultPitch;
+  targetRoll = curRoll = 0;
   mountHouseGeneration(generation, false);
   syncCameraFromOrbit();
   syncUI();
@@ -2203,7 +2430,7 @@ const setCatalogOpen = (open: boolean) => {
 };
 
 // ----------------------------------------------------------------------------
-// Architectural Paper City View (Hills, Contours, Randomized Streets & Foldable Buildings)
+// Infinite Coastal Paper City View (Curved Flight, 3-Tier LOD & Folding Wave)
 // ----------------------------------------------------------------------------
 let cityView: CityView | null = null;
 let cityActive = false;
@@ -2212,22 +2439,32 @@ const pCityStyle = params.get('cityStyle');
 let cityStreetStyle: CityStreetStyle =
   pCityStyle !== null && ALL_CITY_STREET_STYLES.includes(pCityStyle as CityStreetStyle)
     ? (pCityStyle as CityStreetStyle)
-    : 'organic';
+    : 'mix';
 const pHills = params.get('hills');
 let cityHills =
   pHills !== null && Number.isFinite(Number(pHills))
     ? Math.max(0, Math.min(1, Number(pHills) > 1 ? Number(pHills) / 100 : Number(pHills)))
     : 0.55;
+const pCityFly = params.get('cityFly');
+let cityFlyInitial = pCityFly !== null ? pCityFly !== '0' : true;
+const pCityWave = params.get('cityWave');
+const cityWaveInitial: CityWaveMode =
+  pCityWave === 'folded' || pCityWave === 'flat' || pCityWave === 'wave' ? pCityWave : 'wave';
 let cityBuiltKey = '';
 let cityRebuildDebounce: number | null = null;
-const CITY_DEFAULT_STATUS = 'Drag to orbit · Shift-drag to pan · Click any house to fold';
+const CITY_FLY_STATUS = 'Flying along the coast · Drag to look · Space to pause · Click any house to fold';
+const CITY_ORBIT_STATUS = 'Drag to orbit · Shift-drag to pan infinitely · Space to resume flight';
+
+function getCityDefaultStatus(): string {
+  return cityView?.isFlying() ? CITY_FLY_STATUS : CITY_ORBIT_STATUS;
+}
 
 function getCityBuildKey(): string {
   return `${citySeed}|${cityStreetStyle}|${Math.round(cityHills * 100)}|${mixConsistency === null ? 'd' : Math.round(mixConsistency * 100)}|${mixWindow ?? 'a'}|${mixWinOpening ?? 'a'}|${mixWinDetail ?? 'a'}`;
 }
 
-function updateCityHud(layout?: CityLayout | null): void {
-  const lay = layout ?? cityView?.layout ?? null;
+function updateCityHud(stats?: CityViewStats | null): void {
+  const st = stats ?? cityView?.getStats() ?? null;
   citySeedInput.value = String(citySeed);
   for (const btn of cityStyleBtns) {
     btn.classList.toggle('active', btn.dataset.cityStyle === cityStreetStyle);
@@ -2235,12 +2472,22 @@ function updateCityHud(layout?: CityLayout | null): void {
   const hPct = Math.round(cityHills * 100);
   cityHillsInput.value = String(hPct);
   cityHillsVal.textContent = `${hPct}%`;
+  const flying = st ? st.flying : cityFlyInitial;
+  cityFlyBtn.setAttribute('aria-pressed', flying ? 'true' : 'false');
   cityColorBtn.setAttribute('aria-pressed', debugColorEnabled ? 'true' : 'false');
-  const folded = (cityView?.getFoldTarget() ?? 1) === 1;
-  cityFoldBtn.textContent = folded ? 'Unfold' : 'Fold';
-  const styleLabel = cityStreetStyle === 'organic' ? 'Organic' : cityStreetStyle === 'grid' ? 'Grid' : 'Radial';
-  if (lay) {
-    citySubtitle.textContent = `Seed ${citySeed} · ${lay.plots.length} plots · ${lay.rooftopCount} roofs · ${styleLabel}`;
+  const waveMode: CityWaveMode = st ? st.waveMode : cityWaveInitial;
+  cityFoldBtn.textContent = waveMode === 'wave' ? 'Wave' : waveMode === 'folded' ? 'Folded' : 'Flat';
+  const styleLabel =
+    cityStreetStyle === 'mix'
+      ? 'Coastal Mix'
+      : cityStreetStyle === 'organic'
+        ? 'Organic'
+        : cityStreetStyle === 'grid'
+          ? 'Grid'
+          : 'Radial';
+  if (st) {
+    const distant = st.lod1Buildings + st.lod2Buildings;
+    citySubtitle.textContent = `Seed ${citySeed} · ${st.lod0Buildings} near / ${distant} LOD · ${styleLabel}`;
   } else {
     citySubtitle.textContent = `Seed ${citySeed} · ${styleLabel}`;
   }
@@ -2249,12 +2496,18 @@ function updateCityHud(layout?: CityLayout | null): void {
 function ensureCityView(): CityView {
   if (cityView) return cityView;
   cityView = new CityView(renderer.capabilities.getMaxAnisotropy(), sharedEnvTexture, {
-    onLayoutBuilt: (layout) => {
-      updateCityHud(layout);
+    onWorldStats: (stats) => {
+      if (cityActive) updateCityHud(stats);
+    },
+    onFlyChange: () => {
+      if (cityActive) {
+        cityStatus.textContent = getCityDefaultStatus();
+        updateCityHud();
+      }
     },
     onHoverPlot: (plot: CityBuildingPlot | null) => {
       if (!plot) {
-        cityStatus.textContent = CITY_DEFAULT_STATUS;
+        cityStatus.textContent = getCityDefaultStatus();
         return;
       }
       const s = plot.spec;
@@ -2270,17 +2523,17 @@ function ensureCityView(): CityView {
   const rect = canvas.getBoundingClientRect();
   cityView.resize(Math.max(1, rect.width), Math.max(1, rect.height));
   cityView.setColorEnabled(debugColorEnabled);
-  cityView.setSpinEnabled(debugSpinEnabled);
   cityView.setWindowOpen(mixWinOpenMode, mixWinOpen);
+  cityView.setFlying(cityFlyInitial);
+  cityView.setWaveMode(cityWaveInitial);
   return cityView;
 }
 
-function rebuildCity(animateWave = true): void {
+function rebuildCity(resetFlight = true): void {
   const cv = ensureCityView();
   cv.setColorEnabled(debugColorEnabled);
-  cv.setSpinEnabled(debugSpinEnabled);
   cv.setWindowOpen(mixWinOpenMode, mixWinOpen);
-  const layout = cv.rebuild(
+  cv.rebuild(
     {
       seed: citySeed,
       style: cityStreetStyle,
@@ -2290,11 +2543,11 @@ function rebuildCity(animateWave = true): void {
       windowOpening: mixWinOpening,
       windowDetail: mixWinDetail,
     },
-    animateWave,
+    resetFlight,
   );
   cityBuiltKey = getCityBuildKey();
-  cityStatus.textContent = CITY_DEFAULT_STATUS;
-  updateCityHud(layout);
+  cityStatus.textContent = getCityDefaultStatus();
+  updateCityHud(cv.getStats());
 }
 
 function scheduleCityRebuild(delayMs = 90): void {
@@ -2305,7 +2558,7 @@ function scheduleCityRebuild(delayMs = 90): void {
   }, delayMs);
 }
 
-function setCityOpen(open: boolean, animateWave = true): void {
+function setCityOpen(open: boolean, resetFlight = false): void {
   if (open === cityActive) return;
   cityActive = open;
   document.documentElement.classList.toggle('city-mode', open);
@@ -2318,16 +2571,15 @@ function setCityOpen(open: boolean, animateWave = true): void {
     setDebugOpen(false);
     const cv = ensureCityView();
     cv.setColorEnabled(debugColorEnabled);
-    cv.setSpinEnabled(debugSpinEnabled);
     cv.setWindowOpen(mixWinOpenMode, mixWinOpen);
     const nextKey = getCityBuildKey();
-    if (!cv.layout || cityBuiltKey !== nextKey) {
-      rebuildCity(animateWave);
-    } else if (animateWave) {
-      cv.replayFoldWave();
-      updateCityHud(cv.layout);
+    if (!cv.world || cityBuiltKey !== nextKey) {
+      rebuildCity(true);
+    } else if (resetFlight) {
+      rebuildCity(true);
     } else {
-      updateCityHud(cv.layout);
+      cityStatus.textContent = getCityDefaultStatus();
+      updateCityHud(cv.getStats());
     }
   } else {
     canvas.style.cursor = 'grab';
@@ -2368,7 +2620,7 @@ for (const btn of cityStyleBtns) {
     const raw = btn.dataset.cityStyle;
     if (!raw || !ALL_CITY_STREET_STYLES.includes(raw as CityStreetStyle) || raw === cityStreetStyle) return;
     cityStreetStyle = raw as CityStreetStyle;
-    rebuildCity(true);
+    rebuildCity(false);
   });
 }
 cityHillsInput.addEventListener('input', () => {
@@ -2377,11 +2629,18 @@ cityHillsInput.addEventListener('input', () => {
   cityHillsVal.textContent = `${pct}%`;
   scheduleCityRebuild(80);
 });
+cityFlyBtn.addEventListener('click', () => {
+  const cv = ensureCityView();
+  cv.setFlying(!cv.isFlying());
+  cityFlyInitial = cv.isFlying();
+  updateCityHud(cv.getStats());
+});
 cityFoldBtn.addEventListener('click', () => {
-  if (!cityView) return;
-  const next: 0 | 1 = cityView.getFoldTarget() === 1 ? 0 : 1;
-  cityView.setCityFold(next, false);
-  updateCityHud();
+  const cv = ensureCityView();
+  const cur = cv.getWaveMode();
+  const next: CityWaveMode = cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave';
+  cv.setWaveMode(next);
+  updateCityHud(cv.getStats());
 });
 cityColorBtn.addEventListener('click', () => {
   debugColorEnabled = !debugColorEnabled;
@@ -2592,9 +2851,12 @@ dbgSpin.addEventListener('change', () => {
   debugSpinEnabled = dbgSpin.checked;
   saveDebugSettings();
 });
-dbgPerspCut.addEventListener('change', () => {
-  debugPerspCutEnabled = dbgPerspCut.checked;
-  saveDebugSettings();
+dbgCameraTrick.addEventListener('change', () => {
+  const raw = dbgCameraTrick.value;
+  if (VALID_CAMERA_TRICKS.includes(raw as CameraTrickMode)) {
+    debugCameraTrick = raw as CameraTrickMode;
+    saveDebugSettings();
+  }
 });
 dbgGlideFold.addEventListener('change', () => {
   debugGlideOnFoldEnabled = dbgGlideFold.checked;
@@ -2659,13 +2921,35 @@ window.addEventListener('keydown', (e) => {
     setCityOpen(!cityActive);
     return;
   }
-  if (cityActive || !helpModal.hidden || !catalogModal.hidden) return;
+  if (cityActive && helpModal.hidden && catalogModal.hidden) {
+    if (e.key === ' ') {
+      e.preventDefault();
+      const cv = ensureCityView();
+      cv.setFlying(!cv.isFlying());
+      updateCityHud(cv.getStats());
+    } else if (e.key === 'w' || e.key === 'W') {
+      e.preventDefault();
+      const cv = ensureCityView();
+      const cur = cv.getWaveMode();
+      cv.setWaveMode(cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave');
+      updateCityHud(cv.getStats());
+    }
+    return;
+  }
+  if (!helpModal.hidden || !catalogModal.hidden) return;
 
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
     triggerStepAction();
   } else if (e.key === 'f' || e.key === 'F') {
     toggleFoldAll();
+  } else if (e.key === 'a' || e.key === 'A') {
+    autoFoldEnabled = !autoFoldEnabled;
+    chkAuto.checked = autoFoldEnabled;
+    saveDebugSettings();
+    if (autoFoldEnabled && (!allPanelsFoldedTarget() || allPanelsSettledFolded())) {
+      triggerStepAction(true);
+    }
   } else if (e.key === 'r' || e.key === 'R') {
     resetAll();
   } else if ((e.key === 'd' || e.key === 'D') && showDebugTrigger) {
@@ -2725,7 +3009,7 @@ if (params.has('city')) {
     __origami?: {
       progress: (v: number) => void;
       fold: (pid: FoldablePanelId, v: number) => void;
-      projectNow: (jumpToAerial?: boolean) => void;
+      projectNow: (mode?: CameraTrickMode | boolean) => void;
       dropCutout: (atSec?: number) => void;
       setColor: (enabled: boolean) => void;
       setModel: (slot: number | null) => void;
@@ -2737,11 +3021,17 @@ if (params.has('city')) {
       openCity: (open?: boolean, opts?: { seed?: number; style?: CityStreetStyle; hills?: number; instant?: boolean }) => void;
       cityView: (yaw: number, pitch: number, dist: number, tx?: number, ty?: number, tz?: number) => void;
       cityFold: (target: 0 | 1, instant?: boolean) => void;
+      cityFly: (flying: boolean) => void;
+      cityAdvance: (deltaS: number) => void;
+      citySetWaveMode: (mode: CityWaveMode) => void;
+      cityInfo: () => CityViewStats | null;
       setSpin: (enabled: boolean) => void;
+      setCameraTrick: (mode: CameraTrickMode) => void;
       setPerspectiveCut: (enabled: boolean) => void;
       setGlideOnFold: (enabled: boolean) => void;
       setFadePrint: (enabled: boolean) => void;
-      view: (yaw: number, pitch: number, dist: number) => void;
+      setAuto: (enabled: boolean) => void;
+      view: (yaw: number, pitch: number, dist: number, roll?: number) => void;
       info: () => {
         generation: number;
         seed: number;
@@ -2758,6 +3048,12 @@ if (params.has('city')) {
         finalDist: number;
         yaw: number;
         pitch: number;
+        bpm: number;
+        barSec: number;
+        foldProgress: number;
+        overlapActive: boolean;
+        outgoingFoldProgress: number;
+        outgoingLiveFrames: number;
       };
     };
   }
@@ -2798,8 +3094,10 @@ if (params.has('city')) {
       syncUI();
     }
   },
-  projectNow(jumpToAerial = false) {
-    projectAndSpawnUnderneath(jumpToAerial);
+  projectNow(mode: CameraTrickMode | boolean = debugCameraTrick) {
+    const resolved: CameraTrickMode =
+      typeof mode === 'boolean' ? (mode ? 'drastic' : 'off') : mode;
+    projectAndSpawnUnderneath(resolved);
   },
   dropCutout(atSec?: number) {
     if (atSec !== undefined) {
@@ -2819,6 +3117,8 @@ if (params.has('city')) {
     syncDebugControls();
     saveDebugSettings();
     applyActiveOutsideColor();
+    cityView?.setColorEnabled(debugColorEnabled);
+    if (cityActive) updateCityHud();
   },
   setModel(slot: number | null) {
     selectModelSlot(slot);
@@ -2875,13 +3175,33 @@ if (params.has('city')) {
     cityView?.setCityFold(target, instant);
     updateCityHud();
   },
+  cityFly(flying: boolean) {
+    cityView?.setFlying(flying);
+    updateCityHud();
+  },
+  cityAdvance(deltaS: number) {
+    cityView?.advanceFlight(deltaS);
+    updateCityHud();
+  },
+  citySetWaveMode(mode: CityWaveMode) {
+    cityView?.setWaveMode(mode);
+    updateCityHud();
+  },
+  cityInfo() {
+    return cityView ? cityView.getStats() : null;
+  },
   setSpin(enabled: boolean) {
     debugSpinEnabled = enabled;
     syncDebugControls();
     saveDebugSettings();
   },
+  setCameraTrick(mode: CameraTrickMode) {
+    debugCameraTrick = mode;
+    syncDebugControls();
+    saveDebugSettings();
+  },
   setPerspectiveCut(enabled: boolean) {
-    debugPerspCutEnabled = Boolean(enabled);
+    debugCameraTrick = enabled ? 'drastic' : 'off';
     syncDebugControls();
     saveDebugSettings();
   },
@@ -2896,9 +3216,20 @@ if (params.has('city')) {
     syncDebugControls();
     saveDebugSettings();
   },
-  view(yaw: number, pitch: number, dist: number) {
+  setAuto(enabled: boolean) {
+    autoFoldEnabled = Boolean(enabled);
+    syncDebugControls();
+    saveDebugSettings();
+    if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
+      if (!allPanelsFoldedTarget() || allPanelsSettledFolded()) {
+        triggerStepAction(true);
+      }
+    }
+  },
+  view(yaw: number, pitch: number, dist: number, roll = 0) {
     targetYaw = curYaw = yaw;
     targetPitch = curPitch = pitch;
+    targetRoll = curRoll = roll;
     swapDist = finalDist = targetDist = curDist = dist;
     userZoomDelta = 0;
     syncCameraFromOrbit();
@@ -2921,6 +3252,18 @@ if (params.has('city')) {
       finalDist: Math.round(finalDist * 10) / 10,
       yaw: Math.round(curYaw * 1000) / 1000,
       pitch: Math.round(curPitch * 1000) / 1000,
+      bpm: FOLD_BPM,
+      barSec: Math.round(FOLD_BAR_SEC * 1000) / 1000,
+      foldProgress: Math.round(computeFoldProgress() * 1000) / 1000,
+      overlapActive: Boolean(outgoing),
+      outgoingFoldProgress: outgoing
+        ? Math.round(
+            (Array.from(outgoing.panelState.values()).reduce((a, p) => a + p.fold, 0) /
+              Math.max(1, outgoing.panelState.size)) *
+              1000,
+          ) / 1000
+        : 1,
+      outgoingLiveFrames: outgoing ? outgoing.liveFramesRendered : 0,
     };
   },
 };
@@ -2978,9 +3321,6 @@ function animate(now: number): void {
 
   const foldProg = computeFoldProgress();
   materials.setProjectionFade(computeProjectionFade(foldProg));
-  if (foldChanged && !isScrubbing) {
-    progressRange.value = foldProg.toFixed(3);
-  }
 
   // 2. Animate falling outer cutout sheet + punched window chads (drops cleanly just before folding!)
   if (cutoutDropState === 'falling') {
@@ -3001,7 +3341,8 @@ function animate(now: number): void {
   const dSlide = slideEase - prevSlideEase;
   if (debugGlideOnFoldEnabled && Math.abs(dSlide) > 1e-6) {
     targetYaw += dSlide * slideYawDelta;
-    targetPitch = Math.max(0.18, Math.min(1.42, targetPitch + dSlide * slidePitchDelta));
+    targetPitch = Math.max(0.06, Math.min(1.50, targetPitch + dSlide * slidePitchDelta));
+    targetRoll += dSlide * slideRollDelta;
   }
   prevSlideEase = slideEase;
 
@@ -3010,15 +3351,28 @@ function animate(now: number): void {
   targetDist = Math.max(minDist, Math.min(maxDist, autoDist + userZoomDelta));
   targetLookY = autoLookY;
 
-  const camAlpha = 1 - Math.exp(-dt * 4.2);
+  const camAlpha = 1 - Math.exp(-dt * 5.6);
   curYaw += (targetYaw - curYaw) * camAlpha;
   curPitch += (targetPitch - curPitch) * camAlpha;
+  curRoll += (targetRoll - curRoll) * camAlpha;
   curDist += (targetDist - curDist) * camAlpha;
   curLookY += (targetLookY - curLookY) * camAlpha;
   syncCameraFromOrbit();
 
+  // Smoothly reveal flat-sheet thickness, edges, creases & shadows ONLY as panels genuinely begin raising!
+  if (rig.hasCutout) {
+    const raiseRaw = clamp01((foldProg - 0.04) / 0.28);
+    const raiseRelief = raiseRaw * raiseRaw * (3 - 2 * raiseRaw);
+    targetPaperRelief = Math.max(targetPaperRelief, raiseRelief);
+    if (!allPanelsFoldedTarget() && drag.kind === 'none' && hoveredPanel === null && foldProg < 0.02) {
+      targetPaperRelief = 0;
+    }
+  } else {
+    targetPaperRelief = 1;
+  }
+
   if (Math.abs(targetPaperRelief - curPaperRelief) > 0.002) {
-    curPaperRelief += (targetPaperRelief - curPaperRelief) * (1 - Math.exp(-dt * 16));
+    curPaperRelief += (targetPaperRelief - curPaperRelief) * (1 - Math.exp(-dt * 6.5));
     if (Math.abs(targetPaperRelief - curPaperRelief) <= 0.004) curPaperRelief = targetPaperRelief;
     rig.setPaperRelief(curPaperRelief);
   }
@@ -3028,10 +3382,120 @@ function animate(now: number): void {
     applyShadowFrustum(curShadowExtent);
   }
 
+  // Pre-build next house early during the bar so Beat-1 handoffs stay 100% hitch-free!
+  if (autoFoldEnabled && foldProg > 0.35 && (!preparedNext || preparedNext.generation !== generation + 1)) {
+    schedulePrepareNext(generation + 1, 20);
+  }
+
   // Keep status caption updated & quietly pre-build the next house once settled into 3D!
   if (foldChanged && allPanelsSettledFolded()) {
     schedulePrepareNext(generation + 1, 80);
     syncUI();
+  }
+
+  // Phase-locked 115 BPM overlapping chain:
+  // Each house unfolds smoothly over 5.2 beats (~2.71s), while the next house launches on every
+  // 4-beat bar downbeat (~2.087s, right when the previous house hits ~77% and starts slowing!).
+  if (autoFoldEnabled && drag.kind === 'none' && helpModal.hidden && catalogModal.hidden) {
+    if (!autoBeatRunning) {
+      autoBeatRunning = true;
+      autoBeatElapsed = 0;
+      if (!foldChanged || allPanelsSettledFolded() || !allPanelsFoldedTarget()) {
+        triggerStepAction(true, 0);
+      }
+    } else {
+      autoBeatElapsed += dt;
+      if (autoBeatElapsed >= FOLD_BAR_SEC) {
+        const carry = Math.min(0.05, autoBeatElapsed - FOLD_BAR_SEC);
+        triggerStepAction(true, carry);
+      }
+    }
+  } else {
+    autoBeatRunning = false;
+    autoBeatElapsed = 0;
+  }
+
+  // Dual-pass LIVE texture update during the ~1.2-beat overlap window (77% -> 100%):
+  // Keeps advancing & rendering the outgoing house into `outgoing.targetRT` every frame so the
+  // incoming house literally folds up while carrying a LIVE-MOVING projection of the previous house!
+  if (outgoing) {
+    let outStillMoving = false;
+    let outFoldSum = 0;
+    for (const pid of outgoing.rig.panelIds) {
+      const ps = outgoing.panelState.get(pid);
+      if (!ps) continue;
+      if (ps.animating) {
+        if (ps.delay > 0) {
+          ps.delay = Math.max(0, ps.delay - dt);
+        } else {
+          ps.animElapsed += dt;
+          const u = clamp01(ps.animElapsed / ps.animDuration);
+          ps.fold = ps.startFold + (ps.target - ps.startFold) * easePaperFold(u);
+          if (u >= 1) {
+            ps.fold = ps.target;
+            ps.animating = false;
+          }
+        }
+        outStillMoving = true;
+      }
+      outFoldSum += ps.fold;
+      outgoing.rig.updatePanelVisual(pid, ps.fold, 0, false);
+    }
+
+    const outFoldProg = outgoing.rig.panelIds.length > 0 ? outFoldSum / outgoing.rig.panelIds.length : 1;
+    outgoing.mats.setProjectionFade(computeProjectionFade(outFoldProg));
+
+    if (outgoing.spinEnabled) {
+      outgoing.yaw += dt * AUTO_SPIN_RAD_PER_SEC;
+    }
+    const ozRaw = clamp01((outFoldProg - 0.03) / 0.94);
+    const ozEase = 0.5 - 0.5 * Math.cos(Math.PI * ozRaw);
+    const outTargetDist = outgoing.swapDist + (outgoing.finalDist - outgoing.swapDist) * ozEase + outgoing.userZoomDelta;
+    const outTargetLookY = outgoing.swapLookY + (outgoing.finalLookY - outgoing.swapLookY) * ozEase;
+    const outAlpha = 1 - Math.exp(-dt * 5.6);
+    outgoing.dist += (outTargetDist - outgoing.dist) * outAlpha;
+    outgoing.lookY += (outTargetLookY - outgoing.lookY) * outAlpha;
+
+    outgoing.camera.up.set(0, 1, 0);
+    outgoing.camera.position.set(
+      outgoing.dist * Math.cos(outgoing.pitch) * Math.sin(outgoing.yaw),
+      outgoing.lookY + outgoing.dist * Math.sin(outgoing.pitch),
+      outgoing.dist * Math.cos(outgoing.pitch) * Math.cos(outgoing.yaw),
+    );
+    outgoing.camera.lookAt(0, outgoing.lookY, 0);
+    if (Math.abs(outgoing.roll) > 1e-5) outgoing.camera.rotateZ(outgoing.roll);
+    outgoing.camera.updateMatrixWorld(true);
+
+    // Offscreen Pass 1: render outgoing House A live into `outgoing.targetRT` (sampled by active House B!)
+    const savedFogNear = studioFog.near;
+    const savedFogFar = studioFog.far;
+    const savedRigVis = rig.root.visible;
+    rig.root.visible = false;
+    outgoing.rig.root.visible = true;
+    studioFog.near = Math.max(44, outgoing.dist * 1.25);
+    studioFog.far = Math.max(120, outgoing.dist * 3.15);
+    applyShadowFrustum(outgoing.shadowExtent);
+
+    const prevTarget = renderer.getRenderTarget();
+    const prevToneMapping = renderer.toneMapping;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.setRenderTarget(outgoing.targetRT);
+    renderer.render(scene, outgoing.camera);
+    renderer.setRenderTarget(prevTarget);
+    renderer.toneMapping = prevToneMapping;
+    outgoing.liveFramesRendered += 1;
+
+    // Restore active House B state for Pass 2 main screen render
+    outgoing.rig.root.visible = false;
+    rig.root.visible = savedRigVis;
+    studioFog.near = savedFogNear;
+    studioFog.far = savedFogFar;
+    applyShadowFrustum(curShadowExtent);
+
+    // Once House A finishes 100%, its final crisp frame stays frozen in `targetRT` and we dispose the rig!
+    if (!outStillMoving) {
+      clearOutgoing();
+    }
   }
 
   renderer.render(scene, camera);

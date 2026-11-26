@@ -660,6 +660,7 @@ describe('Parametric flat-net paper houses (cross, ribbon, hex, oct, setback, L-
           uPaperReveal: { value: 1 },
           uProjGain: { value: 1 },
           uProjFade: { value: 1 },
+          uProjSide: { value: 1 },
         },
         setOutsideColor() {},
         setOutsideColors() {},

@@ -37,6 +37,8 @@ export interface ProjectionUniforms {
   uPaperReveal: { value: number };
   uProjGain: { value: number };
   uProjFade: { value: number };
+  /** `+1` when Camera B projects onto top (`inside`) face; `-1` when Camera B projects from underneath onto bottom (`outside`) face */
+  uProjSide: { value: number };
 }
 
 export interface OrigamiMaterials {
@@ -59,7 +61,7 @@ export interface OrigamiMaterials {
   foldLineMountain: THREE.LineDashedMaterial;
   foldLineActive: THREE.LineBasicMaterial;
   projUniforms: ProjectionUniforms;
-  setProjection(tex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4): void;
+  setProjection(tex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4, side?: 1 | -1): void;
   setProjectionFade(fade01: number): void;
   setCutoutOpacity(opacity: number): void;
   setOutsideColor(hex: string): void;
@@ -131,8 +133,8 @@ function createWashiFiberTextures(maxAniso: number): { map: THREE.CanvasTexture;
 interface ProjectiveShaderOpts {
   /** Clip fragments whose projected capture matches the empty studio background (no giant blank outer sheet!) */
   clipToSilhouette?: boolean;
-  /** Keep the material's own pastel color (e.g. underside of falling cutout shard) while still silhouette-clipping */
-  tintColor?: boolean;
+  /** Which face receives the projected print: `+1` top (`inside`), `-1` bottom (`outside`), `0` edges (both sides) */
+  face?: 1 | -1 | 0;
 }
 
 function attachProjectiveShader(
@@ -141,8 +143,9 @@ function attachProjectiveShader(
   opts: ProjectiveShaderOpts = {},
 ): void {
   const clip = Boolean(opts.clipToSilhouette);
-  const tint = opts.tintColor !== false;
-  mat.customProgramCacheKey = () => `origami-cam-proj-v8-${clip ? 'clip' : 'full'}-${tint ? 'tint' : 'mask'}`;
+  const face = opts.face ?? 1;
+  const sideExpr = face === 0 ? '1.0' : face > 0 ? 'step(0.0, uProjSide)' : 'step(0.0, -uProjSide)';
+  mat.customProgramCacheKey = () => `origami-cam-proj-v10-${clip ? 'clip' : 'full'}-f${face}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHasProj = uniforms.uHasProj;
     shader.uniforms.uProjTex = uniforms.uProjTex;
@@ -150,18 +153,21 @@ function attachProjectiveShader(
     shader.uniforms.uPaperReveal = uniforms.uPaperReveal;
     shader.uniforms.uProjGain = uniforms.uProjGain;
     shader.uniforms.uProjFade = uniforms.uProjFade;
+    shader.uniforms.uProjSide = uniforms.uProjSide;
 
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
         `#include <common>
 attribute vec3 aFlatPos;
-varying vec3 vProjWorldPos;`,
+varying vec3 vProjWorldPos;
+varying vec3 vLiveWorldPos;`,
       )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-vProjWorldPos = aFlatPos;`,
+vProjWorldPos = aFlatPos;
+vLiveWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
       );
 
     const clipBlock = clip
@@ -172,13 +178,6 @@ vProjWorldPos = aFlatPos;`,
       float bgDiff = length(captured - groundRef);
       projIsBlank = 1.0 - smoothstep(0.008, 0.024, bgDiff);`;
     const clipOutside = clip ? ` else { discard; }` : ` else { projIsBlank = 1.0; }`;
-    const tintBlock = tint
-      ? `
-      vec3 projAlbedo = clamp((captured / groundRef) * uProjGain, vec3(0.0), vec3(1.65));
-      float fx = smoothstep(0.002, 0.035, pUv.x) * smoothstep(0.002, 0.035, 1.0 - pUv.x);
-      float fy = smoothstep(0.002, 0.035, pUv.y) * smoothstep(0.002, 0.035, 1.0 - pUv.y);
-      diffuseColor.rgb *= mix(vec3(1.0), projAlbedo, fx * fy * uProjFade);`
-      : '';
 
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -190,11 +189,14 @@ uniform mat4 uProjMatrix;
 uniform float uPaperReveal;
 uniform float uProjGain;
 uniform float uProjFade;
-varying vec3 vProjWorldPos;`,
+uniform float uProjSide;
+varying vec3 vProjWorldPos;
+varying vec3 vLiveWorldPos;`,
       )
       .replace(
         '#include <map_fragment>',
         `#include <map_fragment>
+float projSideMatch = ${sideExpr};
 float projIsBlank = 0.0;
 if (uHasProj > 0.5) {
   vec4 pClip = uProjMatrix * vec4(vProjWorldPos, 1.0);
@@ -206,7 +208,13 @@ if (uHasProj > 0.5) {
       vec3 c2 = texture2D(uProjTex, vec2(0.015, 0.985)).rgb;
       vec3 c3 = texture2D(uProjTex, vec2(0.985, 0.985)).rgb;
       vec3 groundRef = max(vec3(0.05), max(max(c0, c1), max(c2, c3)));
-      vec3 captured = texture2D(uProjTex, pUv).rgb;${clipBlock}${tintBlock}
+      vec3 captured = texture2D(uProjTex, pUv).rgb;${clipBlock}
+      if (projSideMatch > 0.5) {
+        vec3 projAlbedo = clamp((captured / groundRef) * uProjGain, vec3(0.0), vec3(1.65));
+        float fx = smoothstep(0.002, 0.035, pUv.x) * smoothstep(0.002, 0.035, 1.0 - pUv.x);
+        float fy = smoothstep(0.002, 0.035, pUv.y) * smoothstep(0.002, 0.035, 1.0 - pUv.y);
+        diffuseColor.rgb = mix(diffuseColor.rgb, projAlbedo, fx * fy * uProjFade);
+      }
     }${clipOutside}
   }${clipOutside}
 }${clip ? ' else { discard; }' : ''}`,
@@ -216,9 +224,11 @@ if (uHasProj > 0.5) {
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <fog_fragment>',
         `#include <fog_fragment>
-if (uHasProj > 0.5 && projIsBlank > 0.001 && uPaperReveal < 0.999) {
+if (uHasProj > 0.5 && projSideMatch > 0.5 && projIsBlank > 0.001 && uPaperReveal < 0.999) {
   vec3 studioBg = vec3(0.960784, 0.956863, 0.941176);
-  gl_FragColor.rgb = mix(gl_FragColor.rgb, studioBg, projIsBlank * (1.0 - uPaperReveal));
+  float liftReveal = smoothstep(0.14, 1.25, abs(vLiveWorldPos.y));
+  float localReveal = clamp(max(uPaperReveal, liftReveal), 0.0, 1.0);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, studioBg, projIsBlank * (1.0 - localReveal));
 }`,
       );
     }
@@ -236,6 +246,7 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     uPaperReveal: { value: 1 },
     uProjGain: { value: 1 },
     uProjFade: { value: 1 },
+    uProjSide: { value: 1 },
   };
 
   const inside = new THREE.MeshStandardMaterial({
@@ -282,13 +293,17 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
   const chadOutside = outside.clone();
   const chadEdge = edge.clone();
 
-  attachProjectiveShader(inside, projUniforms);
-  attachProjectiveShader(edge, projUniforms);
-  attachProjectiveShader(cutoutInside, projUniforms, { clipToSilhouette: true, tintColor: true });
-  attachProjectiveShader(cutoutEdge, projUniforms, { clipToSilhouette: true, tintColor: true });
-  attachProjectiveShader(cutoutOutside, projUniforms, { clipToSilhouette: true, tintColor: false });
-  attachProjectiveShader(chadInside, projUniforms);
-  attachProjectiveShader(chadEdge, projUniforms);
+  attachProjectiveShader(inside, projUniforms, { face: 1 });
+  for (const m of outsideSlots) {
+    attachProjectiveShader(m, projUniforms, { face: -1 });
+  }
+  attachProjectiveShader(edge, projUniforms, { face: 0 });
+  attachProjectiveShader(cutoutInside, projUniforms, { clipToSilhouette: true, face: 1 });
+  attachProjectiveShader(cutoutEdge, projUniforms, { clipToSilhouette: true, face: 0 });
+  attachProjectiveShader(cutoutOutside, projUniforms, { clipToSilhouette: true, face: -1 });
+  attachProjectiveShader(chadInside, projUniforms, { face: 1 });
+  attachProjectiveShader(chadEdge, projUniforms, { face: 0 });
+  attachProjectiveShader(chadOutside, projUniforms, { face: -1 });
 
   const foldLine = new THREE.LineDashedMaterial({
     color: 0x8f8c86,
@@ -345,16 +360,18 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     foldLineMountain,
     foldLineActive,
     projUniforms,
-    setProjection(nextTex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4) {
+    setProjection(nextTex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4, side: 1 | -1 = 1) {
       if (nextTex && viewProjMatrix) {
         projUniforms.uProjTex.value = nextTex;
         projUniforms.uProjMatrix.value.copy(viewProjMatrix);
         projUniforms.uHasProj.value = 1;
         projUniforms.uProjFade.value = 1;
+        projUniforms.uProjSide.value = side;
       } else {
         projUniforms.uHasProj.value = 0;
         projUniforms.uProjTex.value = null;
         projUniforms.uProjFade.value = 1;
+        projUniforms.uProjSide.value = 1;
       }
     },
     setProjectionFade(fade01: number) {
@@ -2134,9 +2151,30 @@ export function buildOrigamiHouseRig(
   }
 
   let linesAllowed = true;
+  let curRelief = 1;
   let windowOpenMode: WindowOpenMode = 'random';
   let windowOpenRatio = 0.35;
   const lastPanelFold = new Map<FoldablePanelId, number>();
+
+  const syncShadowsForPanels = () => {
+    let anyRaised = false;
+    panels.forEach((pv, pid) => {
+      const f = lastPanelFold.get(pid) ?? 0;
+      const raised = f > 0.065;
+      if (raised) anyRaised = true;
+      pv.mesh.castShadow = raised;
+    });
+    for (const det of details) {
+      const f = lastPanelFold.get(det.driverPanel) ?? 0;
+      const raised = f > 0.065;
+      det.pivot.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) obj.castShadow = raised;
+      });
+    }
+    if (baseMesh) {
+      baseMesh.castShadow = anyRaised && curRelief > 0.45;
+    }
+  };
 
   const applyDetailAngle = (det: KirigamiDetailRig, fold01: number) => {
     const start = det.kind === 'window' ? 0.52 : 0.35;
@@ -2175,12 +2213,21 @@ export function buildOrigamiHouseRig(
       : pv.isMountain
         ? mats.foldLineMountain
         : mats.foldLine;
-    pv.foldLine.visible = linesAllowed && (fold01 < 0.96 || hovered);
+    // Keep fold lines hidden on untouched flat projected sheets until this panel actually begins raising!
+    const lineActive = curRelief > 0.38 ? fold01 < 0.96 : fold01 > 0.018 && fold01 < 0.96;
+    pv.foldLine.visible = linesAllowed && (lineActive || hovered);
+
+    // Shadows ONLY appear on a panel once it genuinely starts lifting off the flat plane!
+    const raised = fold01 > 0.065;
+    pv.mesh.castShadow = raised;
 
     // Drive any attached kirigami pop-up details & hinged window leaves smoothly as their host panel folds shut!
     for (const det of details) {
       if (det.driverPanel !== id) continue;
       applyDetailAngle(det, fold01);
+      det.pivot.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) obj.castShadow = raised;
+      });
     }
   };
 
@@ -2200,19 +2247,18 @@ export function buildOrigamiHouseRig(
     });
   };
 
-  // Controls flat-sheet paper thickness & edge-shadow relief:
-  // 0 on the exact projection swap frame -> 100% invisible cut edges (ZERO transition!),
-  // smoothly rising to 1 the moment the user hovers, orbits, or folds!
+  // Controls flat-sheet blank-paper reveal, fold-line fade, & shadow gating:
+  // 0 on the exact projection swap frame -> 100% invisible flat sheet, edges, & shadows while keeping
+  // true 3D height (`scale.y = 1`) so raising walls emerge organically from white space as they lift!
   const setPaperRelief = (relief01: number) => {
     const r = Math.max(0, Math.min(1, relief01));
+    curRelief = r;
     mats.projUniforms.uPaperReveal.value = r;
-    const sy = 0.02 + 0.98 * r;
-    root.scale.y = sy;
-    root.position.y = PAPER_THICK * sy;
-    const cast = r > 0.14;
-    for (const m of allMeshes) {
-      m.castShadow = cast;
-    }
+    mats.foldLine.opacity = 0.14 * r;
+    mats.foldLineMountain.opacity = 0.22 * r;
+    root.scale.y = 1;
+    root.position.y = PAPER_THICK;
+    syncShadowsForPanels();
   };
 
   // Animate the die-cut outer paper sheet + punched window chads falling cleanly down into the void!
@@ -2223,35 +2269,42 @@ export function buildOrigamiHouseRig(
       cutoutRoot.visible = true;
       outerCutoutMesh.position.set(0, 0, 0);
       outerCutoutMesh.rotation.set(0, 0, 0);
+      outerCutoutMesh.castShadow = false;
       for (const ch of fallingChads) {
         ch.mesh.position.set(ch.baseX, 0, ch.baseZ);
         ch.mesh.rotation.set(0, 0, 0);
+        ch.mesh.castShadow = false;
       }
       mats.setCutoutOpacity(1);
       return true;
     }
 
-    const fadeStart = 0.52;
-    const fadeEnd = 1.12;
+    const fadeStart = 0.42;
+    const fadeEnd = 0.96;
     if (elapsedSec >= fadeEnd) {
       cutoutRoot.visible = false;
+      outerCutoutMesh.castShadow = false;
+      for (const ch of fallingChads) ch.mesh.castShadow = false;
       mats.setCutoutOpacity(0);
       return false;
     }
 
     cutoutRoot.visible = true;
-    // Brief 0.05s crisp die-cut release beat, then graceful gravity drop + sculptural shard tilt!
     const ft = Math.max(0, elapsedSec - 0.05);
     const ft2 = ft * ft;
-    outerCutoutMesh.position.set(0.65 * ft2, -30 * ft2, 0.45 * ft2);
+    const dropDir = mats.projUniforms.uProjSide.value < 0 ? 1 : -1;
+    const dropScale = mats.projUniforms.uProjSide.value < 0 ? 22 : 30;
+    outerCutoutMesh.castShadow = ft > 0.08;
+    outerCutoutMesh.position.set(0.65 * ft2, dropDir * dropScale * ft2, 0.45 * ft2);
     outerCutoutMesh.rotation.set(0.14 * ft2, 0, -0.10 * ft2);
 
     for (const ch of fallingChads) {
       const ct = Math.max(0, elapsedSec - ch.delay);
       const ct2 = ct * ct;
+      ch.mesh.castShadow = ct > 0.08;
       ch.mesh.position.set(
         ch.baseX + ch.driftX * ct2,
-        -ch.grav * ct2,
+        dropDir * ch.grav * (dropDir > 0 ? 0.75 : 1) * ct2,
         ch.baseZ + ch.driftZ * ct2,
       );
       ch.mesh.rotation.set(ch.spinX * ct, 0, ch.spinZ * ct);
