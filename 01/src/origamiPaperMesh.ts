@@ -36,6 +36,7 @@ export interface ProjectionUniforms {
   uProjMatrix: { value: THREE.Matrix4 };
   uPaperReveal: { value: number };
   uProjGain: { value: number };
+  uProjFade: { value: number };
 }
 
 export interface OrigamiMaterials {
@@ -59,6 +60,7 @@ export interface OrigamiMaterials {
   foldLineActive: THREE.LineBasicMaterial;
   projUniforms: ProjectionUniforms;
   setProjection(tex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4): void;
+  setProjectionFade(fade01: number): void;
   setCutoutOpacity(opacity: number): void;
   setOutsideColor(hex: string): void;
   setOutsideColors(hexes: readonly string[]): void;
@@ -140,13 +142,14 @@ function attachProjectiveShader(
 ): void {
   const clip = Boolean(opts.clipToSilhouette);
   const tint = opts.tintColor !== false;
-  mat.customProgramCacheKey = () => `origami-cam-proj-v7-${clip ? 'clip' : 'full'}-${tint ? 'tint' : 'mask'}`;
+  mat.customProgramCacheKey = () => `origami-cam-proj-v8-${clip ? 'clip' : 'full'}-${tint ? 'tint' : 'mask'}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHasProj = uniforms.uHasProj;
     shader.uniforms.uProjTex = uniforms.uProjTex;
     shader.uniforms.uProjMatrix = uniforms.uProjMatrix;
     shader.uniforms.uPaperReveal = uniforms.uPaperReveal;
     shader.uniforms.uProjGain = uniforms.uProjGain;
+    shader.uniforms.uProjFade = uniforms.uProjFade;
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -174,7 +177,7 @@ vProjWorldPos = aFlatPos;`,
       vec3 projAlbedo = clamp((captured / groundRef) * uProjGain, vec3(0.0), vec3(1.65));
       float fx = smoothstep(0.002, 0.035, pUv.x) * smoothstep(0.002, 0.035, 1.0 - pUv.x);
       float fy = smoothstep(0.002, 0.035, pUv.y) * smoothstep(0.002, 0.035, 1.0 - pUv.y);
-      diffuseColor.rgb *= mix(vec3(1.0), projAlbedo, fx * fy);`
+      diffuseColor.rgb *= mix(vec3(1.0), projAlbedo, fx * fy * uProjFade);`
       : '';
 
     shader.fragmentShader = shader.fragmentShader
@@ -186,6 +189,7 @@ uniform sampler2D uProjTex;
 uniform mat4 uProjMatrix;
 uniform float uPaperReveal;
 uniform float uProjGain;
+uniform float uProjFade;
 varying vec3 vProjWorldPos;`,
       )
       .replace(
@@ -231,6 +235,7 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     uProjMatrix: { value: new THREE.Matrix4() },
     uPaperReveal: { value: 1 },
     uProjGain: { value: 1 },
+    uProjFade: { value: 1 },
   };
 
   const inside = new THREE.MeshStandardMaterial({
@@ -345,10 +350,15 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
         projUniforms.uProjTex.value = nextTex;
         projUniforms.uProjMatrix.value.copy(viewProjMatrix);
         projUniforms.uHasProj.value = 1;
+        projUniforms.uProjFade.value = 1;
       } else {
         projUniforms.uHasProj.value = 0;
         projUniforms.uProjTex.value = null;
+        projUniforms.uProjFade.value = 1;
       }
+    },
+    setProjectionFade(fade01: number) {
+      projUniforms.uProjFade.value = Math.max(0, Math.min(1, fade01));
     },
     setCutoutOpacity,
     setOutsideColor(hex: string) {

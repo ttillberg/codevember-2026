@@ -85,6 +85,7 @@ const dbgColor = document.getElementById('dbg-color') as HTMLInputElement;
 const dbgSpin = document.getElementById('dbg-spin') as HTMLInputElement;
 const dbgPerspCut = document.getElementById('dbg-persp-cut') as HTMLInputElement;
 const dbgGlideFold = document.getElementById('dbg-glide-fold') as HTMLInputElement;
+const dbgFadeProj = document.getElementById('dbg-fade-proj') as HTMLInputElement;
 const dbgShuffle = document.getElementById('dbg-shuffle') as HTMLButtonElement;
 const dbgOpenCatalog = document.getElementById('dbg-open-catalog') as HTMLButtonElement;
 const dbgOpenCity = document.getElementById('dbg-open-city') as HTMLButtonElement;
@@ -170,6 +171,7 @@ interface DebugSettings {
   spin: boolean;
   perspectiveCut: boolean;
   glideOnFold: boolean;
+  fadeProjOnFold: boolean;
 }
 
 const FACTORY_SETTINGS: DebugSettings = {
@@ -193,6 +195,7 @@ const FACTORY_SETTINGS: DebugSettings = {
   spin: true,
   perspectiveCut: false,
   glideOnFold: false,
+  fadeProjOnFold: true,
 };
 
 function loadSavedSettings(): DebugSettings {
@@ -261,6 +264,7 @@ function loadSavedSettings(): DebugSettings {
       if (typeof parsed.spin === 'boolean') s.spin = parsed.spin;
       if (typeof parsed.perspectiveCut === 'boolean') s.perspectiveCut = parsed.perspectiveCut;
       if (typeof parsed.glideOnFold === 'boolean') s.glideOnFold = parsed.glideOnFold;
+      if (typeof parsed.fadeProjOnFold === 'boolean') s.fadeProjOnFold = parsed.fadeProjOnFold;
     }
   } catch {
     // Ignore storage access errors (private mode, restricted iframe, etc.)
@@ -355,6 +359,17 @@ let debugGlideOnFoldEnabled =
     : params.get('shiftView') !== null
       ? params.get('shiftView') === '1'
       : initialSettings.glideOnFold;
+let debugFadeProjEnabled =
+  params.get('fadePrint') !== null
+    ? params.get('fadePrint') !== '0'
+    : initialSettings.fadeProjOnFold;
+
+function computeProjectionFade(fold01: number): number {
+  if (!debugFadeProjEnabled) return 1;
+  if (fold01 <= 0.5) return 1;
+  const u = Math.max(0, Math.min(1, (fold01 - 0.5) / 0.5));
+  return 1 - u * u * (3 - 2 * u);
+}
 
 function getCurrentMixOptions(): HouseMixOptions {
   return {
@@ -420,6 +435,7 @@ function syncDebugControls(): void {
   dbgSpin.checked = debugSpinEnabled;
   dbgPerspCut.checked = debugPerspCutEnabled;
   dbgGlideFold.checked = debugGlideOnFoldEnabled;
+  dbgFadeProj.checked = debugFadeProjEnabled;
 }
 
 function saveDebugSettings(): void {
@@ -445,6 +461,7 @@ function saveDebugSettings(): void {
       spin: debugSpinEnabled,
       perspectiveCut: debugPerspCutEnabled,
       glideOnFold: debugGlideOnFoldEnabled,
+      fadeProjOnFold: debugFadeProjEnabled,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   } catch {
@@ -1445,6 +1462,7 @@ function resetToFactory(): void {
   debugSpinEnabled = FACTORY_SETTINGS.spin;
   debugPerspCutEnabled = FACTORY_SETTINGS.perspectiveCut;
   debugGlideOnFoldEnabled = FACTORY_SETTINGS.glideOnFold;
+  debugFadeProjEnabled = FACTORY_SETTINGS.fadeProjOnFold;
   syncDebugControls();
   resetAll();
   applyActiveOutsideColor();
@@ -2582,6 +2600,11 @@ dbgGlideFold.addEventListener('change', () => {
   debugGlideOnFoldEnabled = dbgGlideFold.checked;
   saveDebugSettings();
 });
+dbgFadeProj.addEventListener('change', () => {
+  debugFadeProjEnabled = dbgFadeProj.checked;
+  materials.setProjectionFade(computeProjectionFade(computeFoldProgress()));
+  saveDebugSettings();
+});
 dbgResetFactory.addEventListener('click', () => {
   resetToFactory();
 });
@@ -2717,6 +2740,7 @@ if (params.has('city')) {
       setSpin: (enabled: boolean) => void;
       setPerspectiveCut: (enabled: boolean) => void;
       setGlideOnFold: (enabled: boolean) => void;
+      setFadePrint: (enabled: boolean) => void;
       view: (yaw: number, pitch: number, dist: number) => void;
       info: () => {
         generation: number;
@@ -2749,6 +2773,7 @@ if (params.has('city')) {
       }
     }
     const fp = computeFoldProgress();
+    materials.setProjectionFade(computeProjectionFade(fp));
     const z = computeAutoZoom(fp);
     const { minDist, maxDist } = getZoomBounds();
     targetDist = curDist = Math.max(minDist, Math.min(maxDist, z.autoDist + userZoomDelta));
@@ -2865,6 +2890,12 @@ if (params.has('city')) {
     syncDebugControls();
     saveDebugSettings();
   },
+  setFadePrint(enabled: boolean) {
+    debugFadeProjEnabled = Boolean(enabled);
+    materials.setProjectionFade(computeProjectionFade(computeFoldProgress()));
+    syncDebugControls();
+    saveDebugSettings();
+  },
   view(yaw: number, pitch: number, dist: number) {
     targetYaw = curYaw = yaw;
     targetPitch = curPitch = pitch;
@@ -2946,6 +2977,7 @@ function animate(now: number): void {
   }
 
   const foldProg = computeFoldProgress();
+  materials.setProjectionFade(computeProjectionFade(foldProg));
   if (foldChanged && !isScrubbing) {
     progressRange.value = foldProg.toFixed(3);
   }
