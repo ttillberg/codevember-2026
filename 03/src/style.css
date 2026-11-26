@@ -74,6 +74,25 @@ canvas {
   font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
   letter-spacing: 0.06em;
 }
+/* loading: a quiet line under the title while the popsicle is a wireframe drawing, breathing on the compositor */
+.plate .head > .loading-label {
+  display: none;
+  opacity: 0.65;
+}
+body.loading .plate .head > .loading-label {
+  display: block;
+  animation: loading-breathe 1.2s ease-in-out infinite alternate;
+}
+.plate .loading-label span {
+  letter-spacing: 0;
+}
+@keyframes loading-breathe {
+  from { opacity: 0.72; }
+  to { opacity: 0.28; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.loading .plate .head > .loading-label { animation: none; }
+}
 
 /* Minimal monochrome dev icon & pill buttons */
 .icon-btn {
@@ -312,8 +331,15 @@ canvas {
   overflow: visible;
   transition:
     transform 240ms cubic-bezier(0.22, 1.18, 0.36, 1),
+    opacity 520ms ease,
     background 200ms ease,
     box-shadow 200ms ease;
+}
+
+body.loading .preset-dock {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(10px) scale(0.97);
 }
 
 @media (hover: hover) {
@@ -434,6 +460,12 @@ canvas {
   flex-direction: column-reverse;
   align-items: flex-end;
   gap: 8px;
+  transition: opacity 520ms ease;
+}
+
+body.loading .dev-dock {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .dev-dock-btns {

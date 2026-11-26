@@ -1,7 +1,18 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { clamp } from './rng';
-import { DEFAULT_INITIAL_MELT, FROST_CLEAR_MELT, getMeltBounds, MeltFieldState, POPSICLE } from './shape';
+import {
+  DEFAULT_INITIAL_MELT,
+  evaluatePopsicleVertex,
+  FROST_CLEAR_MELT,
+  getMeltBounds,
+  mapPopsicleVNorm,
+  MeltFieldState,
+  POPSICLE,
+  prepareProfileFrame,
+  prepareProfileRow,
+} from './shape';
+import { getSharedNoise3DTexture } from './noise3d';
 import { createMacroStudioEnv, disposeSeedTextureCache } from './textures';
 import { createFruitAssembly, FruitAssembly } from './fruits';
 import { createPopsicleIceSystem, PopsicleIceSystem } from './popsicleIce';
@@ -253,8 +264,15 @@ orbit.addEventListener('change', () => {
   renderDirty = true;
 });
 
-// === STUDIO MACRO LIGHTING & ENVIRONMENT ===
-const studioEnv = createMacroStudioEnv(renderer);
+// === STUDIO MACRO LIGHTING & ENVIRONMENT (built async during wireframe loading unless paused!) ===
+let studioEnv: THREE.Texture | null = null;
+function ensureStudioEnv(): THREE.Texture {
+  if (!studioEnv) {
+    studioEnv = createMacroStudioEnv(renderer);
+    solidScene.environment = studioEnv;
+  }
+  return studioEnv;
+}
 
 function buildStudioLights(): THREE.Group {
   const lightGroup = new THREE.Group();
@@ -385,9 +403,13 @@ const depthOnlyMat = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide,
 });
 
-/** Final photographic display pass: warm AgX-inspired highlight rolloff + subtle studio film grain */
+/** Final photographic display pass: warm AgX-inspired highlight rolloff + NEST-style wireframe loading reveal */
 const displayUniforms = {
   uTex: { value: null as THREE.Texture | null },
+  uWireTex: { value: null as THREE.Texture | null },
+  uReveal: { value: 0 },
+  uBg: { value: new THREE.Vector3(213, 197, 188).divideScalar(255) }, // #d5c5bc page backdrop
+  uInk: { value: new THREE.Vector3(28, 28, 28).divideScalar(255) }, // #1c1c1c title ink
   uTime: { value: 0 },
   uMaskOnly: { value: 0 },
 };
@@ -405,6 +427,10 @@ const displayMat = new THREE.ShaderMaterial({
   fragmentShader: /* glsl */ `
     precision highp float;
     uniform sampler2D uTex;
+    uniform sampler2D uWireTex;
+    uniform float uReveal;
+    uniform vec3 uBg;
+    uniform vec3 uInk;
     uniform float uTime;
     uniform float uMaskOnly;
     varying vec2 vUv;
@@ -426,6 +452,12 @@ const displayMat = new THREE.ShaderMaterial({
     }
 
     void main() {
+      if (uReveal <= 0.0001 && uMaskOnly <= 0.5) {
+        vec3 drawing = mix(uBg, uInk, texture2D(uWireTex, vUv).a * 0.38);
+        gl_FragColor = vec4(drawing, 1.0);
+        return;
+      }
+
       vec4 tex = texture2D(uTex, vUv);
       if (uMaskOnly > 0.5) {
         float m = smoothstep(0.015, 0.22, tex.a);
@@ -449,6 +481,11 @@ const displayMat = new THREE.ShaderMaterial({
       // Ultra-subtle macro studio sensor grain (eliminates gradient banding on soft studio halo)
       float grain = (hash12(gl_FragCoord.xy + fract(uTime) * 37.0) - 0.5) * 0.011;
       col = clamp(col + grain, 0.0, 1.0);
+
+      if (uReveal < 1.0) {
+        vec3 drawing = mix(uBg, uInk, texture2D(uWireTex, vUv).a * 0.38);
+        col = mix(drawing, col, uReveal);
+      }
 
       gl_FragColor = vec4(col, 1.0);
     }
@@ -490,6 +527,9 @@ let bgBlur3RT: THREE.WebGLRenderTarget;
 let postIceRT: THREE.WebGLRenderTarget;
 let dropFieldRT: THREE.WebGLRenderTarget;
 let compositeRT: THREE.WebGLRenderTarget;
+// Multisampled target for the NEST-style hidden-line wireframe drawing during boot; freed once revealed!
+let wireRT: THREE.WebGLRenderTarget | null = null;
+let wireFreed = false;
 
 function rebuildRenderTargets() {
   const dpr = renderer.getPixelRatio();
@@ -520,6 +560,7 @@ function rebuildRenderTargets() {
   postIceRT?.dispose();
   dropFieldRT?.dispose();
   compositeRT?.dispose();
+  wireRT?.dispose();
 
   // NearestFilter on camera-depth targets guarantees far clear sentinel (100.0) NEVER interpolates across edges!
   backIceZRT = makeRT(zW, zH, true, false);
@@ -535,6 +576,17 @@ function rebuildRenderTargets() {
   postIceRT = makeRT(rtWidth, rtHeight, true, true);
   dropFieldRT = makeRT(rtWidth, rtHeight, true, true);
   compositeRT = makeRT(rtWidth, rtHeight, true, true);
+  if (!wireFreed) {
+    wireRT = new THREE.WebGLRenderTarget(rtWidth, rtHeight, {
+      samples: renderer.capabilities.isWebGL2 ? (isMobile ? 2 : 4) : 0,
+      depthBuffer: true,
+      stencilBuffer: false,
+    });
+    displayUniforms.uWireTex.value = wireRT.texture;
+  } else {
+    wireRT = null;
+    displayUniforms.uWireTex.value = null;
+  }
 
   backdropUniforms.uAspect.value = rtWidth / rtHeight;
   bubblesRtHasContent = true;
@@ -544,7 +596,6 @@ rebuildRenderTargets();
 
 // === SUB-SCENES FOR CLEAN LAYER SEPARATION ===
 const solidScene = new THREE.Scene();
-solidScene.environment = studioEnv;
 const solidLights = buildStudioLights();
 solidScene.add(solidLights);
 
@@ -737,6 +788,7 @@ function buildPopsicle(seed: number, startMelt = initialMelt) {
   meltState.pendantPull = [0, 0, 0, 0];
   fallFocusBlend = 0;
 
+  ensureStudioEnv();
   fruitAssembly = createFruitAssembly(seed, currentRecipe);
   solidScene.add(fruitAssembly.group);
 
@@ -868,6 +920,7 @@ function hitEmbeddedFruit(): boolean {
 }
 
 function isPointerOnIceCream(): boolean {
+  if (reveal < 0.85) return false;
   if (iceSystem && iceSystem.iceMesh.visible) {
     if (raycaster.intersectObject(iceSystem.iceMesh, false).length > 0) return true;
   }
@@ -892,6 +945,18 @@ function updatePointerWorld(clientX: number, clientY: number) {
     prevFrostU = null;
     prevFrostV = null;
     syncPointerCursor();
+    return;
+  }
+
+  // While wireframe loader is showing, dragging anywhere orbits cleanly without hovering/rubbing unseen ice
+  if (reveal < 0.85) {
+    pointerActive = false;
+    prevFrostU = null;
+    prevFrostV = null;
+    if (!pointerPressed && activeTouchIds.size === 0) {
+      hoveringOutsideIce = true;
+      syncPointerCursor();
+    }
     return;
   }
 
@@ -1617,6 +1682,8 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     paused = !paused;
     renderDirty = true;
+  } else if (!revealing) {
+    return;
   } else if (e.key === 'r' || e.key === 'R') {
     resetMelt();
   } else if (e.key === 'n' || e.key === 'N') {
@@ -1695,7 +1762,157 @@ function renderSeparableBlur(
   renderer.render(blurScene, fsCam);
 }
 
-function renderFrame() {
+// === NEST-STYLE WIREFRAME LOADING DRAWING & SMOOTH REVEAL ===
+const REVEAL_DURATION = 1.6; // seconds (smoothstep crossfade from wireframe drawing into photorealistic picture)
+const holdLoader = params.has('loader');
+let reveal = 0;
+let revealing = false;
+
+interface WireLoader {
+  draw(cam: THREE.Camera): void;
+  dispose(): void;
+}
+
+/**
+ * Lightweight architectural wireframe drawing of the fluted popsicle + wooden stick,
+ * rendered with hidden-line depth occlusion (matching Day 24 NEST) in <1ms on frame 0
+ * while procedural textures and WebGL2 optical pipelines warm up off-frame!
+ */
+function createWireLoader(seed: number, startMelt: number): WireLoader {
+  const segU = 40;
+  const segV = 26;
+  const stride = segU + 1;
+  const vCount = stride * (segV + 1);
+  const posArr = new Float32Array(vCount * 3);
+  const triIdx: number[] = [];
+  const linePos: number[] = [];
+
+  const wireState: MeltFieldState = {
+    melt: clamp(startMelt, 0, 1.0),
+    time: 0,
+    seedOffset: seed * 13.7,
+    heatSpots: [],
+    pointerHeat: 0,
+    pointerX: 0,
+    pointerY: 0,
+    bottomPool: dropDebug.bottomPool,
+    bottomLobes: [1, 1, 1, 1],
+    pendantPull: [0, 0, 0, 0],
+  };
+
+  const frame = prepareProfileFrame(wireState);
+  const tmp = { x: 0, y: 0, z: 0 };
+  for (let iv = 0; iv <= segV; iv++) {
+    const vNorm = mapPopsicleVNorm(iv / segV);
+    const row = prepareProfileRow(vNorm, frame);
+    for (let iu = 0; iu <= segU; iu++) {
+      const theta = iu === segU ? 0 : (iu / segU) * Math.PI * 2;
+      evaluatePopsicleVertex(Math.sin(theta), Math.cos(theta), frame, row, wireState, tmp);
+      const idx = iv * stride + iu;
+      posArr[idx * 3] = tmp.x;
+      posArr[idx * 3 + 1] = tmp.y;
+      posArr[idx * 3 + 2] = tmp.z;
+    }
+  }
+
+  // Occlusion triangles + clean quad contour segments (latitude rings & sculpted vertical flute ribs — zero diagonal clutter!)
+  for (let iv = 0; iv < segV; iv++) {
+    for (let iu = 0; iu < segU; iu++) {
+      const a = iv * stride + iu;
+      const b = a + 1;
+      const c = a + stride;
+      const d = c + 1;
+      triIdx.push(a, b, d, a, d, c);
+      // Horizontal latitude edge (includes iv === 0 bottom seam so vertical meridians close cleanly!)
+      linePos.push(
+        posArr[a * 3], posArr[a * 3 + 1], posArr[a * 3 + 2],
+        posArr[b * 3], posArr[b * 3 + 1], posArr[b * 3 + 2],
+      );
+      // Vertical meridian edge
+      linePos.push(
+        posArr[a * 3], posArr[a * 3 + 1], posArr[a * 3 + 2],
+        posArr[c * 3], posArr[c * 3 + 1], posArr[c * 3 + 2],
+      );
+    }
+  }
+
+  const occludeIceGeo = new THREE.BufferGeometry();
+  occludeIceGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+  occludeIceGeo.setIndex(triIdx);
+
+  const iceLinesGeo = new THREE.BufferGeometry();
+  iceLinesGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
+
+  // Clean beveled birch stick silhouette for occlusion + outline
+  const hw = POPSICLE.stickWidth * 0.5;
+  const topY = POPSICLE.stickTopY;
+  const botY = POPSICLE.stickBottomY;
+  const stickShape = new THREE.Shape();
+  stickShape.moveTo(-hw, botY);
+  stickShape.lineTo(hw, botY);
+  stickShape.lineTo(hw, topY - hw);
+  stickShape.absarc(0, topY - hw, hw, 0, Math.PI, false);
+  stickShape.lineTo(-hw, botY);
+  const stickDepth = POPSICLE.stickDepth * 0.62;
+  const occludeStickGeo = new THREE.ExtrudeGeometry(stickShape, {
+    depth: stickDepth,
+    bevelEnabled: true,
+    bevelThickness: POPSICLE.stickBevelThickness,
+    bevelSize: POPSICLE.stickBevelSize,
+    bevelSegments: 2,
+    curveSegments: 14,
+  });
+  occludeStickGeo.translate(0, 0, -stickDepth * 0.5);
+  const stickEdgesGeo = new THREE.EdgesGeometry(occludeStickGeo, 24);
+
+  // Hidden-line occlusion pass (pushes solid surfaces a hair back in depth so front ink lines never z-fight!)
+  const hideMat = new THREE.MeshBasicMaterial({
+    colorWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff });
+
+  const occludeScene = new THREE.Scene();
+  occludeScene.add(new THREE.Mesh(occludeIceGeo, hideMat), new THREE.Mesh(occludeStickGeo, hideMat));
+
+  const lineScene = new THREE.Scene();
+  lineScene.add(new THREE.LineSegments(iceLinesGeo, lineMat), new THREE.LineSegments(stickEdgesGeo, lineMat));
+
+  return {
+    draw(cam: THREE.Camera) {
+      if (!wireRT) return;
+      renderer.setRenderTarget(wireRT);
+      renderer.setClearColor(clearColorDark, 0);
+      renderer.clear(true, true, false);
+      renderer.render(occludeScene, cam);
+      renderer.render(lineScene, cam);
+    },
+    dispose() {
+      occludeIceGeo.dispose();
+      iceLinesGeo.dispose();
+      occludeStickGeo.dispose();
+      stickEdgesGeo.dispose();
+      hideMat.dispose();
+      lineMat.dispose();
+    },
+  };
+}
+
+let wireLoader: WireLoader | null = createWireLoader(currentSeed, initialMelt);
+
+function endWire() {
+  if (wireFreed) return;
+  wireFreed = true;
+  wireLoader?.dispose();
+  wireLoader = null;
+  wireRT?.dispose();
+  wireRT = null;
+  displayUniforms.uWireTex.value = null;
+}
+
+function renderPicturePasses() {
   if (contextLost || !fruitAssembly || !iceSystem || !waterDrops) return;
   const gl = renderer.getContext();
 
@@ -1813,9 +2030,23 @@ function renderFrame() {
     iceScene.overrideMaterial = null;
   }
   renderer.render(dropsScene, camera);
+}
 
-  // --- PASS 7: Final Photographic Tone-Mapping + Subtle Macro Grain to Screen ---
+function renderFrame() {
+  if (contextLost) return;
+  const smoothReveal = reveal >= 1 ? 1 : reveal <= 0 ? 0 : THREE.MathUtils.smoothstep(reveal, 0, 1);
+
+  if (smoothReveal < 1 && wireLoader && wireRT) {
+    camera.updateMatrixWorld();
+    wireLoader.draw(camera);
+  }
+  if (smoothReveal > 0 && fruitAssembly && iceSystem && waterDrops) {
+    renderPicturePasses();
+  }
+
+  // --- PASS 7: Final Photographic Tone-Mapping + Smooth Wireframe-to-Picture Reveal ---
   displayUniforms.uTex.value = compositeRT.texture;
+  displayUniforms.uReveal.value = smoothReveal;
   displayUniforms.uTime.value = meltState.time;
   renderer.setRenderTarget(null);
   renderer.clear(true, false, false);
@@ -1883,12 +2114,21 @@ function tick(now: number) {
 
   const dt = paused ? 0 : rawDt;
 
-  // Smooth live pointer heat ramp (pause warming while dragging to orbit around the popsicle)
-  const warmingActive = pointerActive && !orbitDragging && !twoFingerOrbiting && rightOrbitPointerId === null;
+  // Advance smooth NEST-style crossfade from wireframe drawing into the warmed photorealistic popsicle!
+  if (revealing && reveal < 1) {
+    reveal = Math.min(1, reveal + rawDt / REVEAL_DURATION);
+    renderDirty = true;
+    if (reveal >= 1) {
+      endWire();
+    }
+  }
+
+  // Smooth live pointer heat ramp (pause warming while dragging to orbit or before reveal finishes)
+  const warmingActive = reveal >= 0.85 && pointerActive && !orbitDragging && !twoFingerOrbiting && rightOrbitPointerId === null;
   const targetHeat = warmingActive ? (pointerPressed ? 1.0 : 0.42) : 0.0;
   meltState.pointerHeat += (targetHeat - meltState.pointerHeat) * Math.min(1, rawDt * 8.0);
 
-  if (dt > 0 && fruitAssembly && iceSystem && waterDrops && liquidFilm) {
+  if (dt > 0 && reveal >= 0.85 && fruitAssembly && iceSystem && waterDrops && liquidFilm) {
     const { meltScale, fluidScale, fruitScale } = computeFallDilation(dt, fruitAssembly.hasFallingFruitInView());
     const dtMelt = dt * meltScale;
     const dtFluid = dt * fluidScale;
@@ -1973,8 +2213,142 @@ window.addEventListener('resize', () => {
   renderDirty = true;
 });
 
-// === BOOT & VERIFICATION HOOK ===
-buildPopsicle(currentSeed, initialMelt);
+// === STAGGERED ASYNC LOADING & BOOT (NEST-style zero-jank wireframe -> picture reveal) ===
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+async function warmCompileAndTextures() {
+  // Bind live render-target textures up front so shaders compile against non-null samplers
+  blurUniforms.uTex.value = bgRT.texture;
+  displayUniforms.uTex.value = compositeRT.texture;
+  if (iceSystem) {
+    iceSystem.uniforms.uBgTex.value = bgRT.texture;
+    iceSystem.uniforms.uBgBlur1.value = bgBlur1RT.texture;
+    iceSystem.uniforms.uBgBlur2.value = bgBlur2RT.texture;
+    iceSystem.uniforms.uBgBlur3.value = bgBlur3RT.texture;
+    iceSystem.uniforms.uBubblesTex.value = bubblesRT.texture;
+    iceSystem.uniforms.uInteriorZ.value = interiorZRT.texture;
+    iceSystem.uniforms.uBackIceZ.value = backIceZRT.texture;
+    iceSystem.uniforms.uResolution.value.set(rtWidth, rtHeight);
+  }
+  if (waterDrops) {
+    waterDrops.uniforms.uSceneTex.value = postIceRT.texture;
+    waterDrops.uniforms.uDropFieldTex.value = dropFieldRT.texture;
+    waterDrops.uniforms.uResolution.value.set(rtWidth, rtHeight);
+  }
+
+  const prevRT = renderer.getRenderTarget();
+  const compileJobs: Promise<unknown>[] = [];
+  const queueCompile = (sceneObj: THREE.Object3D, cam: THREE.Camera, rt: THREE.WebGLRenderTarget | null) => {
+    renderer.setRenderTarget(rt);
+    compileJobs.push(renderer.compileAsync(sceneObj, cam));
+  };
+
+  // Compile every shader against the exact render target format it draws into (off-thread via KHR_parallel_shader_compile)
+  queueCompile(backZScene, camera, backIceZRT);
+  queueCompile(backdropScene, fsCam, bgRT);
+  queueCompile(solidScene, camera, bgRT);
+  queueCompile(bubblesScene, camera, bubblesRT);
+  queueCompile(blurScene, fsCam, blurTemp1RT);
+  queueCompile(iceScene, camera, postIceRT);
+  if (waterDrops) {
+    queueCompile(waterDrops.fieldScene, camera, dropFieldRT);
+    queueCompile(waterDrops.resolveScene, fsCam, compositeRT);
+  }
+  queueCompile(dropsScene, camera, compositeRT);
+  queueCompile(displayScene, fsCam, null);
+  renderer.setRenderTarget(prevRT);
+  await Promise.all(compileJobs);
+  await nextFrame();
+
+  // Upload all procedural 2D & 3D textures one per frame so GPU uploads never hitch the live wireframe!
+  const textures = new Set<THREE.Texture>();
+  const addUploadTex = (t: unknown) => {
+    if (t instanceof THREE.Texture && !(t as { isRenderTargetTexture?: boolean }).isRenderTargetTexture) {
+      textures.add(t);
+    }
+  };
+  addUploadTex(studioEnv);
+  if (liquidFilm) {
+    addUploadTex(liquidFilm.texture);
+    addUploadTex(liquidFilm.rimeTexture);
+  }
+  const collectSceneTextures = (root: THREE.Object3D) => {
+    root.traverse((o) => {
+      const m = (o as THREE.Mesh).material;
+      if (!m) return;
+      for (const mat of Array.isArray(m) ? m : [m]) {
+        for (const v of Object.values(mat)) {
+          addUploadTex(v);
+        }
+        const uniforms = (mat as THREE.ShaderMaterial).uniforms;
+        if (uniforms) {
+          for (const u of Object.values(uniforms)) {
+            if (u) addUploadTex(u.value);
+          }
+        }
+      }
+    });
+  };
+  collectSceneTextures(solidScene);
+  collectSceneTextures(iceScene);
+  collectSceneTextures(dropsScene);
+  for (const t of textures) {
+    await nextFrame();
+    renderer.initTexture(t);
+  }
+
+  // Prime all offscreen picture passes once unseen into compositeRT so Metal/ANGLE finishes pipeline state before reveal!
+  await nextFrame();
+  renderPicturePasses();
+  await nextFrame();
+}
+
+async function bootAsync() {
+  // Let the browser paint at least 2 live wireframe frames first so the page stands on the drawing, never blank!
+  renderDirty = true;
+  await nextFrame();
+  await nextFrame();
+
+  // ?loader: stay on the wireframe drawing for inspection
+  if (holdLoader) return;
+
+  try {
+    // Spread heavy procedural CPU work (studio env, 48³ 3D noise, procedural fruit/wood textures, ice & drops) across frames
+    ensureStudioEnv();
+    await nextFrame();
+
+    getSharedNoise3DTexture();
+    await nextFrame();
+
+    buildPopsicle(currentSeed, initialMelt);
+    await nextFrame();
+
+    await warmCompileAndTextures();
+  } catch {
+    if (!fruitAssembly || !iceSystem || !waterDrops) {
+      buildPopsicle(currentSeed, initialMelt);
+    }
+  }
+
+  revealing = true;
+  document.body.classList.remove('loading');
+  renderDirty = true;
+}
+
+if (paused && !holdLoader) {
+  // Deterministic paused boot (headless verification & preset icon prerendering): ready on frame 0!
+  buildPopsicle(currentSeed, initialMelt);
+  reveal = 1;
+  revealing = true;
+  endWire();
+  document.body.classList.remove('loading');
+  renderFrame();
+} else {
+  // Interactive boot: instant wireframe drawing + staggered GPU warm-up + smooth 1.6s reveal!
+  applyMeltCameraZoom(0, true);
+  renderFrame();
+  void bootAsync();
+}
 
 // Expose deterministic inspection API for Playwright verification captures
 (window as unknown as Record<string, unknown>).__day03 = {
@@ -2115,6 +2489,9 @@ buildPopsicle(currentSeed, initialMelt);
       falling: fruitAssembly?.hasFallingFruitInView() ?? false,
       fallFocusBlend,
       blitEnabled,
+      reveal,
+      wireFreed,
+      loading: document.body.classList.contains('loading'),
       grab: fruitAssembly?.getGrabState() ?? null,
     };
   },

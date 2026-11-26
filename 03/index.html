@@ -20,11 +20,12 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
-  <body>
+  <body class="loading">
     <canvas id="c"></canvas>
 
-    <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span -->
-    <div class="plate"><div class="head"><b>03 Melt</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">融解</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
+    <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span. "Loading" under it while the
+         popsicle is a wireframe drawing and the optical shaders build (main.ts) -->
+    <div class="plate"><div class="head"><b>03 Melt</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">融解</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i><i class="loading-label">Loading <span>…</span></i></div></div>
 
     <nav id="preset-dock" class="preset-dock" aria-label="Popsicle presets"></nav>
 
