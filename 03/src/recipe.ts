@@ -389,25 +389,37 @@ export function resolveOpticalPalette(rawRecipe: PopsicleRecipe): ResolvedOptica
 
   // Runoff, underside pools & stick stain naturally lean slightly toward the lower flavor (B) when dual-flavored
   const stainBase = avg3(specA.stain, specB.stain, isDual ? 0.62 : 0.0);
+  const dropCreamColor = avg3(creamAlbedoA, creamAlbedoB, isDual ? 0.58 : 0.0);
   const stainColor: [number, number, number] = isCoconut
-    ? avg3(stainBase, PURE_COCONUT_SPEC.stain, recipe.flavors.length === 0 ? 1.0 : 0.34)
+    ? recipe.flavors.length === 0
+      ? PURE_COCONUT_SPEC.stain
+      : avg3(stainBase, [
+          Math.min(1, dropCreamColor[0] * 1.05 + 0.10),
+          Math.min(1, dropCreamColor[1] * 1.05 + 0.10),
+          Math.min(1, dropCreamColor[2] * 1.05 + 0.10),
+        ], 0.68)
     : stainBase;
 
-  const dropSigma = avg3(specA.dropSigma, specB.dropSigma, isDual ? 0.58 : 0.0);
-  const dropCreamColor = avg3(creamAlbedoA, creamAlbedoB, isDual ? 0.58 : 0.0);
+  const baseDropSigma = avg3(specA.dropSigma, specB.dropSigma, isDual ? 0.58 : 0.0);
+  const dropSigma: [number, number, number] =
+    isCoconut && recipe.flavors.length > 0
+      ? avg3(
+          baseDropSigma,
+          [
+            -Math.log(Math.max(0.14, Math.min(0.95, dropCreamColor[0] * 1.05 + 0.06))) * 1.65,
+            -Math.log(Math.max(0.14, Math.min(0.95, dropCreamColor[1] * 1.05 + 0.06))) * 1.65,
+            -Math.log(Math.max(0.14, Math.min(0.95, dropCreamColor[2] * 1.05 + 0.06))) * 1.65,
+          ],
+          0.65,
+        )
+      : baseDropSigma;
 
-  // Soft cast shadow tint matching flavor hue (keeps dark chocolate / blueberry / mango shadows natural!)
-  const shadowTint: [number, number, number] = isCoconut
-    ? [
-        0.34 + dropCreamColor[0] * 0.24,
-        0.32 + dropCreamColor[1] * 0.24,
-        0.30 + dropCreamColor[2] * 0.24,
-      ]
-    : [
-        0.24 + stainColor[0] * 0.28,
-        0.16 + stainColor[1] * 0.26,
-        0.16 + stainColor[2] * 0.26,
-      ];
+  // Soft cast shadow & drop rim tint matching flavor hue consistently across Water & Milk bases
+  const shadowTint: [number, number, number] = [
+    0.24 + stainColor[0] * 0.28,
+    0.16 + stainColor[1] * 0.26,
+    0.16 + stainColor[2] * 0.26,
+  ];
 
   return {
     isCoconut,

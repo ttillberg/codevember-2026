@@ -1,8 +1,13 @@
 import * as THREE from 'three';
-import { clamp, fbm2D, fbm3, mulberry32, smoothstep } from './rng';
+import { clamp, fbm2D, mulberry32, smoothstep } from './rng';
+import { sampleFastFbm3 } from './noise3d';
 
-export const CARVE_TEX_W = 1024;
-export const CARVE_TEX_H = 340;
+const IS_COMPACT_TEX =
+  typeof window !== 'undefined' &&
+  (window.matchMedia('(pointer: coarse)').matches || Math.min(window.innerWidth, window.innerHeight) <= 820);
+
+export const CARVE_TEX_W = IS_COMPACT_TEX ? 512 : 1024;
+export const CARVE_TEX_H = IS_COMPACT_TEX ? 170 : 340;
 
 export interface StrawberryTextures {
   albedo: THREE.CanvasTexture;
@@ -43,7 +48,7 @@ export function strawberryBoundaryRadius(angle: number): number {
  * - Warm glowing salmon-cream translucent heart core (never stark chalk-white!)
  */
 export function createStrawberryTextures(seed = 103): StrawberryTextures {
-  const size = 512;
+  const size = IS_COMPACT_TEX ? 256 : 512;
   const albCanvas = document.createElement('canvas');
   const bmpCanvas = document.createElement('canvas');
   const sssCanvas = document.createElement('canvas');
@@ -212,7 +217,7 @@ export function createStrawberryTextures(seed = 103): StrawberryTextures {
  * Deep dark navy-indigo skin + chalky dusty-blue epicuticular waxy bloom + detailed 5-point calyx star.
  */
 export function createBlueberryTextures(seed = 207): BlueberryTextures {
-  const size = 512;
+  const size = IS_COMPACT_TEX ? 256 : 512;
   const albCanvas = document.createElement('canvas');
   const bmpCanvas = document.createElement('canvas');
   const rghCanvas = document.createElement('canvas');
@@ -243,8 +248,8 @@ export function createBlueberryTextures(seed = 207): BlueberryTextures {
       const sy = cosP;
       const sz = Math.sin(theta) * sinP;
 
-      const nBloom = fbm3(sx * 3.4 + off, sy * 3.4, sz * 3.4, 4);
-      const nFine = fbm3(sx * 18.0 + off, sy * 18.0, sz * 18.0, 3);
+      const nBloom = sampleFastFbm3(sx * 0.56 + off, sy * 0.56, sz * 0.56);
+      const nFine = sampleFastFbm3(sx * 2.9 + off + 4.3, sy * 2.9, sz * 2.9);
 
       // Deep rich velvety midnight-indigo / dark navy-plum wet blueberry skin
       let cr = 12 + nFine * 11;
@@ -314,8 +319,8 @@ export function createBlueberryTextures(seed = 207): BlueberryTextures {
  * Rich warm honey-tan natural birch fibers, crisp longitudinal pores, subtle juice-damp darkening near ice line.
  */
 export function createWoodTextures(seed = 311): WoodTextures {
-  const w = 256;
-  const h = 512;
+  const w = IS_COMPACT_TEX ? 128 : 256;
+  const h = IS_COMPACT_TEX ? 256 : 512;
   const albCanvas = document.createElement('canvas');
   const bmpCanvas = document.createElement('canvas');
   albCanvas.width = bmpCanvas.width = w;
@@ -429,16 +434,18 @@ export function createWoodTextures(seed = 311): WoodTextures {
       ctx.textBaseline = 'middle';
 
       // Crisp artisanal laser/chisel-carved birch lettering centered on the hidden upper shaft (~2x bolder)
-      ctx.font = '700 84px "IBM Plex Sans", "Inter", "Helvetica Neue", system-ui, sans-serif';
-      drawTrackedCentered(ctx, 'THEO TILLBERG', cw * 0.5, ch * 0.34, 9.0);
+      const sc = cw / 1024;
+      ctx.font = `700 ${Math.round(84 * sc)}px "IBM Plex Sans", "Inter", "Helvetica Neue", system-ui, sans-serif`;
+      drawTrackedCentered(ctx, 'THEO TILLBERG', cw * 0.5, ch * 0.34, 9.0 * sc);
 
-      ctx.font = '600 62px "IBM Plex Sans", "Inter", "Helvetica Neue", system-ui, sans-serif';
-      drawTrackedCentered(ctx, 'CODEVEMBER 26 - MELT', cw * 0.5, ch * 0.69, 4.5);
+      ctx.font = `600 ${Math.round(62 * sc)}px "IBM Plex Sans", "Inter", "Helvetica Neue", system-ui, sans-serif`;
+      drawTrackedCentered(ctx, 'CODEVEMBER 26 - MELT', cw * 0.5, ch * 0.69, 4.5 * sc);
       ctx.restore();
     };
 
-    paintLetters(sCtx, 2.2);
-    paintLetters(bCtx, 5.4);
+    const blurSc = cw / 1024;
+    paintLetters(sCtx, 2.2 * blurSc);
+    paintLetters(bCtx, 5.4 * blurSc);
 
     const sData = sCtx.getImageData(0, 0, cw, ch).data;
     const bData = bCtx.getImageData(0, 0, cw, ch).data;
@@ -506,7 +513,7 @@ export interface ToppingTextureSet {
  * and delicate pale botanical hairs without crushing green/blue channels!
  */
 export function createRaspberryTextures(seed: number): ToppingTextureSet {
-  const size = 256;
+  const size = IS_COMPACT_TEX ? 128 : 256;
   const albCanvas = createOffscreenCanvas(size, size);
   const bumpCanvas = createOffscreenCanvas(size, size);
   const roughCanvas = createOffscreenCanvas(size, size);
@@ -566,7 +573,7 @@ export function createRaspberryTextures(seed: number): ToppingTextureSet {
  * Generates tempered dark chocolate chunk textures (rich espresso cocoa + subtle fracture micro-grain).
  */
 export function createChocolateChunkTextures(seed: number): ToppingTextureSet {
-  const size = 256;
+  const size = IS_COMPACT_TEX ? 128 : 256;
   const albCanvas = createOffscreenCanvas(size, size);
   const bumpCanvas = createOffscreenCanvas(size, size);
   const roughCanvas = createOffscreenCanvas(size, size);
@@ -621,7 +628,7 @@ export function createChocolateChunkTextures(seed: number): ToppingTextureSet {
  * Generates vibrant sun-yellow dimpled lemon zest peel textures (citrus oil-gland pores + pale pith rim).
  */
 export function createLemonZestTextures(seed: number): ToppingTextureSet {
-  const size = 256;
+  const size = IS_COMPACT_TEX ? 128 : 256;
   const albCanvas = createOffscreenCanvas(size, size);
   const bumpCanvas = createOffscreenCanvas(size, size);
   const roughCanvas = createOffscreenCanvas(size, size);
@@ -684,7 +691,7 @@ export function createLemonZestTextures(seed: number): ToppingTextureSet {
  * 'dark' = rich Oreo-style dark cocoa wafer crumb; 'butter' = toasted golden-brown butter biscuit crumb.
  */
 export function createKaksmulorTextures(seed: number, variant: 'dark' | 'butter'): ToppingTextureSet {
-  const size = 256;
+  const size = IS_COMPACT_TEX ? 128 : 256;
   const albCanvas = createOffscreenCanvas(size, size);
   const bumpCanvas = createOffscreenCanvas(size, size);
   const roughCanvas = createOffscreenCanvas(size, size);

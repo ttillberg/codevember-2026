@@ -54,8 +54,8 @@ export const POPSICLE = {
   stickBevelSize: STICK_BEVEL_SIZE,
   /** Outer wooden stick edge X (including rounded bevel) */
   stickEdgeX: STICK_WIDTH * 0.5 + STICK_BEVEL_SIZE,
-  stickTopY: 0.16,
-  stickBottomY: -2.25,
+  stickTopY: 0.54,
+  stickBottomY: -1.48,
 } as const;
 
 /** Shared non-linear vertical sampling map concentrating rows near the top dome & bottom lip */

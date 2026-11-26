@@ -846,42 +846,55 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
   dispose(): void;
 } {
   const segU = 48;
-  const archRows = 22;
-  const shaftRows = 112;
-  const segV = archRows + shaftRows;
+  const archRows = 20;
+  const shaftRows = 92;
+  const botArchRows = 16;
+  const segV = archRows + shaftRows + botArchRows;
   const vCount = (segU + 1) * (segV + 1);
   const positions = new Float32Array(vCount * 3);
   const normals = new Float32Array(vCount * 3);
   const indices: number[] = [];
 
-  // Exact world-space outer envelope of createWoodStickGeometry() (including rounded semicircle top cap!)
-  // plus tight clearance (+0.0014/+0.0016) so sticky glaze wraps cleanly over the rounded top cap with ZERO Z-clipping!
+  // Exact world-space outer envelope of createWoodStickGeometry() (including rounded top & bottom semicircle caps!)
+  // plus tight clearance (+0.0014/+0.0016) so sticky glaze wraps cleanly over both rounded ends with ZERO Z-clipping!
   const hw = POPSICLE.stickEdgeX + 0.0014;
   const hd = POPSICLE.stickDepth * 0.5 + 0.0016;
   const yArchCenter = POPSICLE.stickTopY - POPSICLE.stickWidth * 0.5;
+  const yBotArchCenter = POPSICLE.stickBottomY + POPSICLE.stickWidth * 0.5;
   const rArch = hw;
-  const yBot = POPSICLE.stickBottomY;
 
   for (let iv = 0; iv <= segV; iv++) {
     let y: number;
     let archScaleX = 1.0;
     let archScaleZ = 1.0;
     let archT = 0.0;
+    let archSign = 1.0;
     let bevelT = 0.0;
 
     if (iv <= archRows) {
-      // Slightly apex-biased angular spacing over the rounded semicircle cap so even macro zoom is silky-round
+      // Slightly apex-biased angular spacing over the rounded top semicircle cap so even macro zoom is silky-round
       const frac = Math.pow(iv / archRows, 1.15); // 0 = very top tip, 1 = arch base
       const archAng = frac * Math.PI * 0.5;
       archT = Math.cos(archAng); // 1 at top tip -> 0 at arch base
+      archSign = 1.0;
       y = yArchCenter + archT * rArch;
       archScaleX = iv === 0 ? 0.0 : Math.sin(archAng);
       // Match wood bevel rolloff (~0.95..1.0) so glaze stays proud of the flat upper cap face
       bevelT = smoothstep(0.945, 1.0, archT);
       archScaleZ = iv === 0 ? 0.0 : Math.sqrt(Math.max(0.02, 1.0 - bevelT * bevelT));
-    } else {
+    } else if (iv <= archRows + shaftRows) {
       const shaftFrac = (iv - archRows) / shaftRows;
-      y = yArchCenter - shaftFrac * (yArchCenter - yBot);
+      y = yArchCenter - shaftFrac * (yArchCenter - yBotArchCenter);
+    } else {
+      const botIdx = iv - (archRows + shaftRows);
+      const frac = Math.pow(Math.max(0, 1.0 - botIdx / botArchRows), 1.15); // 1 = arch base, 0 = bottom tip
+      const archAng = frac * Math.PI * 0.5;
+      archT = Math.cos(archAng); // 0 at arch base -> 1 at bottom tip
+      archSign = -1.0;
+      y = yBotArchCenter - archT * rArch;
+      archScaleX = iv === segV ? 0.0 : Math.sin(archAng);
+      bevelT = smoothstep(0.945, 1.0, archT);
+      archScaleZ = iv === segV ? 0.0 : Math.sqrt(Math.max(0.02, 1.0 - bevelT * bevelT));
     }
 
     for (let iu = 0; iu <= segU; iu++) {
@@ -903,6 +916,10 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
         nx = 0;
         ny = 1;
         nz = 0;
+      } else if (iv === segV) {
+        nx = 0;
+        ny = -1;
+        nz = 0;
       } else {
         let nxB = (sgnX * Math.pow(Math.max(1e-4, Math.abs(sT)), 1.66)) / hw;
         let nzB = (sgnZ * Math.pow(Math.max(1e-4, Math.abs(cT)), 1.62)) / hd;
@@ -912,7 +929,7 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
 
         if (archT > 0.001) {
           nx = nxB * (1.0 - archT * 0.55);
-          ny = archT * Math.abs(sT) * 0.92 + bevelT * 0.88;
+          ny = archSign * (archT * Math.abs(sT) * 0.92 + bevelT * 0.88);
           nz = nzB * (1.0 - bevelT * 0.60);
           const nLen = Math.hypot(nx, ny, nz) || 1;
           nx /= nLen;
@@ -1434,22 +1451,28 @@ function createStickFlowStreams(
           out float outMeniscus
         ) {
           float yStart = min(${(POPSICLE.stickTopY - 0.04).toFixed(4)}, max(uIceBottomY + 0.020, uFunnelY + 0.046));
-          float yEnd = ${POPSICLE.stickBottomY.toFixed(4)};
+          float yBotArch = ${(POPSICLE.stickBottomY + POPSICLE.stickWidth * 0.5).toFixed(4)};
+          float yEnd = ${(POPSICLE.stickBottomY + 0.012).toFixed(4)};
           // Concentrate vertical resolution near the upper concave meniscus bridge for silky smooth normals & silhouette
           float vCurve = v * 0.65 + v * v * 0.35;
           float y = mix(yStart, yEnd, vCurve);
 
-          float thick = evalStreamThick(y, flowStrength, meniscusStrength, outMeniscus);
+          float tipTaper = smoothstep(yEnd, yBotArch, y);
+          float thick = evalStreamThick(y, flowStrength, meniscusStrength, outMeniscus) * (0.20 + 0.80 * tipTaper);
           outThick = thick;
 
-          float innerLap = 0.011 + min(thick, 0.028) * 0.72;
+          // Follow the semicircular rounded bottom curve of the wooden stick so liquid hugs the tip cleanly!
+          float rStick = ${(stickEdgeX - 0.0025).toFixed(5)};
+          float dyBot = max(0.0, yBotArch - y);
+          float woodEdgeX = sqrt(max(0.0001, rStick * rStick - dyBot * dyBot));
+
+          float innerLap = (0.011 + min(thick, 0.028) * 0.72) * (0.35 + 0.65 * tipTaper);
           float xOut = (ca >= 0.0) ? (ca * thick) : (ca * innerLap);
           float zSwell = min(thick, 0.028) * 0.42 + max(0.0, thick - 0.028) * 0.24;
           float zHalf = ${stickHalfD.toFixed(5)} + 0.0012 + zSwell * smoothstep(-0.65, 0.45, ca);
 
-          // Seat inner curve 0.0025 inside stickEdgeX so ca = 0 sits strictly ON the wood bevel (zero white air gap!)
           float zPos = sa * zHalf;
-          float xPos = ${(stickEdgeX - 0.0025).toFixed(5)} + xOut;
+          float xPos = woodEdgeX + xOut;
           return vec3(xPos, y, zPos);
         }
 
@@ -1635,6 +1658,339 @@ function createStickFlowStreams(
       geo.dispose();
       matR.dispose();
       matL.dispose();
+    },
+  };
+}
+
+/**
+ * Continuous syrupy overflow filament hanging from the rounded bottom tip of the wooden stick:
+ * - Swells a concave V-meniscus collar around the rounded bottom tip as stick runoff converges
+ * - Extends downward into a glistening flowing liquid thread once the tip overflows
+ * - Necks, pinches off, and retracts cleanly into a hanging meniscus at late melt before final drops finish!
+ */
+function createStickTipFilamentSystem(
+  seed: number,
+  sharedUniforms: {
+    uSceneTex: { value: THREE.Texture | null };
+    uResolution: { value: THREE.Vector2 };
+    uTime: { value: number };
+    uDropSigma: { value: THREE.Vector3 };
+    uDropCreamColor: { value: THREE.Vector3 };
+    uDropOpacity: { value: number };
+    uShadowTint: { value: THREE.Vector3 };
+    uStainColor: { value: THREE.Vector3 };
+  },
+): {
+  mesh: THREE.Mesh;
+  uniforms: {
+    uFlowPhase: { value: number };
+    uReach: { value: number };
+    uThickness: { value: number };
+    uTailDrop: { value: number };
+    uCollarAmt: { value: number };
+  };
+  dispose(): void;
+} {
+  const segU = 22;
+  const segV = 88;
+  const stride = segU + 1;
+  const vCount = stride * (segV + 1);
+  const positions = new Float32Array(vCount * 3);
+  const indices: number[] = [];
+
+  for (let iv = 0; iv <= segV; iv++) {
+    const v = iv / segV;
+    for (let iu = 0; iu <= segU; iu++) {
+      const u = iu / segU;
+      const idx = iv * stride + iu;
+      positions[idx * 3] = u;
+      positions[idx * 3 + 1] = v;
+      positions[idx * 3 + 2] = 0;
+    }
+  }
+  for (let iv = 0; iv < segV; iv++) {
+    for (let iu = 0; iu < segU; iu++) {
+      const a = iv * stride + iu;
+      const b = a + 1;
+      const c = a + stride;
+      const d = c + 1;
+      indices.push(a, b, c);
+      indices.push(b, d, c);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+
+  const tipY = POPSICLE.stickBottomY;
+  const stickHalfW = POPSICLE.stickWidth * 0.5;
+  const stickHalfD = POPSICLE.stickDepth * 0.5;
+  const yArcCenter = tipY + stickHalfW;
+  const filUniforms = {
+    uFlowPhase: { value: 0.0 as number },
+    /** Downward length of the flowing filament below stickBottomY (0 -> 2.45 world units) */
+    uReach: { value: 0.0 as number },
+    /** Overall filament body fullness [0..1] (thins smoothly as supply winds down & pinches off) */
+    uThickness: { value: 0.0 as number },
+    /** Post-pinch falling tail offset [0..1.8]: detaches the broken filament tail downward off-screen! */
+    uTailDrop: { value: 0.0 as number },
+    /** Concave V-meniscus collar presence hugging the rounded bottom stick tip [0..1] */
+    uCollarAmt: { value: 0.0 as number },
+  };
+
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+    uniforms: {
+      uSceneTex: sharedUniforms.uSceneTex,
+      uResolution: sharedUniforms.uResolution,
+      uTime: sharedUniforms.uTime,
+      uDropSigma: sharedUniforms.uDropSigma,
+      uDropCreamColor: sharedUniforms.uDropCreamColor,
+      uDropOpacity: sharedUniforms.uDropOpacity,
+      uShadowTint: sharedUniforms.uShadowTint,
+      uStainColor: sharedUniforms.uStainColor,
+      uFlowPhase: filUniforms.uFlowPhase,
+      uReach: filUniforms.uReach,
+      uThickness: filUniforms.uThickness,
+      uTailDrop: filUniforms.uTailDrop,
+      uCollarAmt: filUniforms.uCollarAmt,
+      uPhase: { value: seed * 3.17 + 1.1 },
+    },
+    vertexShader: /* glsl */ `
+      uniform float uFlowPhase;
+      uniform float uReach;
+      uniform float uThickness;
+      uniform float uTailDrop;
+      uniform float uCollarAmt;
+      uniform float uPhase;
+      uniform float uDropOpacity;
+
+      varying vec3 vWorldPos;
+      varying vec3 vWorldNormal;
+      varying vec3 vViewNormal;
+      varying float vV;
+      varying float vRadNorm;
+      varying float vAlphaMask;
+
+      ${GLSL_SAFE_HELPERS}
+
+      float filamentWave(float d, float speed, float freq, float ph, float pwr) {
+        float a = d * freq - uFlowPhase * speed * freq + ph;
+        float skew = sin(a - 0.44 * sin(a));
+        return pow(clamp(0.5 + 0.5 * skew, 0.0, 1.0), pwr);
+      }
+
+      float smaxFil(float a, float b, float k) {
+        float h = clamp(0.5 + 0.5 * (b - a) / max(1e-5, k), 0.0, 1.0);
+        return mix(a, b, h) + k * h * (1.0 - h);
+      }
+
+      void evalFilament(float v, out float outY, out float outRx, out float outRz, out float outCx, out float outCz, out float outMask) {
+        const float tipY = ${tipY.toFixed(4)};
+        const float stickHalfW = ${stickHalfW.toFixed(4)};
+        const float stickHalfD = ${stickHalfD.toFixed(4)};
+        const float yArcCenter = ${yArcCenter.toFixed(4)};
+        const float collarOverlap = 0.064;
+
+        float yTop = tipY + collarOverlap;
+        float totalLen = max(0.08, uReach + collarOverlap);
+        // Concentrate vertex density near the top V-meniscus collar & rounded tip!
+        float vCurve = v * 0.42 + v * v * 0.58;
+        float d = vCurve * totalLen;
+
+        // When pinching off (uTailDrop > 0), lower filament detaches cleanly below pinch neck and accelerates off-screen!
+        float tailMask = smoothstep(0.085, 0.175, d);
+        float y = yTop - d - uTailDrop * tailMask * 1.75;
+        outY = y;
+
+        // Continuous distance downward from the upper wood-flank attachment (yTop) and below the stick tip (tipY)
+        float sTop = max(0.0, yTop - y);
+        float dBelow = max(0.0, tipY - y);
+        float viscousMul = mix(1.0, 1.28, smoothstep(0.25, 0.90, uDropOpacity));
+
+        // 1. TRUE WOOD-ARC-TANGENT CONCAVE V-MENISCUS COLLAR (ZERO horizontal shelf, ZERO step!)
+        // Along the curved lower flanks of the rounded stick tip (y > tipY), hug the semicircular birch contour
+        // smoothly and then sweep tangentially inward into a concave V-funnel converging beneath the tip!
+        float dyArc = clamp(yArcCenter - y, 0.0, stickHalfW);
+        float woodHalfW = sqrt(max(0.0, stickHalfW * stickHalfW - dyArc * dyArc));
+        float vFunnel = (0.092 * exp(-sTop / 0.056) + 0.018 * exp(-sTop / 0.135)) * uCollarAmt * viscousMul;
+        // Clamp collar width smoothly inside the wet wood flank near yTop so it tucks invisibly onto the glazed stick!
+        float topWoodClamp = mix(min(vFunnel, woodHalfW + 0.005 * uCollarAmt), vFunnel, smoothstep(0.012, 0.046, sTop));
+        float collarRx = topWoodClamp;
+        // Keep front-to-back depth flush against the flat wooden stick face above tipY, tapering smoothly into circular below!
+        float collarRz = (stickHalfD + 0.003) * exp(-dBelow / 0.052) * uCollarAmt;
+
+        // 2. Continuous syrupy flowing thread with gentle gravity-accelerated taper + gliding Rayleigh-Plateau pulses!
+        float gravityTaper = 1.0 / pow(1.0 + dBelow * 1.15, 0.22);
+        float w1 = filamentWave(dBelow, 0.62, 11.5, uPhase, 1.9);
+        float w2 = filamentWave(dBelow, 0.92, 19.5, uPhase * 1.7 + 2.1, 2.3);
+        float pulse = 1.0 + (w1 * 0.34 + w2 * 0.18) * smoothstep(0.03, 0.26, dBelow);
+
+        // Rounded leading droplet bead while the filament is first overflowing & stretching down off the tip!
+        float distFromTip = max(0.0, (1.0 - vCurve) * totalLen);
+        float extendingMask = 1.0 - smoothstep(1.35, 2.15, uReach);
+        float leadHead = exp(-sq((distFromTip - 0.036) / 0.038)) * 0.018 * extendingMask * smoothstep(0.02, 0.16, uReach);
+        float tipClose = smoothstep(0.0, 0.028, distFromTip);
+
+        // Smooth hourglass pinch-off right below the meniscus when transitioning from continuous stream -> final drops!
+        float pinchZone = exp(-sq((dBelow - 0.082) / 0.052));
+        float pinchAtten = 1.0 - smoothstep(0.0, 0.48, uTailDrop) * pinchZone;
+        float tailFade = 1.0 - smoothstep(0.45, 1.35, uTailDrop) * tailMask;
+        // Soften residual upper cone during pinch so it rounds gracefully into the first final drop instead of a sharp needle
+        float collarPinchRound = 1.0 - smoothstep(0.15, 0.85, uTailDrop) * smoothstep(0.015, 0.090, dBelow);
+
+        float bodyR = (0.0172 * gravityTaper * pulse * uThickness + leadHead) * viscousMul * pinchAtten * tailFade * tipClose;
+        // C-infinity smooth blend from the tangent V-meniscus collar into the cylindrical liquid filament!
+        float rx = smaxFil(bodyR, collarRx * collarPinchRound, 0.0085) * tipClose;
+        float rz = smaxFil(bodyR, collarRz * collarPinchRound, 0.0075) * tipClose;
+
+        // Close bottom pole cleanly to zero; keep top edge tucked flush on the curved stick contour!
+        float botPole = smoothstep(1.0, 0.985, v);
+        outRx = rx * botPole;
+        outRz = rz * botPole;
+
+        // Whisper-subtle organic capillary sway as the syrupy thread streams downward
+        float swayAmp = smoothstep(0.05, 0.65, dBelow) * 0.0062 * (1.0 - uDropOpacity * 0.32);
+        outCx = sin(dBelow * 4.0 - uFlowPhase * 2.2 + uPhase) * swayAmp;
+        outCz = cos(dBelow * 3.2 - uFlowPhase * 1.8 + uPhase * 0.7) * swayAmp * 0.65;
+
+        // Feather alpha invisibly onto the glazed curved wood flanks across the top 0.036 of overlap
+        float topFeather = smoothstep(0.004, 0.038, sTop);
+        outMask = topFeather * smoothstep(1.0, 0.965, v) * smoothstep(0.0018, 0.0070, max(rx, rz));
+      }
+
+      void main() {
+        float u = position.x;
+        float v = position.y;
+        float ang = u * 6.2831853;
+        float ca = cos(ang);
+        float sa = sin(ang);
+
+        float yC, rxC, rzC, cxC, czC, mC;
+        evalFilament(v, yC, rxC, rzC, cxC, czC, mC);
+        vec3 P = vec3(cxC + ca * rxC, yC, czC + sa * rzC);
+
+        float epsV = 0.005;
+        float yP, rxP, rzP, cxP, czP, mP;
+        float yM, rxM, rzM, cxM, czM, mM;
+        evalFilament(min(1.0, v + epsV), yP, rxP, rzP, cxP, czP, mP);
+        evalFilament(max(0.0, v - epsV), yM, rxM, rzM, cxM, czM, mM);
+
+        vec3 tu = vec3(-sa * max(rxC, 1e-4), 0.0, ca * max(rzC, 1e-4));
+        vec3 tv = vec3(cxP + ca * rxP - (cxM + ca * rxM), yP - yM, czP + sa * rzP - (czM + sa * rzM));
+        vec3 localN = safeNorm(cross(tu, tv));
+
+        vV = v;
+        vRadNorm = clamp(max(rxC, rzC) / 0.024, 0.0, 1.4);
+        vAlphaMask = mC;
+
+        vec4 wp = modelMatrix * vec4(P, 1.0);
+        vWorldPos = wp.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * localN);
+        vViewNormal = normalize(normalMatrix * localN);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+
+      uniform sampler2D uSceneTex;
+      uniform vec2 uResolution;
+      uniform vec3 uDropSigma;
+      uniform vec3 uDropCreamColor;
+      uniform float uDropOpacity;
+      uniform vec3 uShadowTint;
+      uniform vec3 uStainColor;
+
+      varying vec3 vWorldPos;
+      varying vec3 vWorldNormal;
+      varying vec3 vViewNormal;
+      varying float vV;
+      varying float vRadNorm;
+      varying float vAlphaMask;
+
+      ${GLSL_SAFE_HELPERS}
+
+      void main() {
+        if (vAlphaMask < 0.01) discard;
+
+        vec2 screenUv = gl_FragCoord.xy / uResolution;
+        vec3 N = normalize(vWorldNormal);
+        vec3 Nv = normalize(vViewNormal);
+        vec3 V = normalize(cameraPosition - vWorldPos);
+        float ndv = clamp(dot(N, V), 0.0, 1.0);
+
+        // Crisp cylindrical liquid lens refraction (bends the warm studio backdrop cleanly through the thin syrup filament!)
+        float refrAmp = 0.0052 * (0.70 + 0.55 * vRadNorm);
+        vec2 refrVec = -Nv.xy * refrAmp * (0.62 + 0.65 * pow(1.0 - ndv, 0.78));
+
+        vec3 refrCol;
+        refrCol.r = texture2D(uSceneTex, clamp(screenUv + refrVec * 0.94, vec2(0.002), vec2(0.998))).r;
+        refrCol.g = texture2D(uSceneTex, clamp(screenUv + refrVec * 1.00, vec2(0.002), vec2(0.998))).g;
+        refrCol.b = texture2D(uSceneTex, clamp(screenUv + refrVec * 1.07, vec2(0.002), vec2(0.998))).b;
+
+        // Rich juicy flavor Beer-Lambert tint (matches the wet stick runoff & hanging drops seamlessly!)
+        float depthAmt = 0.42 + 0.46 * vRadNorm;
+        refrCol *= exp(-uDropSigma * depthAmt);
+        refrCol = mix(refrCol, refrCol * mix(vec3(1.0), uStainColor * 0.92 + vec3(0.10), 0.80), 0.44 * (1.0 - uDropOpacity * 0.85));
+
+        vec3 camH = safeNorm(vec3(cameraPosition.x, 0.0, cameraPosition.z));
+        vec3 camR = vec3(camH.z, 0.0, -camH.x);
+        vec3 l1 = normalize(-0.48 * camR + vec3(0.0, 0.56, 0.0) + 0.68 * camH);
+        vec3 l2 = normalize( 0.54 * camR + vec3(0.0, 0.42, 0.0) + 0.72 * camH);
+
+        // Opaque creamy / chocolate / coconut milk filament support!
+        float isMilkDrop = smoothstep(0.76, 0.98, uDropOpacity);
+        float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * mix(0.90, 0.98, isMilkDrop);
+        if (creamMix > 0.005) {
+          float cWrap = mix(0.62, 0.44, isMilkDrop) + 0.36 * clamp((dot(N, l1) + 0.45) / 1.45, 0.0, 1.0) + 0.20 * clamp((dot(N, l2) + 0.45) / 1.45, 0.0, 1.0);
+          refrCol = mix(refrCol, uDropCreamColor * cWrap, creamMix);
+        }
+
+        // Crisp dark optical liquid edge contour so the thin glistening filament reads vividly against the bright studio backdrop!
+        float darkContour = revStep(0.72, 0.14, ndv) * smoothstep(0.01, 0.15, ndv);
+        vec3 darkRimTint = mix(uShadowTint * 0.48, uStainColor * 0.36, 0.58);
+        vec3 col = mix(refrCol, refrCol * darkRimTint, darkContour * (0.82 - 0.38 * uDropOpacity));
+
+        // Internal warm backlit caustic glow down the core of the liquid thread
+        float coreGlow = pow(ndv, 1.5) * (1.0 - uDropOpacity * 0.80);
+        col += (uStainColor * 0.45 + vec3(0.16, 0.10, 0.10)) * coreGlow * 0.26;
+
+        // Crisp gliding vertical studio highlight stripe running down the glossy filament!
+        float fresnel = 0.02 + 0.98 * pow(1.0 - ndv, 4.0);
+        vec3 R = reflect(-V, N);
+        float rxStudio = dot(R, camR);
+        float stripRefl = exp(-sq((abs(rxStudio) - 0.56) / 0.17));
+        vec3 envSpec = vec3(1.25, 1.18, 1.14) * (0.30 + 0.52 * stripRefl);
+        col = mix(col, envSpec, clamp(fresnel * (0.44 - 0.18 * uDropOpacity), 0.0, 0.46));
+
+        vec3 h1 = safeNorm(l1 + V);
+        vec3 h2 = safeNorm(l2 + V);
+        float spec1 = pow(max(dot(N, h1), 0.0), 210.0);
+        float spec2 = pow(max(dot(N, h2), 0.0), 160.0);
+        col += vec3(2.8, 2.70, 2.62) * (spec1 * 0.85 + spec2 * 0.52);
+
+        float alpha = smoothstep(0.0, 0.06, ndv) * vAlphaMask;
+        gl_FragColor = vec4(col, clamp(alpha * 0.99, 0.0, 1.0));
+      }
+    `,
+  });
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'stick-tip-filament';
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+
+  return {
+    mesh,
+    uniforms: filUniforms,
+    dispose() {
+      geo.dispose();
+      mat.dispose();
     },
   };
 }
@@ -2069,7 +2425,8 @@ export function createWaterDropSystem(
     uRimDark: { value: debugParams.rimDark },
     uDropSigma: { value: new THREE.Vector3(...initPal.dropSigma) },
     uDropCreamColor: { value: new THREE.Vector3(...initPal.dropCreamColor) },
-    uDropOpacity: { value: initPal.opacity },
+    // Keep drops, stick runoff, and tip filament translucent & refractive (matching Water optics) on all bases
+    uDropOpacity: { value: 0.0 },
     uShadowTint: { value: new THREE.Vector3(...initPal.shadowTint) },
     uStainColor: { value: new THREE.Vector3(...initPal.stainColor) },
   };
@@ -2078,7 +2435,7 @@ export function createWaterDropSystem(
     const pal = resolveOpticalPalette(nextRecipe);
     uniforms.uDropSigma.value.set(...pal.dropSigma);
     uniforms.uDropCreamColor.value.set(...pal.dropCreamColor);
-    uniforms.uDropOpacity.value = pal.opacity;
+    uniforms.uDropOpacity.value = 0.0;
     uniforms.uShadowTint.value.set(...pal.shadowTint);
     uniforms.uStainColor.value.set(...pal.stainColor);
   }
@@ -2528,6 +2885,56 @@ export function createWaterDropSystem(
   pendantGroup.add(bottomPearlsMesh);
   disposables.push(bottomPearlsMesh);
 
+  // === BOTTOM-STICK OVERFLOW FILAMENT & LATE-MELT FINAL PINCH-OFF DROPS ===
+  const stickTipFilament = createStickTipFilamentSystem(seed, {
+    uSceneTex: uniforms.uSceneTex,
+    uResolution: uniforms.uResolution,
+    uTime: uniforms.uTime,
+    uDropSigma: uniforms.uDropSigma,
+    uDropCreamColor: uniforms.uDropCreamColor,
+    uDropOpacity: uniforms.uDropOpacity,
+    uShadowTint: uniforms.uShadowTint,
+    uStainColor: uniforms.uStainColor,
+  });
+  pendantGroup.add(stickTipFilament.mesh);
+  disposables.push(stickTipFilament);
+
+  // Final slow lingering drops emitted from the rounded stick bottom tip after the continuous filament pinches off!
+  const tipDropNeckGeo = createPendantLatheGeometry();
+  updatePendantLatheGeometry(tipDropNeckGeo, 'growing', 0.5, 0, 1.0, 0);
+  const tipDropNeckMesh = new THREE.Mesh(tipDropNeckGeo, pendantMat);
+  tipDropNeckMesh.name = 'stick-tip-final-neck';
+  tipDropNeckMesh.frustumCulled = false;
+  tipDropNeckMesh.visible = false;
+  pendantGroup.add(tipDropNeckMesh);
+  disposables.push(tipDropNeckGeo);
+
+  const tipDropFallPool = Array.from({ length: 4 }, (_, idx) => {
+    const m = new THREE.Mesh(fallGeo, pendantFallMat);
+    m.name = `stick-tip-final-drop-${idx}`;
+    m.frustumCulled = false;
+    m.visible = false;
+    pendantGroup.add(m);
+    return {
+      mesh: m,
+      active: false,
+      y: POPSICLE.stickBottomY as number,
+      velY: 0,
+      radius: 0.025,
+      time: 0,
+    };
+  });
+
+  let tipFilamentPhase = 0;
+  let tipFilamentReach = 0;
+  let tipFilamentTailDrop = 0;
+  let tipDropStage: 'idle' | 'growing' | 'pinching' | 'recoiling' | 'done' = 'idle';
+  let tipDropGrow = 0;
+  let tipDropStageTime = 0;
+  let tipDropsEmitted = 0;
+  const TIP_FINAL_DROPS_MAX = 4;
+  let prevTipMelt = 0;
+
   /**
    * Gently swells the nearest bottom-rim downward morph lobe when a sliding surface droplet
    * wraps under the lower bevel and drains into the accumulated pooling curve!
@@ -2947,6 +3354,25 @@ export function createWaterDropSystem(
     stickFlowPhase = 0.0;
     stickFlow.uniforms.uFlowRate.value = 0.0;
     stickFlow.group.visible = false;
+    stickTipFilament.mesh.visible = false;
+    stickTipFilament.uniforms.uFlowPhase.value = 0;
+    stickTipFilament.uniforms.uReach.value = 0;
+    stickTipFilament.uniforms.uThickness.value = 0;
+    stickTipFilament.uniforms.uTailDrop.value = 0;
+    stickTipFilament.uniforms.uCollarAmt.value = 0;
+    tipFilamentPhase = 0;
+    tipFilamentReach = 0;
+    tipFilamentTailDrop = 0;
+    tipDropStage = 'idle';
+    tipDropGrow = 0;
+    tipDropStageTime = 0;
+    tipDropsEmitted = 0;
+    prevTipMelt = 0;
+    tipDropNeckMesh.visible = false;
+    for (const fd of tipDropFallPool) {
+      fd.active = false;
+      fd.mesh.visible = false;
+    }
     bottomPearlsMesh.count = 0;
     bottomPearlsMesh.visible = false;
     hasInitialized = false;
@@ -3862,6 +4288,188 @@ export function createWaterDropSystem(
     stickFlow.uniforms.uFlowRate.value = stickFlowPhase;
     stickFlow.group.visible = state.melt > 0.16 && state.melt < 0.90;
 
+    // === BOTTOM-STICK OVERFLOW FILAMENT -> PINCH-OFF -> FINAL SLOW DROPS -> COMPLETE STOP ===
+    {
+      const m = state.melt;
+      const scrubbed = dt === 0 || Math.abs(m - prevTipMelt) > 0.04;
+      prevTipMelt = m;
+
+      // Overflow starts once glossy stick runoff reaches & overflows the rounded bottom tip (melt ~ 0.24),
+      // flows steadily down through mid-melt (0.30..0.67), necks & pinches off (0.66..0.74),
+      // emits 3-4 lingering final slow drops (0.71..0.875), and stops completely (>= 0.88)!
+      const wetOverflowGate = smoothstep(0.16, 0.44, liveStickWet);
+      const overflowAmt = smoothstep(0.22, 0.36, m) * wetOverflowGate;
+      const pinchProgress = smoothstep(0.66, 0.74, m);
+      const supplyEnd = 1.0 - smoothstep(0.84, 0.89, m);
+
+      if (dt > 0) {
+        tipFilamentPhase += dt * clamp(0.68 + meltSpeedMul * 0.42, 0.35, 1.90);
+      }
+
+      if (m < 0.21 || wetOverflowGate < 0.04) {
+        tipFilamentReach = 0;
+        tipFilamentTailDrop = 0;
+        tipDropStage = 'idle';
+        tipDropGrow = 0;
+        tipDropStageTime = 0;
+        tipDropsEmitted = 0;
+        stickTipFilament.mesh.visible = false;
+        tipDropNeckMesh.visible = false;
+        for (const fd of tipDropFallPool) {
+          fd.active = false;
+          fd.mesh.visible = false;
+        }
+      } else {
+        // 1. Continuous flowing filament + pinch-off tail detachment
+        const targetReach = overflowAmt * 2.45;
+        if (scrubbed) {
+          tipFilamentReach = targetReach;
+          tipFilamentTailDrop = pinchProgress * 1.55;
+        } else {
+          // Smooth physical downward extension when overflowing (stretches cleanly off the bottom of the screen!)
+          const extendRate = targetReach > tipFilamentReach ? 1.55 : 3.0;
+          tipFilamentReach += (targetReach - tipFilamentReach) * Math.min(1, dt * extendRate);
+          if (pinchProgress > 0.01) {
+            tipFilamentTailDrop = Math.min(1.65, Math.max(tipFilamentTailDrop + dt * (1.35 + pinchProgress * 2.5), pinchProgress * 1.55));
+          } else {
+            tipFilamentTailDrop = 0;
+          }
+        }
+
+        const filThick =
+          smoothstep(0.23, 0.35, m) *
+          wetOverflowGate *
+          (1.0 - smoothstep(0.60, 0.72, m) * 0.55) *
+          (1.0 - smoothstep(0.71, 0.75, m));
+        const collarAmt =
+          smoothstep(0.21, 0.31, m) *
+          wetOverflowGate *
+          (1.0 - smoothstep(0.67, 0.74, m));
+
+        stickTipFilament.uniforms.uFlowPhase.value = tipFilamentPhase;
+        stickTipFilament.uniforms.uReach.value = tipFilamentReach;
+        stickTipFilament.uniforms.uThickness.value = filThick;
+        stickTipFilament.uniforms.uTailDrop.value = tipFilamentTailDrop;
+        stickTipFilament.uniforms.uCollarAmt.value = collarAmt;
+        stickTipFilament.mesh.visible =
+          (filThick > 0.015 && tipFilamentTailDrop < 1.48) || collarAmt > 0.02;
+
+        // 2. Final slow lingering drops from the rounded bottom tip after the filament stops (melt ~ 0.71..0.88)!
+        const inFinalDropWindow = m >= 0.71 && m < 0.875 && supplyEnd > 0.02;
+        if (scrubbed) {
+          for (const fd of tipDropFallPool) {
+            fd.active = false;
+            fd.mesh.visible = false;
+          }
+          if (inFinalDropWindow) {
+            // Deterministic preview pose when scrubbing directly into the final-drops phase!
+            const phaseT = clamp((m - 0.71) / 0.165, 0, 1);
+            tipDropsEmitted = Math.min(TIP_FINAL_DROPS_MAX - 1, Math.floor(phaseT * TIP_FINAL_DROPS_MAX));
+            tipDropStage = 'growing';
+            tipDropGrow = 0.82;
+            tipDropStageTime = 0;
+            // Also show one freshly detached drop falling cleanly in view below the tip on scrub!
+            const fd = tipDropFallPool[0];
+            fd.active = true;
+            fd.y = POPSICLE.stickBottomY - 0.16 - ((phaseT * 0.36) % 0.18);
+            fd.velY = 1.4;
+            fd.radius = 0.032 * (1.0 - phaseT * 0.32);
+            fd.time = 0.18;
+          } else {
+            tipDropStage = m >= 0.875 ? 'done' : 'idle';
+            tipDropGrow = 0;
+            tipDropStageTime = 0;
+            tipDropsEmitted = m >= 0.875 ? TIP_FINAL_DROPS_MAX : 0;
+          }
+        } else if (dt > 0) {
+          if (inFinalDropWindow && tipDropStage === 'idle' && tipDropsEmitted < TIP_FINAL_DROPS_MAX) {
+            tipDropStage = 'growing';
+            tipDropGrow = 0.22;
+            tipDropStageTime = 0;
+          }
+          const slowDecay = 1.0 - (tipDropsEmitted / TIP_FINAL_DROPS_MAX) * 0.48;
+          if (tipDropStage === 'growing') {
+            if (!inFinalDropWindow && tipDropGrow < 0.75) {
+              // Supply ran completely out before drop could reach break-off size -> softly stop!
+              tipDropGrow = Math.max(0, tipDropGrow - dt * 0.45);
+              if (tipDropGrow <= 0.01) tipDropStage = 'done';
+            } else {
+              tipDropGrow += dt * (0.28 + 0.20 * slowDecay) * meltSpeedMul;
+              if (tipDropGrow >= 1.0) {
+                tipDropGrow = 1.0;
+                tipDropStage = 'pinching';
+                tipDropStageTime = 0;
+              }
+            }
+          } else if (tipDropStage === 'pinching') {
+            tipDropStageTime += dt * (0.95 + 0.25 * meltSpeedMul);
+            if (tipDropStageTime >= 0.72) {
+              // Emit a falling final drop from the rounded stick bottom tip!
+              const dropScale = 1.08 - (tipDropsEmitted / TIP_FINAL_DROPS_MAX) * 0.44;
+              const slot = tipDropFallPool.find((d) => !d.active) ?? tipDropFallPool[0];
+              slot.active = true;
+              slot.y = POPSICLE.stickBottomY - 0.088 * dropScale;
+              slot.velY = 0.34;
+              slot.radius = 0.033 * dropScale;
+              slot.time = 0;
+              tipDropsEmitted++;
+              tipDropStage = 'recoiling';
+              tipDropStageTime = 0;
+            }
+          } else if (tipDropStage === 'recoiling') {
+            tipDropStageTime += dt * 1.1;
+            if (tipDropStageTime >= 0.55) {
+              if (inFinalDropWindow && tipDropsEmitted < TIP_FINAL_DROPS_MAX) {
+                tipDropStage = 'growing';
+                tipDropGrow = 0.05;
+                tipDropStageTime = 0;
+              } else {
+                tipDropStage = 'done';
+                tipDropGrow = 0;
+              }
+            }
+          }
+        }
+
+        // Update hanging tip neck mesh during final-drop stages
+        if (tipDropStage === 'growing' || tipDropStage === 'pinching' || tipDropStage === 'recoiling') {
+          const dropScale = (1.10 - (Math.min(tipDropsEmitted, TIP_FINAL_DROPS_MAX - 1) / TIP_FINAL_DROPS_MAX) * 0.42) * (0.50 + 0.50 * supplyEnd);
+          const pinchFrac = tipDropStage === 'pinching' ? clamp(tipDropStageTime / 0.72, 0, 1) : 0;
+          const recoilFrac = tipDropStage === 'recoiling' ? clamp(tipDropStageTime / 0.55, 0, 1) : 0;
+          const stageU = tipDropStage === 'pinching' ? pinchFrac : recoilFrac;
+          updatePendantLatheGeometry(tipDropNeckGeo, tipDropStage, tipDropGrow, stageU, 1.0, -0.058);
+          tipDropNeckMesh.position.set(0, POPSICLE.stickBottomY + 0.008, 0);
+          tipDropNeckMesh.scale.setScalar(dropScale);
+          tipDropNeckMesh.visible = dropScale > 0.14 && (tipDropStage !== 'growing' || tipDropGrow > 0.04);
+        } else {
+          tipDropNeckMesh.visible = false;
+        }
+
+        // Advance & render any falling final tip drops cleanly under gravity
+        for (const fd of tipDropFallPool) {
+          if (!fd.active) {
+            fd.mesh.visible = false;
+            continue;
+          }
+          if (dt > 0) {
+            fd.time += dt;
+            fd.velY += 5.4 * dt;
+            fd.y -= fd.velY * dt;
+            if (fd.y < POPSICLE.stickBottomY - 2.4 || fd.time > 1.8) {
+              fd.active = false;
+              fd.mesh.visible = false;
+              continue;
+            }
+          }
+          const stretchY = 1.15 + clamp(fd.velY * 0.22, 0, 0.75);
+          const squeezeXZ = 1.0 / Math.sqrt(stretchY);
+          fd.mesh.position.set(0, fd.y, 0);
+          fd.mesh.scale.set(fd.radius * squeezeXZ, fd.radius * stretchY, fd.radius * squeezeXZ);
+          fd.mesh.visible = true;
+        }
+      }
+    }
+
     // Early-melt individual stick-edge drops: appear right after frost clears (melt ~ 0.14..0.34),
     // then smoothly transition into the continuous undulating syrup flow stream once heavy melting kicks in!
     const stickDripOnset = smoothstep(0.14, 0.23, state.melt) * frostGoneGate;
@@ -3898,21 +4506,29 @@ export function createWaterDropSystem(
             sd.velY = 0.018;
           }
         } else if (sd.stage === 'sliding') {
-          // Deliberate, sticky viscous glide down the visible wooden stick edges (y ~ -1.0 -> -1.78)!
-          const grainMod = 0.56 + 0.44 * Math.sin(sd.y * 19.0 + sd.phase);
-          const targetVel = (0.026 + (sd.radius / 0.025) * 0.038) * (0.72 + state.melt * 0.50) * meltSpeedMul * grainMod;
-          sd.velY += (targetVel - sd.velY) * Math.min(1, dt * 3.0);
-          sd.y -= sd.velY * dt;
-          sd.radius = Math.max(sd.maxR * 0.68, sd.radius - 0.00045 * dt);
+          const yBotArch = POPSICLE.stickBottomY + POPSICLE.stickWidth * 0.5;
+          if (sd.y >= POPSICLE.stickBottomY - 0.015) {
+            // Deliberate, sticky viscous glide down the wooden stick edge and around its rounded bottom tip!
+            const grainMod = 0.56 + 0.44 * Math.sin(sd.y * 19.0 + sd.phase);
+            const targetVel = (0.026 + (sd.radius / 0.025) * 0.038) * (0.72 + state.melt * 0.50) * meltSpeedMul * grainMod;
+            sd.velY += (targetVel - sd.velY) * Math.min(1, dt * 3.0);
+            sd.y -= sd.velY * dt;
+            sd.radius = Math.max(sd.maxR * 0.68, sd.radius - 0.00045 * dt);
+          } else {
+            // Free-fall drip cleanly off the rounded bottom tip of the stick under gravity!
+            sd.velY += 4.6 * dt;
+            sd.y -= sd.velY * dt;
+          }
 
-          // Recycle smoothly once well below the visible stick frame with staggered spacing!
-          if (sd.y < -1.82) {
+          // Recycle smoothly once fallen well below the rounded stick bottom!
+          if (sd.y < POPSICLE.stickBottomY - 0.85) {
             sd.stage = 'dormant';
             sd.stageTime = 0;
             sd.radius = 0;
             sd.velY = 0;
             sd.dormantDur = 2.2 + ((i * 1.35 + state.time * 0.43) % 2.8);
           }
+          void yBotArch;
         }
       }
 
@@ -3920,12 +4536,24 @@ export function createWaterDropSystem(
       if (sd.stage === 'dormant' || effR < 0.0018 || sd.y > yBotLive + 0.015) {
         sd.mesh.visible = false;
       } else {
+        const yBotArch = POPSICLE.stickBottomY + POPSICLE.stickWidth * 0.5;
+        const fallingOff = sd.y < POPSICLE.stickBottomY - 0.015;
         const speedNorm = sd.stage === 'sliding' ? clamp(sd.velY / 0.085, 0, 1) : 0;
-        const scaleX = effR * (1.14 - speedNorm * 0.10);
-        const scaleY = effR * (2.05 + speedNorm * 1.15);
+        const scaleX = effR * (fallingOff ? 0.96 : 1.14 - speedNorm * 0.10);
+        const scaleY = effR * (fallingOff ? 1.85 + clamp(sd.velY * 0.35, 0, 0.8) : 2.05 + speedNorm * 1.15);
         const scaleZ = effR * 0.96;
-        // Seat snugly along the outer wooden edge so plump crystal teardrops protrude unmistakably in silhouette!
-        sd.mesh.position.set(sd.side * (stickEdgeX + 0.0025), sd.y, 0);
+        // Hug the outer wooden edge & curve smoothly inward around the semicircular bottom tip before dripping off!
+        let dropX: number;
+        if (sd.y >= yBotArch) {
+          dropX = sd.side * (stickEdgeX + 0.0025);
+        } else if (!fallingOff) {
+          const dy = Math.min(stickEdgeX, Math.max(0, yBotArch - sd.y));
+          const rCurve = Math.sqrt(Math.max(0, stickEdgeX * stickEdgeX - dy * dy));
+          dropX = sd.side * (rCurve + 0.002);
+        } else {
+          dropX = sd.side * 0.012;
+        }
+        sd.mesh.position.set(dropX, sd.y, 0);
         sd.mesh.scale.set(scaleX, scaleY, scaleZ);
         sd.mesh.visible = true;
       }

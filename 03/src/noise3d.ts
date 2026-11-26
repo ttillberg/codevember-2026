@@ -11,7 +11,10 @@ import * as THREE from 'three';
  *   B = 3D Voronoi cellular crystal bead field (1.0 at bead center -> 0.0 at cell wall, period 8)
  *   A = crisp high-frequency periodic 3D detail noise (period 12 + 24)
  */
-const SIZE = 48;
+const IS_COMPACT_DEVICE =
+  typeof window !== 'undefined' &&
+  (window.matchMedia('(pointer: coarse)').matches || Math.min(window.innerWidth, window.innerHeight) <= 820);
+const SIZE = IS_COMPACT_DEVICE ? 32 : 48;
 
 function hashInt3(x: number, y: number, z: number, seed: number): number {
   let n = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 2147483647) + Math.imul(seed, 1274126177);

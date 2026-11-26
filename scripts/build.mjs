@@ -32,7 +32,7 @@ for (const d of days) {
 // A day with a second piece (NN-name) gets a square for each, and an empty day in HIDDEN is left out for
 // every extra piece, so the grid stays at 30. A piece in UNLISTED is built and live but not linked: on a
 // desktop its day stands as an empty square, on a phone it goes with the missed days.
-const UNLISTED = new Set(['01']); // not ready to show
+const UNLISTED = new Set(['01', '03']); // not ready to show
 const HIDDEN = new Set([]); // empty days left out, one per extra piece
 const listed = days.filter((d) => !UNLISTED.has(d.dir));
 const pieces = (day) => listed.filter((d) => d.day === day);

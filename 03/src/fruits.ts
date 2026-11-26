@@ -518,11 +518,10 @@ function createWoodStickGeometry(): THREE.BufferGeometry {
   const r = hw;
 
   const shape = new THREE.Shape();
-  shape.moveTo(-hw, botY);
-  shape.lineTo(hw, botY);
+  shape.absarc(0, botY + r, r, Math.PI, Math.PI * 2, false);
   shape.lineTo(hw, topY - r);
   shape.absarc(0, topY - r, r, 0, Math.PI, false);
-  shape.lineTo(-hw, botY);
+  shape.closePath();
 
   const depth = POPSICLE.stickDepth * 0.62;
   const geo = new THREE.ExtrudeGeometry(shape, {
@@ -1590,11 +1589,14 @@ function createChocolateMaterial(tex: ToppingTextureSet): THREE.MeshPhysicalMate
   return new THREE.MeshPhysicalMaterial({
     map: tex.albedo,
     bumpMap: tex.bump,
-    bumpScale: 0.014,
+    bumpScale: 0.016,
     roughnessMap: tex.roughness,
-    roughness: 0.48,
+    // Velvety cold-tempered cocoa: warm low-glare specular prevents stark white grazing Fresnel rims in milk!
+    roughness: 0.68,
     metalness: 0.0,
-    envMapIntensity: 0.32,
+    specularIntensity: 0.24,
+    specularColor: new THREE.Color(0x8e604a),
+    envMapIntensity: 0.12,
   });
 }
 
@@ -1604,10 +1606,12 @@ function createLemonZestMaterial(tex: ToppingTextureSet): THREE.MeshPhysicalMate
     bumpMap: tex.bump,
     bumpScale: 0.018,
     roughnessMap: tex.roughness,
-    roughness: 0.46,
+    roughness: 0.56,
     metalness: 0.0,
+    specularIntensity: 0.34,
+    specularColor: new THREE.Color(0xfff0a6),
     side: THREE.DoubleSide,
-    envMapIntensity: 0.50,
+    envMapIntensity: 0.22,
   });
 }
 
@@ -1617,9 +1621,11 @@ function createKaksmulorMaterial(tex: ToppingTextureSet): THREE.MeshPhysicalMate
     bumpMap: tex.bump,
     bumpScale: 0.028,
     roughnessMap: tex.roughness,
-    roughness: 0.90,
+    roughness: 0.94,
     metalness: 0.0,
-    envMapIntensity: 0.14,
+    specularIntensity: 0.14,
+    specularColor: new THREE.Color(0xc8a484),
+    envMapIntensity: 0.08,
   });
 }
 
@@ -1660,15 +1666,15 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
     const j = (amt: number) => (rand() - 0.5) * amt;
     return [
       // === STRAWBERRY SLICES, CUT WEDGES & LITTLE PIECES (organic handmade variety!) ===
-      // 1. Hero whole slice — upper right
+      // 1. Hero whole slice — upper right (tucked cleanly inside ice & beside the raised upper birch stick!)
       {
         kind: 'strawberry',
-        x: 0.19 + j(0.01),
+        x: 0.26 + j(0.01),
         y: 0.45 + j(0.01),
-        z: 0.010,
-        scale: [0.265, 0.31, 0.26],
+        z: 0.014,
+        scale: [0.255, 0.295, 0.25],
         rot: [0.36, -0.44, -0.62],
-        radius: 0.21,
+        radius: 0.20,
         baseBend: [0.24, 0.16, -0.16],
         variant: 0,
       },
@@ -1888,6 +1894,7 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
   ): boolean {
     const isSmallScatter =
       kind === 'shaved-lemon' ||
+      (kind === 'chocolate' && radius < 0.065) ||
       (kind === 'kaksmulor' && variant >= 2) ||
       (kind === 'raspberry' && variant >= 4) ||
       (kind === 'strawberry' && variant === 3) ||
@@ -1922,12 +1929,17 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
                   ? radius * 0.68
                   : radius * 0.92;
 
-      const maxSafeZ = Math.max(-0.02, POPSICLE.halfDepth - halfThickZ - (isCoconut ? 0.018 : 0.032));
+      const isFineInlay = kind === 'shaved-lemon' || kind === 'kaksmulor' || (kind === 'chocolate' && radius < 0.068);
+      const maxSafeZ = Math.max(
+        -0.02,
+        POPSICLE.halfDepth - halfThickZ - (isCoconut ? (isFineInlay ? 0.002 : 0.012) : 0.028),
+      );
       let z: number;
       if (isCoconut) {
-        // Place most pieces right near the front creamy surface (+Z), a few on the back (-Z) for 3D orbit!
+        // Place most pieces right near the front creamy surface (+Z) so fine crumbs, chips & zest peek vividly!
         const frontSide = rand() < 0.78 ? 1 : -1;
-        const shallowZ = Math.max(0.02, maxSafeZ - rand() * 0.035);
+        const depthSpread = isFineInlay ? 0.016 : 0.026;
+        const shallowZ = Math.max(0.02, maxSafeZ - rand() * depthSpread);
         z = frontSide * shallowZ;
       } else {
         z = clamp(zBias + (rand() * 2 - 1) * 0.026, -0.05, maxSafeZ);
@@ -1948,7 +1960,9 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
         const dx = x - p.x;
         const dy = y - p.y;
         const dz = (z - p.z) * 1.45;
-        const minDist = (radius + p.r) * (isSmallScatter ? 0.60 : 0.78);
+        const minDist =
+          (radius + p.r) *
+          (kind === 'shaved-lemon' || (kind === 'kaksmulor' && variant >= 2) ? 0.46 : isSmallScatter ? 0.56 : 0.78);
         if (dx * dx + dy * dy + dz * dz < minDist * minDist) {
           ok = false;
           break;
@@ -2101,13 +2115,20 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
                 : 0.14 + rand() * 0.032;
           tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.045 : -0.015, raspVariant);
         } else if (kind === 'chocolate') {
-          const r = 0.088 + rand() * 0.038;
+          const r = 0.066 + rand() * 0.028;
           tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.052 : -0.010);
         }
       }
     }
 
-    // Extra natural scatter of small broken fruit pieces, baby blueberries, and loose raspberry drupelet balls!
+    // Extra natural scatter of small broken fruit pieces, baby blueberries, loose raspberry drupelet balls, and chocolate chips!
+    if (largePool.includes('chocolate')) {
+      const chipCount = largePool.length === 1 ? 14 : 10;
+      for (let n = 0; n < chipCount; n++) {
+        const r = 0.034 + rand() * 0.026;
+        tryPlace('chocolate', r, -0.86, 0.84, n % 3 === 0 ? -0.012 : 0.056);
+      }
+    }
     if (largePool.includes('raspberry')) {
       const bitCount = largePool.length === 1 ? 6 : 4;
       for (let n = 0; n < bitCount; n++) {
@@ -2137,31 +2158,31 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
     }
   }
 
-  // Kaksmulor: crisp broken dark-wafer biscuit pieces + rich scatter of fine cookie crumbs (cookies & cream!)
+  // Kaksmulor: crisp smaller broken dark-wafer biscuit pieces + rich abundant scatter of fine cookie crumbs!
   if (hasKaksmulor) {
-    const chunkCount = largePool.length === 0 ? 9 : 6;
+    const chunkCount = largePool.length === 0 ? 14 : 9;
     for (let n = 0; n < chunkCount; n++) {
-      const yMin = -0.80 + (n / chunkCount) * 1.38;
-      const yMax = Math.min(0.66, yMin + 0.28);
-      const r = largePool.length === 0 ? 0.095 + rand() * 0.046 : 0.082 + rand() * 0.034;
+      const yMin = -0.82 + (n / chunkCount) * 1.48;
+      const yMax = Math.min(0.74, yMin + 0.24);
+      const r = largePool.length === 0 ? 0.064 + rand() * 0.032 : 0.058 + rand() * 0.024;
       // 80% dark cocoa wafer chunks (classic cookies & cream!), 20% golden butter biscuit chunks
       const variant = rand() < 0.80 ? 0 : 1;
       tryPlace('kaksmulor', r, yMin, yMax, 0.056, variant);
     }
-    const crumbCount = largePool.length === 0 ? 34 : 20;
+    const crumbCount = largePool.length === 0 ? 54 : 34;
     for (let n = 0; n < crumbCount; n++) {
-      const r = 0.026 + rand() * 0.032;
+      const r = 0.018 + rand() * 0.024;
       const variant = rand() < 0.78 ? 2 : 3;
-      tryPlace('kaksmulor', r, -0.86, 0.74, 0.062, variant);
+      tryPlace('kaksmulor', r, -0.86, 0.82, n % 3 === 0 ? -0.014 : 0.062, variant);
     }
   }
 
-  // Shaved lemon: generous delicate bright-yellow curled citrus zest ribbons suspended cleanly inside!
+  // Shaved lemon: abundant delicate fine bright-yellow curled citrus zest bits suspended throughout!
   if (hasLemon) {
-    const zestCount = largePool.length === 0 && !hasKaksmulor ? 26 : 18;
+    const zestCount = largePool.length === 0 && !hasKaksmulor ? 56 : 42;
     for (let n = 0; n < zestCount; n++) {
-      const r = 0.062 + rand() * 0.028;
-      tryPlace('shaved-lemon', r, -0.84, 0.74, 0.052, n % 2);
+      const r = 0.031 + rand() * 0.014;
+      tryPlace('shaved-lemon', r, -0.86, 0.82, n % 3 === 0 ? -0.014 : 0.054, n % 2);
     }
   }
 
@@ -2305,7 +2326,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           // Single 5-tap pass shared directly with lights_fragment_end (halves uCarveMap texture bandwidth!)
           float frontFace = smoothstep(0.45, 0.78, vStickWorldNormal.z);
           sSharedFrontFace = frontFace;
-          vec2 carveUv = vec2((vStickWorldPos.y + 0.62) / 0.60, (-vStickWorldPos.x + 0.088) / 0.176);
+          vec2 carveUv = vec2((vStickWorldPos.y + 0.32) / 0.64, (-vStickWorldPos.x + 0.088) / 0.176);
           if (frontFace > 0.01 && carveUv.x > 0.005 && carveUv.x < 0.995 && carveUv.y > 0.005 && carveUv.y < 0.995) {
             vec2 cTex = texture2D(uCarveMap, carveUv).rg;
             float depth = cTex.r * frontFace;
@@ -2733,11 +2754,13 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
   const STICK_HALF_W = POPSICLE.stickEdgeX;
   const STICK_HALF_D = POPSICLE.stickDepth * 0.5 + POPSICLE.stickBevelThickness;
   const STICK_ARCH_Y = POPSICLE.stickTopY - STICK_HALF_W;
+  const STICK_BOT_ARCH_Y = POPSICLE.stickBottomY + STICK_HALF_W;
 
   function sampleStickSDF(x: number, y: number, z: number, outN: THREE.Vector3): number {
-    if (y > STICK_ARCH_Y) {
-      // Semicircular rounded top cap (cylinder in XY, slab in Z)
-      const dy = y - STICK_ARCH_Y;
+    if (y > STICK_ARCH_Y || y < STICK_BOT_ARCH_Y) {
+      // Semicircular rounded top or bottom cap (cylinder in XY, slab in Z)
+      const isTop = y > STICK_ARCH_Y;
+      const dy = y - (isTop ? STICK_ARCH_Y : STICK_BOT_ARCH_Y);
       const rXY = Math.hypot(x, dy);
       const dXY = rXY - STICK_HALF_W;
       const dZ = Math.abs(z) - STICK_HALF_D;
@@ -2746,12 +2769,12 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         const oz = Math.max(0, dZ);
         const dist = Math.hypot(ox, oz);
         const rx = rXY > 1e-5 ? x / rXY : 0;
-        const ry = rXY > 1e-5 ? dy / rXY : 1;
+        const ry = rXY > 1e-5 ? dy / rXY : isTop ? 1 : -1;
         const sz = z >= 0 ? 1 : -1;
         if (dist > 1e-6) {
           outN.set((ox * rx) / dist, (ox * ry) / dist, (oz * sz) / dist);
         } else {
-          outN.set(0, 1, 0);
+          outN.set(0, isTop ? 1 : -1, 0);
         }
         return dist;
       }
@@ -2761,12 +2784,12 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         return dZ;
       }
       const invR = rXY > 1e-5 ? 1 / rXY : 0;
-      outN.set(x * invR, dy * invR || 1, 0);
+      outN.set(x * invR, dy * invR || (isTop ? 1 : -1), 0);
       return dXY;
     }
 
-    // Rectangular beveled shaft (y <= STICK_ARCH_Y)
-    const yClamped = clamp(y, POPSICLE.stickBottomY, STICK_ARCH_Y);
+    // Rectangular beveled shaft (STICK_BOT_ARCH_Y <= y <= STICK_ARCH_Y)
+    const yClamped = clamp(y, STICK_BOT_ARCH_Y, STICK_ARCH_Y);
     const dx = Math.abs(x) - STICK_HALF_W;
     const dy = Math.abs(y - yClamped);
     const dz = Math.abs(z) - STICK_HALF_D;
@@ -3967,4 +3990,87 @@ export function createToppingDebugStage(seed = 1): ToppingDebugStage {
   }
 
   return { group, setLayout, update, dispose };
+}
+
+/**
+ * Builds a centered studio-scaled 3D specimen for rendering high-DPI Customize topping thumbnails
+ * using the exact procedural fruit/chunk meshes and materials from inside the popsicle.
+ */
+export function createToppingThumbSpecimen(
+  kind: ToppingId,
+  seed = 1,
+): { object: THREE.Group; dispose(): void } {
+  const object = new THREE.Group();
+  const disposables: Array<{ dispose(): void }> = [];
+
+  const add = (
+    geo: THREE.BufferGeometry,
+    mat: THREE.Material,
+    pos: [number, number, number],
+    rot: [number, number, number],
+    scale: number,
+  ) => {
+    disposables.push(geo);
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(pos[0], pos[1], pos[2]);
+    m.rotation.set(rot[0], rot[1], rot[2]);
+    m.scale.setScalar(scale);
+    object.add(m);
+  };
+
+  switch (kind) {
+    case 'strawberry': {
+      const mat = createStrawberryMaterial(getCachedStrawberryTextures(seed)).material;
+      disposables.push(mat);
+      add(createStrawberrySliceGeometry(seed * 131 + 19, 0.19, 0), mat, [0, -0.02, 0], [0.24, -0.34, -0.22], 0.68);
+      break;
+    }
+    case 'blueberry': {
+      const blueA = createBlueberryMaterial(getCachedBlueberryTextures(seed));
+      blueA.uThaw.value = 1.0;
+      const blueB = createBlueberryMaterial(getCachedBlueberryTextures(seed + 1));
+      blueB.uThaw.value = 1.0;
+      disposables.push(blueA.material, blueB.material);
+      add(createBlueberryGeometry(seed * 149 + 13, 0), blueA.material, [-0.14, 0.05, 0.08], [0.46, 0.34, -0.18], 0.44);
+      add(createBlueberryGeometry(seed * 149 + 29, 1), blueB.material, [0.24, -0.14, -0.04], [0.62, -0.45, 0.24], 0.34);
+      break;
+    }
+    case 'raspberry': {
+      const mat = createRaspberryMaterial(getCachedRaspberryTextures(seed), 1.0).material;
+      disposables.push(mat);
+      add(createRaspberryGeometry(seed * 157 + 11, 0), mat, [0, -0.02, 0], [0.26, 0.42, -0.14], 0.72);
+      break;
+    }
+    case 'shaved-lemon': {
+      const mat = createLemonZestMaterial(getCachedLemonZestTextures(seed));
+      disposables.push(mat);
+      add(createLemonZestGeometry(seed * 173 + 21), mat, [-0.08, 0.08, 0.06], [0.42, 0.34, -0.38], 0.74);
+      add(createLemonZestGeometry(seed * 173 + 53), mat, [0.16, -0.14, -0.02], [-0.36, -0.44, 0.52], 0.64);
+      add(createLemonZestGeometry(seed * 173 + 89), mat, [-0.14, -0.18, 0.12], [0.22, 0.68, 0.26], 0.48);
+      break;
+    }
+    case 'chocolate': {
+      const mat = createChocolateMaterial(getCachedChocolateChunkTextures(seed));
+      disposables.push(mat);
+      add(createChocolateChunkGeometry(seed * 163 + 17), mat, [-0.12, 0.06, 0.06], [0.36, 0.52, -0.22], 0.48);
+      add(createChocolateChunkGeometry(seed * 163 + 41), mat, [0.24, -0.16, -0.04], [-0.42, -0.36, 0.38], 0.36);
+      break;
+    }
+    case 'kaksmulor': {
+      const darkMat = createKaksmulorMaterial(getCachedKaksmulorTextures(seed, 'dark'));
+      const butterMat = createKaksmulorMaterial(getCachedKaksmulorTextures(seed, 'butter'));
+      disposables.push(darkMat, butterMat);
+      add(createKaksmulorGeometry(seed * 179 + 27, true), darkMat, [-0.16, 0.08, 0.05], [0.32, -0.38, 0.22], 0.44);
+      add(createKaksmulorGeometry(seed * 179 + 61, true), butterMat, [0.20, -0.10, 0.02], [-0.26, 0.48, -0.24], 0.38);
+      add(createKaksmulorGeometry(seed * 179 + 73, false), darkMat, [0.04, -0.28, 0.14], [0.46, 0.18, 0.40], 0.24);
+      break;
+    }
+  }
+
+  return {
+    object,
+    dispose() {
+      for (const d of disposables) d.dispose();
+    },
+  };
 }

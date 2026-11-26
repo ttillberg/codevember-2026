@@ -508,12 +508,14 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
         // Pre-query unrefracted depth to solid emerging fruits so porous slush bumps & refraction fade cleanly
         // to zero right where a berry breaks the surface (eliminates peppery speckle halos around emerging berries!)
+        // Checking bgCenter.a > 0.5 guarantees studio backdrop air pixels NEVER falsely match a shallow solid!
+        vec4 bgCenter = texture(uBgTex, clamp(screenUv, vec2(0.002), vec2(0.998)));
         float dFront = vCamDepth;
         float dBackRaw = texture(uBackIceZ, screenUv).r;
         float dBack = (dBackRaw < 50.0 && dBackRaw > dFront - 0.02) ? dBackRaw : (dFront + 0.36);
         float totalThickness = clamp(dBack - dFront, 0.03, 0.56);
         vec2 rawIntSample = texture(uInteriorZ, screenUv).rg;
-        bool rawHitsSolid = (rawIntSample.g > 0.5) && (rawIntSample.r < dBack + 0.06) && (rawIntSample.r >= dFront - 0.05);
+        bool rawHitsSolid = (bgCenter.a > 0.5) && (rawIntSample.g > 0.5) && (rawIntSample.r < dBack + 0.06) && (rawIntSample.r >= dFront - 0.05);
         float rawFrontDist = rawHitsSolid ? clamp(rawIntSample.r - dFront, 0.0, totalThickness) : totalThickness;
         float rawThinFade = rawHitsSolid ? smoothstep(0.010, 0.085, rawFrontDist) : 1.0;
 
@@ -553,7 +555,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec3 Nview = mat3(viewMatrix) * N;
         float edgeBend = mix(0.014, 0.042, pow(1.0 - N0dotV, 1.30)) * (1.0 - hangClear * 0.34);
         vec2 refrN = vec2(Nview.x * mix(1.0, 0.34, sideProfile * sideProfile), Nview.y * (1.0 - hangClear * 0.45));
-        vec2 baseOffset = (-refrN * edgeBend * (0.72 + totalThickness * 1.15) - filmSlope * (0.0085 * glazeWave)) * refrDepthScale * (1.0 - isMilkBase * 0.96);
+        vec2 baseOffset = (-refrN * edgeBend * (0.72 + totalThickness * 1.15) - filmSlope * (0.0085 * glazeWave)) * refrDepthScale * (1.0 - isMilkBase);
 
         float dispScale = 1.0 - isMilkBase;
         vec2 uvR = screenUv + baseOffset * mix(1.0, 0.94, dispScale);
@@ -561,8 +563,10 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec2 uvB = screenUv + baseOffset * mix(1.0, 1.07, dispScale);
 
         // Exact front ice thickness to solid embedded fruits & stick
-        vec2 interiorSample = texture(uInteriorZ, clamp(uvG, vec2(0.002), vec2(0.998))).rg;
-        bool hitsSolid = (interiorSample.g > 0.5) && (interiorSample.r < dBack + 0.06) && (interiorSample.r >= dFront - 0.04);
+        vec2 clampedUvG = clamp(uvG, vec2(0.002), vec2(0.998));
+        vec2 interiorSample = texture(uInteriorZ, clampedUvG).rg;
+        bool refrBgIsSolid = (isMilkBase > 0.5) ? (bgCenter.a > 0.5) : (texture(uBgTex, clampedUvG).a > 0.5);
+        bool hitsSolid = refrBgIsSolid && (interiorSample.g > 0.5) && (interiorSample.r < dBack + 0.06) && (interiorSample.r >= dFront - 0.04);
         float frontIceDist = hitsSolid ? clamp(interiorSample.r - dFront, 0.0, totalThickness) : totalThickness;
         if (rawHitsSolid) {
           hitsSolid = true;
@@ -610,7 +614,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           1.0
         );
 
-        vec2 roughJitter = vec2(innerGranuleFine - 0.5, innerGranuleMicro - 0.5) * (0.0072 * freezeRoughZone * (1.0 - glazeCover * 0.45) * thinIceFade * (1.0 - isMilkBase * 0.92));
+        vec2 roughJitter = vec2(innerGranuleFine - 0.5, innerGranuleMicro - 0.5) * (0.0072 * freezeRoughZone * (1.0 - glazeCover * 0.45) * thinIceFade * (1.0 - isMilkBase));
         uvR += roughJitter;
         uvG += roughJitter;
         uvB += roughJitter;
@@ -937,26 +941,73 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           float rimSss = pow(1.0 - N0dotV, 3.0) * (0.14 + 0.14 * lightboxCore);
           creamBase += flvCreamSss * rimSss * (0.24 - 0.12 * isMilkBase);
 
-          // Pressed-in fruit chunks right against the outer 1-3mm mold skin blush softly through the opaque milk veil
-          // using non-dispersed blurred sampling (zero chromatic orange fringe!), while buried fruit & stick stay 100% hidden!
-          if (hitsSolid) {
-            float peekFalloff = mix(26.0, 38.0, isMilkBase);
-            float peekMaxD = mix(0.105, 0.066, isMilkBase);
-            float creamPeek = exp(-frontIceDist * peekFalloff) * revStep(peekMaxD, 0.0, frontIceDist);
-            float veilDepth = smoothstep(0.002, peekMaxD, frontIceDist);
-            vec3 peekSrc = isMilkBase > 0.01
-              ? sampleFrostedBg(screenUv, clamp(0.14 + veilDepth * 0.72, 0.0, 0.92))
-              : bgCol;
-            vec3 peekTint = mix(peekSrc, mix(peekSrc * 0.68 + swirledAlb * 0.32, creamBase, 0.42), veilDepth * (0.45 + 0.42 * isMilkBase));
+          // Pressed-in toppings right against the outer 1-3mm mold skin integrate organically into opaque milk
+          // with ZERO bright white studio-backdrop border or halo: any gather tap outside the topping silhouette
+          // (s.a <= 0.5) substitutes creamBase (the actual flavored milk) instead of white lightbox air!
+          if (isMilkBase > 0.01) {
+            float peekMaxD = 0.066;
+            float nearSolidAlpha = max(bgCenter.a, texture(uBgBlur1, clamp(screenUv, vec2(0.002), vec2(0.998))).a);
+            if (nearSolidAlpha > 0.008) {
+              float milkSolidDist = (rawHitsSolid && bgCenter.a > 0.5) ? rawFrontDist : 99.0;
+              if (milkSolidDist >= peekMaxD) {
+                vec2 pStep = (2.4 * clamp(uResolution.y / 1000.0, 0.75, 2.0)) / uResolution;
+                vec2 z0 = texture(uInteriorZ, clamp(screenUv + vec2( pStep.x, 0.0), vec2(0.002), vec2(0.998))).rg;
+                vec2 z1 = texture(uInteriorZ, clamp(screenUv + vec2(-pStep.x, 0.0), vec2(0.002), vec2(0.998))).rg;
+                vec2 z2 = texture(uInteriorZ, clamp(screenUv + vec2(0.0,  pStep.y), vec2(0.002), vec2(0.998))).rg;
+                vec2 z3 = texture(uInteriorZ, clamp(screenUv + vec2(0.0, -pStep.y), vec2(0.002), vec2(0.998))).rg;
+                if (z0.g > 0.5 && z0.r >= dFront - 0.05 && z0.r < dBack + 0.06) milkSolidDist = min(milkSolidDist, max(0.0, z0.r - dFront));
+                if (z1.g > 0.5 && z1.r >= dFront - 0.05 && z1.r < dBack + 0.06) milkSolidDist = min(milkSolidDist, max(0.0, z1.r - dFront));
+                if (z2.g > 0.5 && z2.r >= dFront - 0.05 && z2.r < dBack + 0.06) milkSolidDist = min(milkSolidDist, max(0.0, z2.r - dFront));
+                if (z3.g > 0.5 && z3.r >= dFront - 0.05 && z3.r < dBack + 0.06) milkSolidDist = min(milkSolidDist, max(0.0, z3.r - dFront));
+              }
+
+              if (milkSolidDist < peekMaxD) {
+                float creamPeek = exp(-milkSolidDist * 38.0) * revStep(peekMaxD, 0.0, milkSolidDist);
+                float veilDepth = smoothstep(0.002, peekMaxD, milkSolidDist);
+                float pxScale = clamp(uResolution.y / 1000.0, 0.75, 2.0);
+                vec2 radUv = (mix(0.65, 3.6, veilDepth) * pxScale) / uResolution;
+                vec2 dRad = radUv * 0.7071;
+
+                vec3 c0 = bgCenter.a > 0.5 ? bgCenter.rgb : creamBase;
+                vec4 t1 = texture(uBgTex, clamp(screenUv + vec2( radUv.x, 0.0), vec2(0.002), vec2(0.998)));
+                vec4 t2 = texture(uBgTex, clamp(screenUv + vec2(-radUv.x, 0.0), vec2(0.002), vec2(0.998)));
+                vec4 t3 = texture(uBgTex, clamp(screenUv + vec2(0.0,  radUv.y), vec2(0.002), vec2(0.998)));
+                vec4 t4 = texture(uBgTex, clamp(screenUv + vec2(0.0, -radUv.y), vec2(0.002), vec2(0.998)));
+                vec4 t5 = texture(uBgTex, clamp(screenUv + vec2( dRad.x,  dRad.y), vec2(0.002), vec2(0.998)));
+                vec4 t6 = texture(uBgTex, clamp(screenUv + vec2(-dRad.x,  dRad.y), vec2(0.002), vec2(0.998)));
+                vec4 t7 = texture(uBgTex, clamp(screenUv + vec2( dRad.x, -dRad.y), vec2(0.002), vec2(0.998)));
+                vec4 t8 = texture(uBgTex, clamp(screenUv + vec2(-dRad.x, -dRad.y), vec2(0.002), vec2(0.998)));
+
+                vec3 s1 = t1.a > 0.5 ? t1.rgb : creamBase;
+                vec3 s2 = t2.a > 0.5 ? t2.rgb : creamBase;
+                vec3 s3 = t3.a > 0.5 ? t3.rgb : creamBase;
+                vec3 s4 = t4.a > 0.5 ? t4.rgb : creamBase;
+                vec3 s5 = t5.a > 0.5 ? t5.rgb : creamBase;
+                vec3 s6 = t6.a > 0.5 ? t6.rgb : creamBase;
+                vec3 s7 = t7.a > 0.5 ? t7.rgb : creamBase;
+                vec3 s8 = t8.a > 0.5 ? t8.rgb : creamBase;
+
+                vec3 gathered = (c0 * 2.0 + s1 + s2 + s3 + s4 + (s5 + s6 + s7 + s8) * 0.75) / 9.0;
+                vec3 peekSrc = mix(c0, gathered, smoothstep(0.0, 0.22, veilDepth));
+                vec3 peekTint = mix(peekSrc, mix(peekSrc * 0.70 + swirledAlb * 0.30, creamBase, 0.40), veilDepth * 0.85);
+                float emergeMix = clamp(creamPeek * mix(1.0, 0.94, veilDepth), 0.0, 1.0);
+                creamBase = mix(creamBase, peekTint, emergeMix);
+              }
+            }
+          } else if (hitsSolid) {
+            float creamPeek = exp(-frontIceDist * 26.0) * revStep(0.105, 0.0, frontIceDist);
+            float veilDepth = smoothstep(0.002, 0.105, frontIceDist);
+            vec3 peekTint = mix(bgCol, mix(bgCol * 0.68 + swirledAlb * 0.32, creamBase, 0.42), veilDepth * 0.45);
             creamBase = mix(creamBase, peekTint, clamp(creamPeek * 0.92, 0.0, 0.96));
           }
 
           // Melted wet condensed milk deepens & turns lush velvety satin where liquid glaze flows
           creamBase *= mix(vec3(1.0), vec3(0.90, 0.86, 0.84), glazeCover * (0.24 + 0.16 * isMilkBase));
 
-          // True 100% opaque coverage on condensed-milk base (zero background lightbox bleed-through!)
-          float milkEdgeFade = mix(thinIceFade, smoothstep(0.001, 0.022, frontIceDist), isMilkBase);
-          iceBody = mix(iceBody, creamBase, clamp(uOpacity * milkEdgeFade, 0.0, mix(0.96, 1.0, isMilkBase)));
+          // True 100% opaque coverage on condensed-milk base: creamBase already converges smoothly
+          // to uncovered toppings as depth -> 0, so NEVER fall back to translucent water iceBody!
+          float milkCoverage = mix(uOpacity * thinIceFade, uOpacity, isMilkBase);
+          iceBody = mix(iceBody, creamBase, clamp(milkCoverage, 0.0, mix(0.96, 1.0, isMilkBase)));
         }
 
         // === GLOSSY VISCOUS MELT-SYRUP GLAZE LAYERING & BOTTOM PUDDLE ABSORPTION ===
@@ -1165,7 +1216,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         // strictly where uncovered berries/strawberries physically emerge from melting ice (zero effect on
         // mid-air falling fruits or studio silhouettes!):
         //   0.00 = backdrop air, 0.25 = open ice, 0.55 = contact-zone ice hugging an emerging fruit, 1.00 = solid
-        float isContactIce = (hitsSolid && frontIceDist < 0.15) ? 0.55 : 0.25;
+        float isContactIce = ((hitsSolid && frontIceDist < 0.15) || texture(uBgBlur1, clamp(screenUv, vec2(0.002), vec2(0.998))).a > 0.02) ? 0.55 : 0.25;
         fragColor = vec4(color, isContactIce);
       }
     `,

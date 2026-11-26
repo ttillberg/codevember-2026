@@ -17,7 +17,8 @@
     <link rel="icon" href="data:," />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" /></noscript>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body class="loading">
@@ -29,128 +30,35 @@
 
     <nav id="preset-dock" class="preset-dock" aria-label="Popsicle presets"></nav>
 
-    <div id="dev-dock" class="dev-dock" hidden>
-      <div class="dev-dock-btns">
-        <button id="btn-toppings" class="pill-btn" type="button" title="Debug toppings inside &amp; outside ice (T)" aria-label="Debug toppings" aria-expanded="false" aria-controls="toppings-panel">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="9.5" cy="11" r="2.2"></circle>
-            <circle cx="14.5" cy="11" r="2.2"></circle>
-            <circle cx="12" cy="7.5" r="2.1"></circle>
-            <circle cx="10.2" cy="15.2" r="2.1"></circle>
-            <circle cx="13.8" cy="15.2" r="2.1"></circle>
-            <circle cx="12" cy="18.2" r="1.9"></circle>
-          </svg>
-          <span>Toppings</span>
-        </button>
-        <button id="btn-customize" class="pill-btn" type="button" title="Customize popsicle (C)" aria-label="Customize popsicle" aria-expanded="false" aria-controls="customize-panel">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M7 10a5 5 0 0 1 10 0v6a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 16v-6Z"></path>
-            <path d="M12 17.5V22"></path>
-            <path d="M10.2 9.5v4.5"></path>
-            <path d="M13.8 9.5v4.5"></path>
-          </svg>
-          <span>Customize</span>
-        </button>
-        <button id="btn-settings" class="icon-btn" type="button" title="Tune parameters" aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-          </svg>
-        </button>
+    <!-- Pure boxless floating Customize objects: Left top (2 base cubes), Left bottom (9 uniform 3D juice droplets, max 2), Right (6 balanced 3D toppings); mobile switches one clean row at a time -->
+    <div id="customize-studio" class="customize-studio" data-mobile-tab="taste" hidden aria-label="Customize popsicle">
+      <div class="cust-wing cust-wing-left">
+        <div class="base-float-field" data-cust-group="base" role="group" aria-label="Base material">
+          <button type="button" class="float-obj base-cube-btn" data-base="water" data-tip="Water" aria-label="Water ice" aria-pressed="true" style="--fx:44px;--fy:8px;--size:76px;--rot:-4deg;--float-delay:-0.4s;--float-dur:5.4s">
+            <svg class="pen-ring" viewBox="0 0 116 102" fill="none" aria-hidden="true">
+              <path pathLength="1" d="M22 20 C44 8, 86 11, 100 31 C111 49, 103 80, 79 90 C50 100, 17 92, 11 68 C5 44, 21 19, 49 14" />
+            </svg>
+            <span class="obj-stage"><img id="img-base-water" alt="" draggable="false" /></span>
+          </button>
+          <button type="button" class="float-obj base-cube-btn" data-base="coconut" data-tip="Concentrated Milk" aria-label="Concentrated Milk" aria-pressed="false" style="--fx:160px;--fy:12px;--size:76px;--rot:5deg;--float-delay:-2.3s;--float-dur:6.1s">
+            <svg class="pen-ring" viewBox="0 0 116 102" fill="none" aria-hidden="true">
+              <path pathLength="1" d="M89 19 C65 7, 25 13, 13 35 C3 56, 14 85, 42 92 C72 99, 103 85, 107 61 C110 37, 92 16, 65 13" />
+            </svg>
+            <span class="obj-stage"><img id="img-base-coconut" alt="" draggable="false" /></span>
+          </button>
+        </div>
+
+        <div id="cust-flavors" class="taste-float-field" data-cust-group="taste" role="group" aria-label="Tastes (max 2)"></div>
       </div>
-      <div id="toppings-panel" class="toppings-panel" hidden>
-        <div class="cust-head">
-          <b>Topping Debug</b>
-          <div class="cust-actions">
-            <button id="btn-top-reset" class="mini-btn" type="button" title="Reset debug view">Reset</button>
-          </div>
-        </div>
 
-        <div class="cust-section">
-          <div class="cust-label"><span>Stage</span><span id="top-stage-note" class="cust-hint">Inside &amp; outside ice</span></div>
-          <div class="seg-toggle seg-4" role="group" aria-label="Topping debug stage">
-            <button type="button" class="seg-btn" data-tmode="outside" aria-pressed="false">Outside</button>
-            <button type="button" class="seg-btn" data-tmode="both" aria-pressed="false">In + Out</button>
-            <button type="button" class="seg-btn" data-tmode="inside" aria-pressed="false">Inside</button>
-            <button type="button" class="seg-btn" data-tmode="off" aria-pressed="true">Off</button>
-          </div>
-        </div>
-
-        <div class="cust-section">
-          <div class="cust-label"><span>Topping</span><span id="top-filter-note" class="cust-hint">All 6</span></div>
-          <div id="top-filter-chips" class="chip-grid" role="group" aria-label="Topping filter"></div>
-        </div>
-
-        <div class="cust-section">
-          <div class="top-checks">
-            <label class="top-check"><input id="chk-air-rasp" type="checkbox" /><span>Air Raspberry</span></label>
-            <label class="top-check"><input id="chk-top-spin" type="checkbox" /><span>Slow Spin</span></label>
-          </div>
-          <label class="row"><span>Light</span><input id="sl-top-light" type="range" min="-180" max="180" step="2" value="-112" /><output id="val-top-light">-112°</output></label>
-          <label class="row"><span>Glow</span><input id="sl-top-glow" type="range" min="0.3" max="2.8" step="0.05" value="1.45" /><output id="val-top-glow">1.45×</output></label>
-          <label class="row"><span>Melt</span><input id="sl-top-melt" type="range" min="0" max="0.85" step="0.01" value="0.04" /><output id="val-top-melt">0.04</output></label>
-        </div>
+      <div class="cust-wing cust-wing-right">
+        <div id="cust-toppings" class="topping-float-field" data-cust-group="toppings" role="group" aria-label="Toppings"></div>
       </div>
-      <div id="customize-panel" class="customize-panel" hidden>
-        <div class="cust-head">
-          <b>Customize</b>
-          <div class="cust-actions">
-            <button id="btn-cust-random" class="mini-btn" type="button" title="Randomize combination">Surprise</button>
-            <button id="btn-cust-reset" class="mini-btn" type="button" title="Restore classic berry mix">Reset</button>
-          </div>
-        </div>
 
-        <div class="cust-section">
-          <div class="cust-label"><span>Base</span><span id="cust-base-note" class="cust-hint">Translucent ice</span></div>
-          <div class="seg-toggle" role="group" aria-label="Popsicle base">
-            <button type="button" class="seg-btn" data-base="water" aria-pressed="true">Water</button>
-            <button type="button" class="seg-btn" data-base="coconut" aria-pressed="false">Milk</button>
-          </div>
-        </div>
-
-        <div class="cust-section">
-          <div class="cust-label"><span>Taste</span><span id="cust-flavor-note" class="cust-hint">1 / 2 max</span></div>
-          <div id="cust-flavors" class="chip-grid" role="group" aria-label="Basic tastes (max 2)"></div>
-        </div>
-
-        <div class="cust-section">
-          <div class="cust-label"><span>Toppings</span><span id="cust-topping-note" class="cust-hint">2 selected</span></div>
-          <div id="cust-toppings" class="chip-grid" role="group" aria-label="Toppings"></div>
-        </div>
-      </div>
-      <div id="settings-panel" class="settings-panel" hidden>
-        <div class="settings-head">
-          <b>Settings</b>
-          <div class="settings-actions">
-            <button id="btn-settings-copy" class="mini-btn" type="button" title="Copy current settings as JSON">Copy</button>
-            <button id="btn-settings-reset" class="mini-btn" type="button" title="Clear saved settings and restore factory defaults">Factory Reset</button>
-          </div>
-        </div>
-        <label class="row"><span>Melt</span><input id="sl-melt" type="range" min="0" max="1" step="0.005" value="0.035" /><output id="val-melt">0.04</output></label>
-        <label class="row"><span>Speed</span><input id="sl-speed" type="range" min="0.2" max="6" step="0.1" value="1" /><output id="val-speed">1.0×</output></label>
-        <label class="row"><span>Turn</span><input id="sl-turntable" type="range" min="0" max="1" step="0.05" value="0" /><output id="val-turntable">Off</output></label>
-        <label class="row"><span>Frost</span><input id="sl-frost" type="range" min="0.1" max="1" step="0.02" value="0.80" /><output id="val-frost">0.80</output></label>
-        <label class="row"><span>Bubbles</span><input id="sl-bubbles" type="range" min="0" max="1" step="0.05" value="0.55" /><output id="val-bubbles">0.55</output></label>
-        <label class="row row-select"><span>Drops</span><select id="sel-drops"><option value="minimal">Subtle Sweat (Natural)</option><option value="off" selected>Glaze &amp; Pools Only</option><option value="full">Heavy Drops</option></select></label>
-        <label class="row row-select"><span>On Fall</span><select id="sel-fall"><option value="pause">Pause Melt</option><option value="slow">Slow-Mo</option><option value="off" selected>Off</option></select></label>
-        <details id="drop-debug" class="drop-debug" open>
-          <summary>
-            <span>Drop Debug</span>
-            <button id="btn-drop-reset" class="mini-btn" type="button" title="Reset drop debug defaults">Reset</button>
-          </summary>
-          <div class="drop-debug-body">
-            <label class="row"><span>Teardrop</span><input id="sl-drop-sag" type="range" min="0" max="1.6" step="0.02" value="0.54" /><output id="val-drop-sag">0.54</output></label>
-            <label class="row"><span>Stretch</span><input id="sl-drop-stretch" type="range" min="0.85" max="1.8" step="0.02" value="1.51" /><output id="val-drop-stretch">1.51</output></label>
-            <label class="row"><span>Edge Blur</span><input id="sl-drop-blur" type="range" min="0" max="1.5" step="0.02" value="1.20" /><output id="val-drop-blur">1.20</output></label>
-            <label class="row"><span>Shadow</span><input id="sl-drop-shadow" type="range" min="0" max="1.5" step="0.02" value="0.44" /><output id="val-drop-shadow">0.44</output></label>
-            <label class="row"><span>Shd Blur</span><input id="sl-drop-shblur" type="range" min="0.2" max="2.0" step="0.05" value="1.05" /><output id="val-drop-shblur">1.05</output></label>
-            <label class="row"><span>Rim Dark</span><input id="sl-drop-rim" type="range" min="0" max="1.5" step="0.02" value="0.48" /><output id="val-drop-rim">0.48</output></label>
-            <label class="row"><span>Size</span><input id="sl-drop-size" type="range" min="0.5" max="1.8" step="0.02" value="1.00" /><output id="val-drop-size">1.00</output></label>
-            <label class="row"><span>Bot Pool</span><input id="sl-drop-pool" type="range" min="0" max="2.0" step="0.05" value="1.05" /><output id="val-drop-pool">1.05</output></label>
-            <label class="row"><span>Bot Drops</span><input id="sl-drop-botcount" type="range" min="0" max="80" step="1" value="10" /><output id="val-drop-botcount">10</output></label>
-            <label class="row"><span>Drip Rate</span><input id="sl-drop-drip" type="range" min="0" max="2.0" step="0.05" value="0.76" /><output id="val-drop-drip">0.76</output></label>
-          </div>
-        </details>
+      <div id="cust-mobile-tabs" class="cust-mobile-tabs" role="tablist" aria-label="Customize sections">
+        <button type="button" class="cust-tab-btn" role="tab" data-tab="base" aria-selected="false">Base</button>
+        <button type="button" class="cust-tab-btn" role="tab" data-tab="taste" aria-selected="true">Taste</button>
+        <button type="button" class="cust-tab-btn" role="tab" data-tab="toppings" aria-selected="false">Toppings</button>
       </div>
     </div>
 
