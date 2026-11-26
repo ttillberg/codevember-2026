@@ -671,17 +671,15 @@ function syncUI(): void {
   const houseName = rig.net.spec.label;
   const prefix = generation > 1 ? `Layer ${generation} · ${houseName} · ` : '';
 
+  btnAction.textContent = 'Fold';
   if (!allTargetFolded) {
-    btnAction.textContent = 'Fold';
     const hoveredDef = hoveredPanel ? rig.net.panelMap.get(hoveredPanel) : null;
     statusEl.textContent = hoveredDef
       ? `${prefix}Fold ${hoveredDef.label.toLowerCase()}`
       : `${prefix}Click Fold or drag any flap`;
   } else if (!settledFolded) {
-    btnAction.textContent = 'Folding';
     statusEl.textContent = `${prefix}Folding`;
   } else {
-    btnAction.textContent = 'Project';
     statusEl.textContent = `${prefix}Folded`;
   }
 

@@ -205,10 +205,10 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
   // - `inside` (top face when flat): pure cotton white -> melts seamlessly into the white studio sheet & carries 1:1 projections!
   // - `outside` (bottom face when flat -> exterior walls & roof when folded!): rich matte charcoal-black kuro-washi!
   const outside = new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#28282b'),
+    color: new THREE.Color('#9bb7cc'),
     bumpMap: tex.bumpMap,
-    bumpScale: 0.009,
-    roughness: 0.85,
+    bumpScale: 0.008,
+    roughness: 0.88,
     metalness: 0.0,
   });
 

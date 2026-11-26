@@ -88,18 +88,18 @@ export interface HouseNetSpec {
 }
 
 /**
- * Curated matte Japanese/Nordic architectural paper palette (same serene gallery theme):
- * Sumi black -> Indigo ink -> Brick terracotta -> Deep spruce -> Raw ochre -> Basalt taupe -> Ink plum -> Slate teal
+ * Curated matte Japanese/Nordic pastel architectural paper palette (Takeo / Colorplan cotton stock):
+ * Powder blue -> Dusty rose -> Sage celadon -> Butter ochre -> Misty lilac -> Apricot peach -> Seafoam -> Dove stone
  */
 export const ARCHITECTURAL_PAPER_PALETTE: readonly string[] = [
-  '#28282b', // 1. Sumi black
-  '#263547', // 2. Indigo ink
-  '#6e372d', // 3. Brick terracotta
-  '#2f4438', // 4. Deep spruce
-  '#8c6a3e', // 5. Raw ochre
-  '#4c4843', // 6. Basalt taupe
-  '#492f3e', // 7. Ink plum
-  '#2d4b52', // 8. Slate teal
+  '#9bb7cc', // 1. Powder blue
+  '#d8a49c', // 2. Dusty rose
+  '#9bb69f', // 3. Sage celadon
+  '#dcc08a', // 4. Butter ochre
+  '#baa6c4', // 5. Misty lilac
+  '#dbb094', // 6. Apricot peach
+  '#93b8b4', // 7. Seafoam slate
+  '#bbb4a7', // 8. Dove stone
 ];
 
 export interface PanelNetDef {
