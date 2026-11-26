@@ -1,9 +1,20 @@
 import * as THREE from 'three';
-import { R_FLOOR, R_PIPE_FLOOR, R_WALL, type LevelConfig, type SphereGrid } from './maze';
+import {
+  R_BALL_CENTER,
+  R_BALL_PIPE,
+  R_FLOOR,
+  R_PIPE_FLOOR,
+  R_SHELL,
+  R_WALL,
+  type LevelConfig,
+  type SphereGrid,
+  type WallSlot,
+} from './maze';
 import type { BallLayer, ReadyPortal } from './physics';
 
 export interface TelemetryFrameState {
   time: number;
+  elapsedSec: number;
   camera: THREE.PerspectiveCamera;
   sphereRoot: THREE.Object3D;
   grid: SphereGrid;
@@ -42,6 +53,9 @@ interface LabelRect {
 
 const FONT_TITLE = '600 10.5px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
 const FONT_SUB = '500 9px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
+const FONT_MICRO = '500 7.5px "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace';
+// Matches the physical Ø120MM stamp on the polycarbonate outer shell (radius = 60mm)
+const MM_PER_UNIT = 60 / R_SHELL;
 
 const COLOR_INK = '#1c1c1c';
 const COLOR_MUTED = '#5a5650';
@@ -59,6 +73,13 @@ function snap(v: number): number {
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+function fmtTimer(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 }
 
 /**
@@ -85,8 +106,212 @@ export class TelemetryOverlay {
   private readonly gravArcAxis = new THREE.Vector3();
   private readonly gravArcQuat = new THREE.Quaternion();
 
+  // Cached grid adjacency & live A* shortest path distance to active next target
+  private cachedGrid: SphereGrid | null = null;
+  private cachedAdj: WallSlot[][] = [];
+  private aStarCacheKey = '';
+  private aStarCachedMm = 0;
+  private aStarFirstStepDir: THREE.Vector3 | null = null;
+  private aStarTailMm = 0;
+
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
+  }
+
+  private ensureAdjacency(grid: SphereGrid) {
+    if (this.cachedGrid === grid) return;
+    this.cachedGrid = grid;
+    this.cachedAdj = Array.from({ length: grid.cells.length }, () => []);
+    for (const w of grid.walls) {
+      this.cachedAdj[w.cellA].push(w);
+      this.cachedAdj[w.cellB].push(w);
+    }
+  }
+
+  /**
+   * Computes exact A* shortest maze path distance (in mm on the Ø120MM sphere) from the ball's
+   * current cell/pipe node to the active next target across both layers and toggle states.
+   */
+  private computeAStarDistanceMm(st: TelemetryFrameState): number {
+    const { grid, level, ballDir, ballLayer, nextCpIdx, toggleMask } = st;
+    if (nextCpIdx < 0 || nextCpIdx >= level.checkpoints.length) return 0;
+    const targetCp = level.checkpoints[nextCpIdx];
+    this.ensureAdjacency(grid);
+
+    const isPipe = ballLayer === 'pipe';
+    let curLoc = 0;
+    let bestDot = -2;
+    if (isPipe) {
+      for (let i = 0; i < grid.pipeNodes.length; i++) {
+        const d = ballDir.dot(grid.pipeNodes[i].dir);
+        if (d > bestDot) {
+          bestDot = d;
+          curLoc = i;
+        }
+      }
+    } else {
+      for (let i = 0; i < grid.cells.length; i++) {
+        const d = ballDir.dot(grid.cells[i].centerDir);
+        if (d > bestDot) {
+          bestDot = d;
+          curLoc = i;
+        }
+      }
+    }
+
+    const startLayer = isPipe ? 1 : 0;
+    const goalLayer = targetCp.layer === 'pipe' ? 1 : 0;
+    const goalLoc = goalLayer === 1 ? targetCp.pipeNodeId : targetCp.cellId;
+
+    // Already in the target cell/node: exact direct arc distance
+    if (startLayer === goalLayer && curLoc === goalLoc) {
+      const r = isPipe ? R_BALL_PIPE : R_BALL_CENTER;
+      return Math.acos(Math.max(-1, Math.min(1, ballDir.dot(targetCp.dir)))) * r * MM_PER_UNIT;
+    }
+
+    const cacheKey = `${level.level}:${startLayer}:${curLoc}:${nextCpIdx}:${toggleMask}`;
+    if (cacheKey !== this.aStarCacheKey) {
+      this.aStarCacheKey = cacheKey;
+      const { cells, walls, shutters, pipeNodes, pipeEdges } = grid;
+      const maxMask = 1 << level.toggles.length;
+      const locStride = Math.max(cells.length, pipeNodes.length);
+      const encode = (layer: number, loc: number, mask: number) => (mask * 2 + layer) * locStride + loc;
+
+      const cellToToggle = new Int8Array(cells.length).fill(-1);
+      for (const tg of level.toggles) cellToToggle[tg.cellId] = tg.id;
+
+      const wallsByMask: boolean[][] = [];
+      const shuttersByMask: boolean[][] = [];
+      for (let m = 0; m < maxMask; m++) {
+        const wArr = level.raisedWalls.slice();
+        const sArr = level.openShutters.slice();
+        for (const tg of level.toggles) {
+          if ((m & (1 << tg.id)) !== 0) {
+            for (const wid of tg.wallIds) if (!walls[wid].locked) wArr[wid] = !wArr[wid];
+            for (const sid of tg.shutterIds) sArr[sid] = !sArr[sid];
+          }
+        }
+        wallsByMask.push(wArr);
+        shuttersByMask.push(sArr);
+      }
+
+      const dirOf = (layer: number, loc: number) => (layer === 1 ? pipeNodes[loc].dir : cells[loc].centerDir);
+      const heuristic = (layer: number, loc: number) => {
+        const d = Math.max(-1, Math.min(1, dirOf(layer, loc).dot(targetCp.dir)));
+        return Math.acos(d) * R_BALL_PIPE * MM_PER_UNIT;
+      };
+
+      const startKey = encode(startLayer, curLoc, toggleMask);
+      const gScore = new Map<number, number>([[startKey, 0]]);
+      const parentMap = new Map<number, { prev: number; layer: number; loc: number }>();
+      // Lightweight binary-scan open set (graph has ~100–500 reachable nodes, runs in <0.05ms)
+      const open: { key: number; layer: number; loc: number; mask: number; g: number; f: number }[] = [
+        { key: startKey, layer: startLayer, loc: curLoc, mask: toggleMask, g: 0, f: heuristic(startLayer, curLoc) },
+      ];
+      const closed = new Set<number>();
+
+      let foundKey = -1;
+      let foundDist = -1;
+
+      while (open.length > 0) {
+        let bestIdx = 0;
+        for (let i = 1; i < open.length; i++) {
+          if (open[i].f < open[bestIdx].f) bestIdx = i;
+        }
+        const cur = open[bestIdx];
+        open[bestIdx] = open[open.length - 1];
+        open.pop();
+
+        if (closed.has(cur.key)) continue;
+        closed.add(cur.key);
+
+        if (cur.layer === goalLayer && cur.loc === goalLoc) {
+          foundKey = cur.key;
+          foundDist = cur.g;
+          break;
+        }
+
+        const relax = (nLayer: number, nLoc: number, nMask: number, stepCost: number) => {
+          const nk = encode(nLayer, nLoc, nMask);
+          if (closed.has(nk)) return;
+          const ng = cur.g + stepCost;
+          const prevG = gScore.get(nk);
+          if (prevG === undefined || ng < prevG) {
+            gScore.set(nk, ng);
+            parentMap.set(nk, { prev: cur.key, layer: nLayer, loc: nLoc });
+            open.push({ key: nk, layer: nLayer, loc: nLoc, mask: nMask, g: ng, f: ng + heuristic(nLayer, nLoc) });
+          }
+        };
+
+        if (cur.layer === 0) {
+          const wState = wallsByMask[cur.mask];
+          const curDir = cells[cur.loc].centerDir;
+          const list = this.cachedAdj[cur.loc];
+          for (let i = 0; i < list.length; i++) {
+            const w = list[i];
+            if (wState[w.id]) continue;
+            const nxt = w.cellA === cur.loc ? w.cellB : w.cellA;
+            const arcMm = Math.acos(Math.max(-1, Math.min(1, curDir.dot(cells[nxt].centerDir)))) * R_BALL_CENTER * MM_PER_UNIT;
+            relax(0, nxt, cur.mask, arcMm);
+            const tgIdx = cellToToggle[nxt];
+            if (tgIdx >= 0) {
+              relax(0, nxt, cur.mask ^ (1 << tgIdx), arcMm);
+            }
+          }
+          const shId = cells[cur.loc].shutterId;
+          if (shId >= 0 && shuttersByMask[cur.mask][shId]) {
+            relax(1, shutters[shId].pipeNodeId, cur.mask, (R_BALL_CENTER - R_BALL_PIPE) * MM_PER_UNIT);
+          }
+        } else {
+          const pNode = pipeNodes[cur.loc];
+          for (let i = 0; i < pNode.edgeIds.length; i++) {
+            const e = pipeEdges[pNode.edgeIds[i]];
+            const nxt = e.nodeA === cur.loc ? e.nodeB : e.nodeA;
+            relax(1, nxt, cur.mask, e.arcLen * R_BALL_PIPE * MM_PER_UNIT);
+          }
+          if (pNode.shutterId >= 0 && shuttersByMask[cur.mask][pNode.shutterId]) {
+            relax(0, shutters[pNode.shutterId].cellId, cur.mask, (R_BALL_CENTER - R_BALL_PIPE) * MM_PER_UNIT);
+          }
+        }
+      }
+
+      if (foundKey >= 0) {
+        this.aStarCachedMm = foundDist;
+        // Trace back to first step from startKey so live sub-cell rolling updates smoothly!
+        let trace = foundKey;
+        let firstNode: { layer: number; loc: number } | null = null;
+        while (trace !== startKey) {
+          const p = parentMap.get(trace);
+          if (!p) break;
+          if (p.prev === startKey) {
+            firstNode = { layer: p.layer, loc: p.loc };
+            break;
+          }
+          trace = p.prev;
+        }
+        if (firstNode && firstNode.layer === startLayer) {
+          this.aStarFirstStepDir = dirOf(firstNode.layer, firstNode.loc);
+          const firstKey = encode(firstNode.layer, firstNode.loc, toggleMask);
+          const firstStepG = gScore.get(firstKey) ?? 0;
+          this.aStarTailMm = Math.max(0, foundDist - firstStepG);
+        } else {
+          this.aStarFirstStepDir = null;
+          this.aStarTailMm = foundDist;
+        }
+      } else {
+        this.aStarCachedMm = -1;
+        this.aStarFirstStepDir = null;
+        this.aStarTailMm = 0;
+      }
+    }
+
+    if (this.aStarCachedMm < 0) return -1;
+    if (this.aStarFirstStepDir) {
+      const r = isPipe ? R_BALL_PIPE : R_BALL_CENTER;
+      const liveFirst = Math.acos(Math.max(-1, Math.min(1, ballDir.dot(this.aStarFirstStepDir)))) * r * MM_PER_UNIT;
+      return liveFirst + this.aStarTailMm;
+    }
+    return this.aStarCachedMm;
   }
 
   isEnabled(): boolean {
@@ -485,15 +710,196 @@ export class TelemetryOverlay {
     ctx.restore();
   }
 
+  /** Last computed projected sphere silhouette in CSS pixels */
+  readonly sphereScreen = { cx: 0, cy: 0, radius: 0 };
+
+  /**
+   * Draw precision flat GUI checkpoint & switch indicator dots along a thin orbital arc
+   * hugging the right contour of the 3D sphere (no pill container, no drop shadow).
+   */
+  private drawOrbitalLightsArc(st: TelemetryFrameState) {
+    const ctx = this.ctx;
+    const { level, camera, clearedMask, nextCpIdx, allCleared, toggleMask } = st;
+
+    // Exact projected screen center & pixel radius of the outer polycarbonate shell
+    this.ndc.copy(this.sphereCenter).project(camera);
+    const cx = (this.ndc.x + 1) * 0.5 * this.width;
+    const cy = (1 - this.ndc.y) * 0.5 * this.height;
+    const dist = camera.position.distanceTo(this.sphereCenter);
+    const fovRad = (camera.fov * Math.PI) / 180;
+    const sinA = Math.min(0.95, R_SHELL / Math.max(R_SHELL + 0.05, dist));
+    const tanA = sinA / Math.sqrt(1 - sinA * sinA);
+    const spherePxR = (tanA / Math.tan(fovRad * 0.5)) * (this.height * 0.5);
+
+    this.sphereScreen.cx = cx;
+    this.sphereScreen.cy = cy;
+    this.sphereScreen.radius = spherePxR;
+
+    const isCompact = this.width < 640;
+    const marginRight = isCompact ? 18 : 26;
+    const idealOffset = isCompact ? 16 : Math.max(20, Math.min(32, spherePxR * 0.068));
+    const maxArcR = Math.max(90, this.width - cx - marginRight);
+    const arcR = Math.min(spherePxR + idealOffset, maxArcR);
+
+    const cpCount = level.checkpoints.length;
+    const swCount = level.toggles.length;
+    const hasSw = swCount > 0;
+
+    // Compute arc positions (in radians around 3 o'clock, top -> bottom)
+    const dotStepPx = isCompact ? 18 : 21;
+    const sepGapPx = isCompact ? 12 : 14;
+    const dAng = dotStepPx / arcR;
+    const sepAng = sepGapPx / arcR;
+
+    const cpSpan = Math.max(0, cpCount - 1) * dAng;
+    const swSpan = hasSw ? Math.max(0, swCount - 1) * dAng : 0;
+    const totalSpan = cpSpan + (hasSw ? sepAng * 2 + swSpan : 0);
+    const startAng = -totalSpan * 0.5;
+    const endAng = totalSpan * 0.5;
+    const railPad = (isCompact ? 13 : 16) / arcR;
+
+    ctx.save();
+
+    // 1. Hairline precision instrument arc hugging the right limb of the sphere
+    ctx.strokeStyle = COLOR_INK;
+    ctx.globalAlpha = 0.2;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, arcR, startAng - railPad, endAng + railPad);
+    ctx.stroke();
+
+    // Tiny radial end-cap ticks at top & bottom of the orbital rail
+    const drawRadialTick = (ang: number, innerOff: number, outerOff: number, alpha: number) => {
+      const ca = Math.cos(ang);
+      const sa = Math.sin(ang);
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.moveTo(cx + ca * (arcR - innerOff), cy + sa * (arcR - innerOff));
+      ctx.lineTo(cx + ca * (arcR + outerOff), cy + sa * (arcR + outerOff));
+      ctx.stroke();
+    };
+    drawRadialTick(startAng - railPad, 3.5, 3.5, 0.28);
+    drawRadialTick(endAng + railPad, 3.5, 3.5, 0.28);
+
+    const dotR = isCompact ? 4.0 : 4.6;
+
+    // Helper to punch a clean studio backdrop gap in the rail behind hollow dots
+    const clearUnderDot = (x: number, y: number, r: number) => {
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(x, y, r + 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+
+    // 2. Checkpoint indicator dots along the arc
+    for (let i = 0; i < cpCount; i++) {
+      const cp = level.checkpoints[i];
+      const ang = startAng + i * dAng;
+      const x = cx + Math.cos(ang) * arcR;
+      const y = cy + Math.sin(ang) * arcR;
+
+      const cleared = !!clearedMask[i] || allCleared;
+      const isNext = !cleared && i === nextCpIdx;
+      const isPipe = cp.layer === 'pipe';
+
+      clearUnderDot(x, y, isNext ? dotR + 2.4 : dotR);
+
+      if (cleared) {
+        ctx.globalAlpha = 0.96;
+        ctx.fillStyle = '#24cc7e';
+        ctx.beginPath();
+        ctx.arc(x, y, dotR, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (isNext) {
+        const fillCol = isPipe ? '#24cfc0' : '#f58420';
+        // Crisp outer orbital selection ring (pure flat GUI, zero border on dot itself)
+        ctx.globalAlpha = 0.52;
+        ctx.strokeStyle = fillCol;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, dotR + 3.2, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = fillCol;
+        ctx.beginPath();
+        ctx.arc(x, y, dotR, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.globalAlpha = isPipe ? 0.62 : 0.36;
+        ctx.strokeStyle = isPipe ? '#12998c' : COLOR_INK;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(x, y, dotR - 0.3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // 3. Radial separator tick + Switch indicator dots (Red A / Blue B) along the lower portion of the arc
+    if (hasSw) {
+      const sepCenterAng = startAng + cpSpan + sepAng;
+      ctx.strokeStyle = COLOR_INK;
+      ctx.lineWidth = 1;
+      drawRadialTick(sepCenterAng, 5, 5, 0.32);
+
+      const swStartAng = sepCenterAng + sepAng;
+      for (let i = 0; i < swCount; i++) {
+        const tg = level.toggles[i];
+        const on = (toggleMask & (1 << tg.id)) !== 0;
+        const col = tg.colorId === 0 ? COLOR_RED : COLOR_BLUE;
+        const ang = swStartAng + i * dAng;
+        const x = cx + Math.cos(ang) * arcR;
+        const y = cy + Math.sin(ang) * arcR;
+
+        clearUnderDot(x, y, dotR);
+
+        ctx.beginPath();
+        if (on) {
+          ctx.arc(x, y, dotR, 0, Math.PI * 2);
+          ctx.globalAlpha = 0.96;
+          ctx.fillStyle = col;
+          ctx.fill();
+        } else {
+          ctx.arc(x, y, dotR - 0.2, 0, Math.PI * 2);
+          ctx.globalAlpha = 0.55;
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+        }
+      }
+    }
+
+    // 4. Subtle companion micro-arc tick hugging the lower-left limb beside LEVEL N / title (landscape/square only)
+    const leftAnchorAng = (138 * Math.PI) / 180;
+    const leftX = cx + Math.cos(leftAnchorAng) * arcR;
+    if (leftX > 185 && !isCompact) {
+      ctx.strokeStyle = COLOR_INK;
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, arcR, leftAnchorAng - 0.14, leftAnchorAng + 0.14);
+      ctx.stroke();
+      drawRadialTick(leftAnchorAng, 4, 7, 0.34);
+    }
+
+    ctx.restore();
+  }
+
   render(st: TelemetryFrameState) {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.width, this.height);
 
-    if (!this.enabled || st.inTransition) return;
-
     st.sphereRoot.updateMatrixWorld();
     this.sphereCenter.setFromMatrixPosition(st.sphereRoot.matrixWorld);
+
+    // Always draw the curved orbital progress/switch GUI arc hugging the globe (even if tracking HUD is toggled off)
+    this.drawOrbitalLightsArc(st);
+
+    if (!this.enabled || st.inTransition) return;
 
     const placed: LabelRect[] = [];
     const { grid, level, camera, sphereRoot, time } = st;
@@ -502,13 +908,23 @@ export class TelemetryOverlay {
     const ballP = this.projectLocal(st.ballDir, st.ballRadius, sphereRoot, camera);
 
     // =========================================================================
-    // 1. START / NORTH POLE 00:00
+    // 1. START / NORTH POLE MM:SS (live elapsed level timer)
     // =========================================================================
     const startP = this.projectLocal(NORTH_DIR, R_FLOOR + 0.012, sphereRoot, camera);
     if (startP.visible && startP.front > 0.14) {
       const a = this.depthAlpha(startP.front, 0.72, 0.0);
       this.drawNodeSquare(startP.x, startP.y, 5, COLOR_INK, a * 0.8);
-      this.drawCallout(startP.x, startP.y, 'START', 'NORTH POLE 00:00', COLOR_MUTED, a, placed, 'top', true);
+      this.drawCallout(
+        startP.x,
+        startP.y,
+        'START',
+        `NORTH POLE ${fmtTimer(st.elapsedSec)}`,
+        COLOR_MUTED,
+        a,
+        placed,
+        'top',
+        true,
+      );
     }
 
     // =========================================================================
@@ -523,11 +939,45 @@ export class TelemetryOverlay {
       const isPipe = nextCp.layer === 'pipe';
       const accent = nextCp.isFinish ? COLOR_MINT : isPipe ? COLOR_TEAL : COLOR_AMBER;
 
-      // Subtle tether from chrome ball -> active next target
+      // Subtle tether from chrome ball -> active next target + super-small geeky ABS & A* distance readout
       if (ballP.visible && p.visible) {
-        const distPx = Math.hypot(p.x - ballP.x, p.y - ballP.y);
+        const dx = p.x - ballP.x;
+        const dy = p.y - ballP.y;
+        const distPx = Math.hypot(dx, dy);
         if (distPx > 26) {
-          this.drawLinkLine(ballP, p, accent, this.depthAlpha(p.front, 0.5, 0.2), p.front < 0.08, 1);
+          const lineA = this.depthAlpha(p.front, 0.5, 0.2);
+          this.drawLinkLine(ballP, p, accent, lineA, p.front < 0.08, 1);
+
+          if (distPx > 72) {
+            const absMm =
+              Math.acos(Math.max(-1, Math.min(1, st.ballDir.dot(nextCp.dir)))) * st.ballRadius * MM_PER_UNIT;
+            const aStarMm = this.computeAStarDistanceMm(st);
+            const aStarStr = aStarMm >= 0 ? `${aStarMm.toFixed(1)}` : '--';
+            const dimText = `ABS ${absMm.toFixed(1)}  A* ${aStarStr}mm`;
+
+            let angle = Math.atan2(dy, dx);
+            // Keep rotated micro text always right-side up!
+            if (angle > Math.PI * 0.5) angle -= Math.PI;
+            else if (angle < -Math.PI * 0.5) angle += Math.PI;
+
+            const mx = (ballP.x + p.x) * 0.5;
+            const my = (ballP.y + p.y) * 0.5;
+
+            ctx.save();
+            ctx.translate(mx, my);
+            ctx.rotate(angle);
+            ctx.font = FONT_MICRO;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            const tw = ctx.measureText(dimText).width;
+            ctx.globalAlpha = Math.min(0.75, lineA * 1.15);
+            ctx.fillStyle = 'rgba(236, 233, 226, 0.72)';
+            ctx.fillRect(-tw * 0.5 - 3, -13, tw + 6, 10);
+            ctx.globalAlpha = Math.min(0.92, lineA * 1.55);
+            ctx.fillStyle = accent;
+            ctx.fillText(dimText, 0, -4);
+            ctx.restore();
+          }
         }
       }
 

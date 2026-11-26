@@ -83,11 +83,11 @@ canvas.aiming {
   letter-spacing: 0.06em;
 }
 
-/* Bottom-left level caption (click to select only in dev / ?settings) */
+/* Level caption anchored dynamically to hug the lower-left orbital contour of the globe */
 .level-hud {
   position: fixed;
   z-index: 3;
-  bottom: max(24px, env(safe-area-inset-bottom));
+  top: calc(100dvh - 68px);
   left: max(24px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
@@ -95,6 +95,17 @@ canvas.aiming {
   gap: 3px;
   pointer-events: none;
   color: #1c1c1c;
+}
+.level-hud.beside-globe {
+  align-items: flex-end;
+  transform: translate(-100%, -50%);
+}
+.level-hud.beside-globe .level-top {
+  flex-direction: row-reverse;
+}
+.level-hud.beside-globe .level-picker {
+  left: auto;
+  right: 0;
 }
 .level-top {
   display: inline-flex;
@@ -167,84 +178,6 @@ canvas.aiming {
 }
 .level-picker[hidden] {
   display: none;
-}
-
-/* Right-side vertical minimalist hardware indicator lights */
-.lights-hud {
-  position: fixed;
-  z-index: 3;
-  top: 50%;
-  right: max(24px, env(safe-area-inset-right));
-  transform: translateY(-50%);
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(28, 28, 28, 0.12);
-  background: rgba(246, 244, 239, 0.56);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  pointer-events: none;
-}
-.dots,
-.sw-dots {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 9px;
-}
-.lights-sep {
-  width: 11px;
-  height: 1px;
-  background: rgba(28, 28, 28, 0.18);
-}
-.lights-sep[hidden],
-.sw-dots[hidden] {
-  display: none;
-}
-.dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: 1.5px solid rgba(28, 28, 28, 0.26);
-  background: rgba(28, 28, 28, 0.05);
-  transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
-}
-.dot.next {
-  border-color: #d66816;
-  background: #ff8e2b;
-}
-.dot.pipe-dot {
-  border-color: rgba(25, 158, 144, 0.55);
-}
-.dot.pipe-dot.next {
-  border-color: #14a394;
-  background: #2ad9c6;
-}
-.dot.cleared {
-  border-color: #1ba35f;
-  background: #2ce391;
-}
-.sw-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-  background: transparent;
-  opacity: 0.48;
-  transition: background 0.22s ease, opacity 0.22s ease;
-}
-.sw-dot.red {
-  color: #dc1212;
-}
-.sw-dot.blue {
-  color: #1256f0;
-}
-.sw-dot.on {
-  opacity: 1;
-  background: currentColor;
 }
 
 /* Top-right frosted round buttons */
@@ -426,10 +359,6 @@ canvas.aiming {
     top: calc(max(14px, env(safe-area-inset-top)) + 42px);
     right: max(14px, env(safe-area-inset-right));
   }
-  .level-hud {
-    bottom: max(18px, env(safe-area-inset-bottom));
-    left: max(16px, env(safe-area-inset-left));
-  }
   .level-num {
     font-size: 19px;
   }
@@ -440,20 +369,6 @@ canvas.aiming {
     bottom: calc(max(18px, env(safe-area-inset-bottom)) + 52px);
     padding: 7px 14px;
     font-size: 10px;
-  }
-  .lights-hud {
-    right: max(14px, env(safe-area-inset-right));
-    gap: 8px;
-    padding: 9px 7px;
-  }
-  .dots,
-  .sw-dots {
-    gap: 7px;
-  }
-  .dot,
-  .sw-dot {
-    width: 8px;
-    height: 8px;
   }
   .settings-panel {
     top: calc(max(14px, env(safe-area-inset-top)) + 42px);
@@ -508,7 +423,6 @@ canvas.aiming {
 .clean .telemetry-canvas,
 .clean .actions,
 .clean .level-hud,
-.clean .lights-hud,
 .clean .tap-cue,
 .clean .help-card,
 .clean .settings-btn,

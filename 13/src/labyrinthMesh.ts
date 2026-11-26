@@ -82,8 +82,8 @@ interface GateNeonVisual {
 }
 
 const POST_RAD_BASE = WALL_HALF_WIDTH * 1.12;
-const POST_RAD_UPPER = WALL_HALF_WIDTH * 1.04;
-const POST_RAD_TOP = WALL_HALF_WIDTH * 0.8;
+const POST_RAD_UPPER = WALL_HALF_WIDTH * 1.1;
+const POST_RAD_TOP = WALL_HALF_WIDTH * 1.01;
 const POLE_SEAM_GAP = 0.0034;
 
 export interface LabyrinthRig {
@@ -697,16 +697,17 @@ function buildPipeNodeGeometry(node: PipeNode): { bowlGeo: THREE.BufferGeometry;
 }
 
 /**
- * Builds an individual retractable wall blade concavely sculpted around the steady corner poles.
+ * Builds an individual retractable wall blade concavely sculpted around the steady corner poles,
+ * with a crisp flat CNC-machined top deck and razor-fine micro-chamfered edges (split normals so tops stay dead-flat).
  */
 function buildWallBladeGeometry(wall: WallSlot): THREE.BufferGeometry {
   const rBase = R_FLOOR - 0.016; // stays tucked cleanly inside floor bezel thickness!
-  const rBevelStart = R_WALL - 0.02;
+  const rBevelStart = R_WALL - 0.0042;
   const rTop = R_WALL;
 
   const hwBase = WALL_HALF_WIDTH * 1.02;
-  const hwUpper = WALL_HALF_WIDTH * 0.94;
-  const hwTop = WALL_HALF_WIDTH * 0.68;
+  const hwUpper = WALL_HALF_WIDTH * 1.0;
+  const hwTop = WALL_HALF_WIDTH * 0.91;
 
   const profile: [number, number, number][] = [
     [-hwBase, rBase, POST_RAD_BASE],
@@ -721,21 +722,14 @@ function buildWallBladeGeometry(wall: WallSlot): THREE.BufferGeometry {
     wall.kind === 'lat'
       ? Math.abs(wall.thetaEnd - wall.thetaStart) * Math.sin(wall.phiStart)
       : Math.abs(wall.phiEnd - wall.phiStart);
-  const innerSteps = Math.max(6, Math.ceil(arcLen * 24));
+  const innerSteps = Math.max(8, Math.ceil(arcLen * 28));
 
-  const chamferFrac = Math.min(0.075, 0.011 / Math.max(0.12, arcLen - 2 * (POST_RAD_BASE + POLE_SEAM_GAP)));
-  const ringU: { u: number; topDrop: number }[] = [{ u: 0, topDrop: 0.0065 }];
+  const ringU: number[] = [];
   for (let i = 0; i <= innerSteps; i++) {
-    const u = chamferFrac + (i / innerSteps) * (1 - chamferFrac * 2);
-    ringU.push({ u, topDrop: 0 });
+    ringU.push(i / innerSteps);
   }
-  ringU.push({ u: 1, topDrop: 0.0065 });
 
   const profCount = profile.length;
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-
   const dir = new THREE.Vector3();
   const tangent = new THREE.Vector3();
   const binormal = new THREE.Vector3();
@@ -744,17 +738,20 @@ function buildWallBladeGeometry(wall: WallSlot): THREE.BufferGeometry {
   const totalPhiSpan = wall.phiEnd - wall.phiStart;
   const totalThetaSpan = wall.thetaEnd - wall.thetaStart;
 
+  // Precompute ring vertices [ring][profileIdx] -> [x, y, z, u, v]
+  // Seat blade ends snugly inside the corner posts (no dark air slit!) and keep top flush at R_WALL.
+  const ringPts: [number, number, number, number, number][][] = [];
   for (let s = 0; s < ringU.length; s++) {
-    const { u, topDrop } = ringU[s];
+    const u = ringU[s];
+    const row: [number, number, number, number, number][] = [];
 
     for (let p = 0; p < profCount; p++) {
-      const [offset, baseRadius, poleRad] = profile[p];
-      const isCrown = p === 2 || p === 3;
-      const radius = isCrown ? baseRadius - topDrop : baseRadius;
+      const [offset, radius, poleRad] = profile[p];
 
-      const hugRad = poleRad + POLE_SEAM_GAP;
+      // Tuck blade ends slightly inside the post radius so there is zero gap or seam slit at any angle
+      const hugRad = Math.max(0.002, poleRad - 0.0026);
       const trimArc = Math.sqrt(Math.max(0.00001, hugRad * hugRad - offset * offset));
-      const trimFrac = Math.min(0.32, trimArc / Math.max(0.05, arcLen));
+      const trimFrac = Math.min(0.28, trimArc / Math.max(0.05, arcLen));
 
       const t = trimFrac + u * (1 - trimFrac * 2);
       const phi = wall.kind === 'lat' ? wall.phiStart : wall.phiStart + totalPhiSpan * t;
@@ -770,28 +767,48 @@ function buildWallBladeGeometry(wall: WallSlot): THREE.BufferGeometry {
 
       pt.copy(dir).multiplyScalar(radius).addScaledVector(binormal, offset * radius);
       pt.normalize().multiplyScalar(radius);
-      positions.push(pt.x, pt.y, pt.z);
-      uvs.push(u * arcLen * 2.2, p / (profCount - 1));
+      row.push([pt.x, pt.y, pt.z, u * arcLen * 2.2, p / (profCount - 1)]);
+    }
+    ringPts.push(row);
+  }
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  // Emit each longitudinal strip (left side, left chamfer, flat top, right chamfer, right side)
+  // with split edge vertices so the flat top deck has pure crisp radial normals (never rounded!)
+  for (let p = 0; p < profCount - 1; p++) {
+    const baseIdx = positions.length / 3;
+    for (let s = 0; s < ringU.length; s++) {
+      const a = ringPts[s][p];
+      const b = ringPts[s][p + 1];
+      positions.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+      uvs.push(a[3], a[4], b[3], b[4]);
+    }
+    for (let s = 0; s < ringU.length - 1; s++) {
+      const iA = baseIdx + s * 2;
+      const iD = iA + 1;
+      const iB = iA + 2;
+      const iC = iA + 3;
+      indices.push(iA, iB, iD, iB, iC, iD);
     }
   }
 
-  for (let s = 0; s < ringU.length - 1; s++) {
-    for (let p = 0; p < profCount - 1; p++) {
-      const a = s * profCount + p;
-      const b = (s + 1) * profCount + p;
-      const c = (s + 1) * profCount + (p + 1);
-      const d = s * profCount + (p + 1);
-      indices.push(a, b, d, b, c, d);
+  // Crisp separate end caps
+  const addEndCap = (ringIdx: number, flip: boolean) => {
+    const baseIdx = positions.length / 3;
+    for (let p = 0; p < profCount; p++) {
+      const v = ringPts[ringIdx][p];
+      positions.push(v[0], v[1], v[2]);
+      uvs.push(v[3], v[4]);
     }
-  }
-
-  const addEndCap = (ringStart: number, flip: boolean) => {
-    const i0 = ringStart + 0;
-    const i1 = ringStart + 1;
-    const i2 = ringStart + 2;
-    const i3 = ringStart + 3;
-    const i4 = ringStart + 4;
-    const i5 = ringStart + 5;
+    const i0 = baseIdx + 0;
+    const i1 = baseIdx + 1;
+    const i2 = baseIdx + 2;
+    const i3 = baseIdx + 3;
+    const i4 = baseIdx + 4;
+    const i5 = baseIdx + 5;
     if (!flip) {
       indices.push(i0, i1, i5, i1, i4, i5, i1, i2, i4, i2, i3, i4);
     } else {
@@ -799,7 +816,7 @@ function buildWallBladeGeometry(wall: WallSlot): THREE.BufferGeometry {
     }
   };
   addEndCap(0, false);
-  addEndCap((ringU.length - 1) * profCount, true);
+  addEndCap(ringU.length - 1, true);
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -810,27 +827,140 @@ function buildWallBladeGeometry(wall: WallSlot): THREE.BufferGeometry {
 }
 
 /**
- * Steady permanent cylindrical corner pole with a crisp chamfered flat crown.
+ * Builds crisp architectural panel-seam grooves right where a wall blade meets its two cylindrical corner columns
+ * (running up the left vertical crease, curving across the top column contour, and down the right vertical crease).
+ * Attached to the wall blade so seams travel cleanly with retracting walls and never appear on bare columns.
+ */
+function buildWallColumnSeamGeometry(wall: WallSlot): THREE.BufferGeometry {
+  const rBase = R_FLOOR + 0.001;
+  const rBevelStart = R_WALL - 0.0042;
+  const rTop = R_WALL;
+  const lift = 0.00065;
+
+  const hwBase = WALL_HALF_WIDTH * 1.02 + lift;
+  const hwUpper = WALL_HALF_WIDTH * 1.0 + lift;
+  const hwTop = WALL_HALF_WIDTH * 0.91;
+
+  const profile: [number, number, number][] = [
+    [-hwBase, rBase, POST_RAD_BASE],
+    [-hwUpper, rBevelStart, POST_RAD_UPPER],
+    [-hwTop, rTop + lift, POST_RAD_TOP],
+    [hwTop, rTop + lift, POST_RAD_TOP],
+    [hwUpper, rBevelStart, POST_RAD_UPPER],
+    [hwBase, rBase, POST_RAD_BASE],
+  ];
+
+  const arcLen =
+    wall.kind === 'lat'
+      ? Math.abs(wall.thetaEnd - wall.thetaStart) * Math.sin(wall.phiStart)
+      : Math.abs(wall.phiEnd - wall.phiStart);
+  const seamWidth = 0.0021;
+
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const dir = new THREE.Vector3();
+  const tangent = new THREE.Vector3();
+  const binormal = new THREE.Vector3();
+  const pt = new THREE.Vector3();
+  const totalPhiSpan = wall.phiEnd - wall.phiStart;
+  const totalThetaSpan = wall.thetaEnd - wall.thetaStart;
+
+  const samplePoint = (offset: number, radius: number, poleRad: number, distFromPole: number, endSign: 1 | -1): [number, number, number] => {
+    const hugRad = Math.max(0.002, poleRad + distFromPole);
+    const trimArc = Math.sqrt(Math.max(0.00001, hugRad * hugRad - offset * offset));
+    const trimFrac = Math.min(0.45, trimArc / Math.max(0.05, arcLen));
+    const t = endSign === 1 ? trimFrac : 1 - trimFrac;
+    const phi = wall.kind === 'lat' ? wall.phiStart : wall.phiStart + totalPhiSpan * t;
+    const theta = wall.kind === 'lon' ? wall.thetaStart : wall.thetaStart + totalThetaSpan * t;
+
+    sphToDir(phi, theta, dir);
+    if (wall.kind === 'lat') {
+      tangent.set(-Math.sin(theta), 0, Math.cos(theta)).normalize();
+    } else {
+      tangent.set(Math.cos(phi) * Math.cos(theta), -Math.sin(phi), Math.cos(phi) * Math.sin(theta)).normalize();
+    }
+    binormal.crossVectors(dir, tangent).normalize();
+
+    pt.copy(dir).multiplyScalar(radius).addScaledVector(binormal, offset * radius);
+    pt.normalize().multiplyScalar(radius);
+    return [pt.x, pt.y, pt.z];
+  };
+
+  const topSteps = 7;
+  const fullProfilePts = (distFromPole: number, endSign: 1 | -1): [number, number, number][] => {
+    const pts: [number, number, number][] = [];
+    pts.push(samplePoint(profile[0][0], profile[0][1], profile[0][2], distFromPole, endSign));
+    pts.push(samplePoint(profile[1][0], profile[1][1], profile[1][2], distFromPole, endSign));
+    for (let k = 0; k <= topSteps; k++) {
+      const f = k / topSteps;
+      const offset = -hwTop + f * (hwTop * 2);
+      pts.push(samplePoint(offset, rTop + lift, POST_RAD_TOP, distFromPole, endSign));
+    }
+    pts.push(samplePoint(profile[4][0], profile[4][1], profile[4][2], distFromPole, endSign));
+    pts.push(samplePoint(profile[5][0], profile[5][1], profile[5][2], distFromPole, endSign));
+    return pts;
+  };
+
+  for (const endSign of [1, -1] as const) {
+    const ringNear = fullProfilePts(-0.0002, endSign);
+    const ringFar = fullProfilePts(seamWidth, endSign);
+    const n = ringNear.length;
+    const base = positions.length / 3;
+    for (let i = 0; i < n; i++) {
+      positions.push(ringNear[i][0], ringNear[i][1], ringNear[i][2]);
+    }
+    for (let i = 0; i < n; i++) {
+      positions.push(ringFar[i][0], ringFar[i][1], ringFar[i][2]);
+    }
+    for (let i = 0; i < n - 1; i++) {
+      const a = base + i;
+      const b = base + n + i;
+      const c = base + n + i + 1;
+      const d = base + i + 1;
+      if (endSign === 1) {
+        indices.push(a, b, d, b, c, d);
+      } else {
+        indices.push(a, d, b, b, d, c);
+      }
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Steady permanent cylindrical corner pole with a dead-flat machined top face and crisp micro-chamfer edge.
  */
 function buildPostGeometry(post: VertexPost): THREE.BufferGeometry {
   const rBase = R_FLOOR_INNER; // cleanly seats through the shell thickness without sticking into the pipe cavity
-  const rBevelStart = R_WALL - 0.02;
+  const rBevelStart = R_WALL - 0.0042;
   const rTop = R_WALL;
 
   const hwBase = POST_RAD_BASE * rBase;
   const hwUpper = POST_RAD_UPPER * rBevelStart;
   const hwTop = POST_RAD_TOP * rTop;
+  const segs = 36;
 
-  const lathePts = [
-    new THREE.Vector2(hwBase, rBase),
-    new THREE.Vector2(hwUpper, rBevelStart),
-    new THREE.Vector2(hwTop, rTop),
-    new THREE.Vector2(0.0001, rTop),
-  ];
-  const geo = new THREE.LatheGeometry(lathePts, 20);
+  // Separate barrel, micro-chamfer, and flat top cap so normals stay razor-crisp and top is dead-flat!
+  const barrel = new THREE.LatheGeometry(
+    [new THREE.Vector2(hwBase, rBase), new THREE.Vector2(hwUpper, rBevelStart)],
+    segs,
+  );
+  const chamfer = new THREE.LatheGeometry(
+    [new THREE.Vector2(hwUpper, rBevelStart), new THREE.Vector2(hwTop, rTop)],
+    segs,
+  );
+  const cap = new THREE.CircleGeometry(hwTop, segs);
+  cap.rotateX(-Math.PI / 2);
+  cap.translate(0, rTop, 0);
+
+  const geo = mergeGeometries([barrel, chamfer, cap]);
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), post.dir);
   geo.applyQuaternion(q);
-  geo.computeVertexNormals();
   return geo;
 }
 
@@ -1654,6 +1784,12 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     root.add(mesh);
     disposables.push(geo);
     if (!wall.locked) disposables.push(mat);
+
+    // Crisp recessed architectural panel seam right where this wall blade meets its corner columns
+    const colSeamGeo = buildWallColumnSeamGeometry(wall);
+    const colSeamMesh = new THREE.Mesh(colSeamGeo, seamMat);
+    mesh.add(colSeamMesh);
+    disposables.push(colSeamGeo);
 
     let arrowMat: THREE.MeshStandardMaterial | null = null;
     if (wall.locked) {

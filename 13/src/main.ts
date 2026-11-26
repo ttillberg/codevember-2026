@@ -55,6 +55,8 @@ floatGroup.add(aimReticle.group);
 const initialLevelNum = Math.max(1, Math.min(grid.levels.length, Number(params.get('level')) || 1));
 let currentLevelIdx = initialLevelNum - 1;
 const completedLevels = new Set<number>();
+let levelElapsedSec = 0;
+let levelTimerStarted = false;
 
 interface LevelTransition {
   kind: 'complete' | 'switch' | 'reset';
@@ -117,9 +119,7 @@ const sphereQuat = initialQuat.clone();
 const angVel = new THREE.Vector3(0, 0, 0);
 
 // UI references
-const ledDotsEl = document.getElementById('led-dots')!;
-const lightsSepEl = document.getElementById('lights-sep')!;
-const swDotsEl = document.getElementById('sw-dots')!;
+const levelHudEl = document.getElementById('level-hud')!;
 const levelNumBtn = document.getElementById('level-num') as HTMLButtonElement;
 const levelTitleEl = document.getElementById('level-title')!;
 const levelPicker = document.getElementById('level-picker')!;
@@ -135,43 +135,6 @@ const isDevControls = import.meta.env.DEV || params.has('settings');
 
 function updateStatusUI() {
   const level = grid.levels[currentLevelIdx];
-  const total = level.checkpoints.length;
-  const nextIdx = physics.getNextCheckpointIndex();
-
-  if (ledDotsEl.childElementCount !== total) {
-    ledDotsEl.innerHTML = '';
-    for (let i = 0; i < total; i++) {
-      const span = document.createElement('span');
-      span.className = 'dot';
-      ledDotsEl.appendChild(span);
-    }
-  }
-
-  for (let i = 0; i < total; i++) {
-    const dot = ledDotsEl.children[i] as HTMLElement;
-    dot.classList.toggle('pipe-dot', level.checkpoints[i].layer === 'pipe');
-    dot.classList.toggle('cleared', physics.cleared[i]);
-    dot.classList.toggle('next', !physics.cleared[i] && i === nextIdx);
-  }
-
-  // Bottom-right switch LEDs (pure hardware lights, only shown on levels with switches)
-  const hasToggles = level.toggles.length > 0;
-  lightsSepEl.hidden = !hasToggles;
-  swDotsEl.hidden = !hasToggles;
-  if (swDotsEl.childElementCount !== level.toggles.length) {
-    swDotsEl.innerHTML = '';
-    for (let i = 0; i < level.toggles.length; i++) {
-      const span = document.createElement('span');
-      span.className = 'sw-dot';
-      swDotsEl.appendChild(span);
-    }
-  }
-  for (let i = 0; i < level.toggles.length; i++) {
-    const tg = level.toggles[i];
-    const on = (physics.toggleMask & (1 << tg.id)) !== 0;
-    const dot = swDotsEl.children[i] as HTMLElement;
-    dot.className = `sw-dot ${tg.colorId === 0 ? 'red' : 'blue'}${on ? ' on' : ''}`;
-  }
 
   // Bottom-left level caption
   levelNumBtn.textContent = `LEVEL ${level.level}`;
@@ -250,6 +213,8 @@ function loadLevelNow(
   const waveDir = new THREE.Vector3(-0.6, 0.72, 0.35).normalize().applyQuaternion(sphereQuat.clone().invert());
 
   physics.setLevel(level, true);
+  levelElapsedSec = 0;
+  levelTimerStarted = false;
   const effWalls = computeEffectiveWalls(level, physics.toggleMask, wallCount);
   const effShutters = computeEffectiveShutters(level, physics.toggleMask, shutterCount);
 
@@ -664,6 +629,45 @@ function tryActivatePortal(): boolean {
   return physics.activateReadyPortal(shutterOpen, physicsEvents);
 }
 
+let lastLevelHudPos = '';
+function syncLevelHudPosition() {
+  const { cx, cy, radius } = telemetry.sphereScreen;
+  if (radius < 40) return;
+  const w = lastCanvasW || window.innerWidth;
+  const h = lastCanvasH || window.innerHeight;
+  const isCompact = w < 640;
+  const idealOffset = isCompact ? 16 : Math.max(20, Math.min(32, radius * 0.068));
+  const arcR = Math.min(radius + idealOffset, Math.max(90, w - cx - (isCompact ? 18 : 26)));
+
+  const leftAnchorAng = (138 * Math.PI) / 180;
+  const anchorX = cx + Math.cos(leftAnchorAng) * arcR;
+  const anchorY = cy + Math.sin(leftAnchorAng) * arcR;
+
+  let mode: 'beside' | 'below';
+  let x: number;
+  let y: number;
+
+  if (!isCompact && anchorX > 185) {
+    // Hug the lower-left orbital contour of the globe, right-aligned cleanly toward the sphere!
+    mode = 'beside';
+    x = Math.round(anchorX - 16);
+    y = Math.round(Math.max(96, Math.min(h - 46, anchorY)));
+  } else {
+    // Portrait / tight viewport: hug directly beneath the lower-left curve of the globe
+    mode = 'below';
+    x = Math.round(Math.max(18, cx - radius * 0.88));
+    y = Math.round(Math.max(96, Math.min(h - 68, cy + radius + 16)));
+  }
+
+  const key = `${mode}:${x}:${y}`;
+  if (key === lastLevelHudPos) return;
+  lastLevelHudPos = key;
+
+  levelHudEl.classList.toggle('beside-globe', mode === 'beside');
+  levelHudEl.style.left = `${x}px`;
+  levelHudEl.style.top = `${y}px`;
+}
+
 let lastTapCueText = '';
 let lastTapCueDwell = -1;
 function syncTapCue() {
@@ -961,9 +965,8 @@ function frame(now: number) {
     resize();
   }
 
-  const bob = Math.sin(t * 1.15) * 0.018;
-  floatGroup.position.y = bob;
-  studio.shadowPlane.scale.setScalar(1.0 - bob * 1.4);
+  floatGroup.position.y = 0;
+  studio.shadowPlane.scale.setScalar(1);
 
   if (transition !== null) {
     // Choreographed polar hole drop -> slow wall morph + circulating studio camera -> North Pole pop-up!
@@ -1081,6 +1084,7 @@ function frame(now: number) {
     post.render(t);
     telemetry.render({
       time: t,
+      elapsedSec: levelElapsedSec,
       camera,
       sphereRoot: rig.root,
       grid,
@@ -1100,6 +1104,7 @@ function frame(now: number) {
       shutterOpen,
       inTransition: true,
     });
+    syncLevelHudPosition();
     return;
   }
 
@@ -1129,6 +1134,14 @@ function frame(now: number) {
 
   rig.root.quaternion.copy(sphereQuat);
   physics.step(dt, sphereQuat, gravityWorldDir, wallExt, shutterOpen, physicsEvents);
+  if (!physics.allCleared) {
+    if (!levelTimerStarted && (activePointers.size > 0 || keysDown.size > 0 || physics.speed > 0.08)) {
+      levelTimerStarted = true;
+    }
+    if (levelTimerStarted) {
+      levelElapsedSec += dt;
+    }
+  }
   sound.updateRoll(physics.speed);
   sound.updateAmbience(physics.layer === 'pipe' || physics.layer === 'dropping');
 
@@ -1154,6 +1167,7 @@ function frame(now: number) {
   post.render(t);
   telemetry.render({
     time: t,
+    elapsedSec: levelElapsedSec,
     camera,
     sphereRoot: rig.root,
     grid,
@@ -1173,6 +1187,7 @@ function frame(now: number) {
     shutterOpen,
     inTransition: false,
   });
+  syncLevelHudPosition();
 }
 
 requestAnimationFrame(frame);
