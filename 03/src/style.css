@@ -180,8 +180,81 @@ body.loading .plate .head > .loading-label {
   gap: 13px;
 }
 
-.customize-panel[hidden] {
+.customize-panel[hidden],
+.toppings-panel[hidden] {
   display: none;
+}
+
+.toppings-panel {
+  width: 286px;
+  max-height: calc(100vh - 96px);
+  max-height: calc(100dvh - 96px);
+  overflow-y: auto;
+  padding: 14px 15px 15px;
+  border-radius: 14px;
+  border: 1px solid var(--pill-border);
+  background: rgba(255, 250, 246, 0.86);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 14px 36px rgba(28, 20, 18, 0.14);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.seg-toggle.seg-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.seg-toggle.seg-4 .seg-btn {
+  padding: 6px 4px;
+  font-size: 10.5px;
+}
+
+.top-checks {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 2px;
+}
+
+.top-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 11px/1 Inter, system-ui, sans-serif;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.top-check input[type="checkbox"] {
+  accent-color: var(--ink);
+  margin: 0;
+}
+
+.toppings-panel .row {
+  display: grid;
+  grid-template-columns: 44px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.toppings-panel input[type="range"] {
+  width: 100%;
+  accent-color: var(--ink);
+  margin: 0;
+}
+
+.toppings-panel output {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  font-weight: 500;
 }
 
 .cust-head {
@@ -629,7 +702,8 @@ body.loading .dev-dock {
   .icon-btn { width: 32px; height: 32px; }
   .pill-btn { width: 32px; height: 32px; padding: 0; font-size: 10.5px; }
   .pill-btn span { display: none; }
-  .customize-panel {
+  .customize-panel,
+  .toppings-panel {
     width: min(290px, calc(100vw - 32px));
   }
 }
@@ -640,7 +714,8 @@ body.loading .dev-dock {
   .plate .head > i { font-size: 8px; letter-spacing: 0.03em; margin-top: 4px; }
   .icon-btn { width: 28px; height: 28px; }
   .pill-btn { width: 28px; height: 28px; padding: 0; }
-  .customize-panel {
+  .customize-panel,
+  .toppings-panel {
     width: min(290px, calc(100vw - 24px));
   }
   .preset-dock {
@@ -666,6 +741,7 @@ body.loading .dev-dock {
 /* ?clean: the scene alone */
 .clean .plate,
 .clean .customize-panel,
+.clean .toppings-panel,
 .clean .preset-dock,
 .clean .dev-dock {
   display: none !important;

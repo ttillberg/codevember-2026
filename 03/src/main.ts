@@ -14,7 +14,15 @@ import {
 } from './shape';
 import { getSharedNoise3DTexture } from './noise3d';
 import { createMacroStudioEnv, disposeSeedTextureCache } from './textures';
-import { createFruitAssembly, FruitAssembly } from './fruits';
+import {
+  createFruitAssembly,
+  createToppingDebugStage,
+  FruitAssembly,
+  RASPBERRY_LIGHT_UNIFORMS,
+  ToppingDebugFilter,
+  ToppingDebugMode,
+  ToppingDebugStage,
+} from './fruits';
 import { createPopsicleIceSystem, PopsicleIceSystem } from './popsicleIce';
 import {
   createWaterDropSystem,
@@ -43,7 +51,8 @@ import {
 const params = new URLSearchParams(window.location.search);
 if (params.has('clean')) document.documentElement.classList.add('clean');
 
-const showSettings = import.meta.env.DEV || params.has('settings');
+const showSettings =
+  import.meta.env.DEV || params.has('settings') || params.has('toppings') || params.has('air_raspberry');
 const rawSeed = Number(params.get('seed'));
 let currentSeed = Number.isFinite(rawSeed) && rawSeed >= 1 ? Math.floor(rawSeed) : 1;
 const rawMelt = params.has('melt') ? Number(params.get('melt')) : DEFAULT_INITIAL_MELT;
@@ -598,6 +607,10 @@ rebuildRenderTargets();
 const solidScene = new THREE.Scene();
 const solidLights = buildStudioLights();
 solidScene.add(solidLights);
+// Dedicated warm grazing side-back key light synchronized with raspberry side-translucency direction
+const sideKeyLight = new THREE.DirectionalLight(0xfff1e4, 1.35);
+sideKeyLight.position.set(-3.5, 0.9, -1.6);
+solidScene.add(sideKeyLight);
 
 const backZScene = new THREE.Scene();
 const bubblesScene = new THREE.Scene();
@@ -609,6 +622,25 @@ let fruitAssembly: FruitAssembly | null = null;
 let iceSystem: PopsicleIceSystem | null = null;
 let waterDrops: WaterDropSystem | null = null;
 let liquidFilm: LiquidFilmSystem | null = null;
+let toppingDebugStage: ToppingDebugStage | null = null;
+
+// === LOCAL-DEV TOPPING DEBUG STAGE STATE ===
+const rawToppingsParam = params.get('toppings');
+let toppingDebugMode: ToppingDebugMode =
+  rawToppingsParam === 'outside' || rawToppingsParam === 'both' || rawToppingsParam === 'inside'
+    ? rawToppingsParam
+    : params.has('toppings')
+      ? 'both'
+      : 'off';
+const rawToppingFilter = params.get('topping');
+let toppingDebugFilter: ToppingDebugFilter =
+  rawToppingFilter && TOPPING_LIST.some((t) => t.id === rawToppingFilter)
+    ? (rawToppingFilter as ToppingId)
+    : 'all';
+let floatAirRaspberry = params.has('air_raspberry');
+let toppingDebugLightDeg = -112;
+let toppingDebugSpin = false;
+let savedNormalRecipe: PopsicleRecipe | null = null;
 
 const rawTurntableParam = params.has('turntable') ? Number(params.get('turntable')) : NaN;
 const simParams = {
@@ -819,6 +851,9 @@ function buildPopsicle(seed: number, startMelt = initialMelt) {
   }
   syncWorkbenchUI();
   syncCustomizeUI();
+  if (toppingDebugMode !== 'off' || floatAirRaspberry) {
+    applyToppingDebugVisibility();
+  }
   renderDirty = true;
 }
 
@@ -920,7 +955,7 @@ function hitEmbeddedFruit(): boolean {
 }
 
 function isPointerOnIceCream(): boolean {
-  if (reveal < 0.85) return false;
+  if (reveal < 0.85 || toppingDebugMode === 'outside') return false;
   if (iceSystem && iceSystem.iceMesh.visible) {
     if (raycaster.intersectObject(iceSystem.iceMesh, false).length > 0) return true;
   }
@@ -948,8 +983,8 @@ function updatePointerWorld(clientX: number, clientY: number) {
     return;
   }
 
-  // While wireframe loader is showing, dragging anywhere orbits cleanly without hovering/rubbing unseen ice
-  if (reveal < 0.85) {
+  // While wireframe loader or outside-ice debug stage is showing, dragging anywhere orbits cleanly
+  if (reveal < 0.85 || toppingDebugMode === 'outside') {
     pointerActive = false;
     prevFrostU = null;
     prevFrostV = null;
@@ -1320,13 +1355,9 @@ for (let i = 0; i < POPSICLE_PRESETS.length; i++) {
 function applyPreset(preset: PopsiclePreset) {
   const isSamePreset = recipesMatch(currentRecipe, preset.recipe);
   currentRecipe = normalizeRecipe(preset.recipe);
-  if (isSamePreset) {
-    // Clicking the currently active popsicle generates a brand-new frozen mix with a fresh seed
-    buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
-    return;
-  }
-  const nextMelt = meltState.melt > 0.65 ? DEFAULT_INITIAL_MELT : meltState.melt;
-  buildPopsicle(preset.seed, nextMelt);
+  // Always start a fresh melt cycle from the freezer (and bump seed when re-clicking the active preset)
+  const nextSeed = isSamePreset ? currentSeed + 1 : preset.seed;
+  buildPopsicle(nextSeed, DEFAULT_INITIAL_MELT);
 }
 
 function syncPresetUI() {
@@ -1343,6 +1374,21 @@ function syncPresetUI() {
 }
 
 const devDock = document.getElementById('dev-dock') as HTMLDivElement;
+const btnToppings = document.getElementById('btn-toppings') as HTMLButtonElement;
+const toppingsPanel = document.getElementById('toppings-panel') as HTMLDivElement;
+const btnTopReset = document.getElementById('btn-top-reset') as HTMLButtonElement;
+const topStageNote = document.getElementById('top-stage-note') as HTMLSpanElement;
+const topFilterNote = document.getElementById('top-filter-note') as HTMLSpanElement;
+const topFilterChipsEl = document.getElementById('top-filter-chips') as HTMLDivElement;
+const topModeBtns = Array.from(toppingsPanel.querySelectorAll<HTMLButtonElement>('[data-tmode]'));
+const chkAirRasp = document.getElementById('chk-air-rasp') as HTMLInputElement;
+const chkTopSpin = document.getElementById('chk-top-spin') as HTMLInputElement;
+const slTopLight = document.getElementById('sl-top-light') as HTMLInputElement;
+const valTopLight = document.getElementById('val-top-light') as HTMLOutputElement;
+const slTopGlow = document.getElementById('sl-top-glow') as HTMLInputElement;
+const valTopGlow = document.getElementById('val-top-glow') as HTMLOutputElement;
+const slTopMelt = document.getElementById('sl-top-melt') as HTMLInputElement;
+const valTopMelt = document.getElementById('val-top-melt') as HTMLOutputElement;
 const btnSettings = document.getElementById('btn-settings') as HTMLButtonElement;
 const settingsPanel = document.getElementById('settings-panel') as HTMLDivElement;
 const btnSettingsCopy = document.getElementById('btn-settings-copy') as HTMLButtonElement;
@@ -1387,6 +1433,8 @@ if (showSettings) {
 function syncWorkbenchUI() {
   slMelt.value = meltState.melt.toFixed(3);
   valMelt.textContent = meltState.melt.toFixed(2);
+  slTopMelt.value = clamp(meltState.melt, 0, 0.85).toFixed(2);
+  valTopMelt.textContent = meltState.melt.toFixed(2);
   slSpeed.value = simParams.speed.toFixed(1);
   valSpeed.textContent = `${simParams.speed.toFixed(1)}×`;
   slTurntable.value = simParams.turntable.toFixed(2);
@@ -1482,6 +1530,186 @@ function syncCustomizeUI() {
   syncPresetUI();
 }
 
+function ensureToppingDebugStage(): ToppingDebugStage {
+  if (!toppingDebugStage) {
+    toppingDebugStage = createToppingDebugStage(currentSeed);
+    solidScene.add(toppingDebugStage.group);
+  }
+  return toppingDebugStage;
+}
+
+function applyToppingDebugVisibility() {
+  const activeStage = toppingDebugMode !== 'off' || floatAirRaspberry;
+  if (activeStage) {
+    ensureToppingDebugStage().setLayout(toppingDebugMode, toppingDebugFilter, floatAirRaspberry);
+  } else if (toppingDebugStage) {
+    toppingDebugStage.setLayout('off', toppingDebugFilter, false);
+  }
+
+  const hidePopsicle = toppingDebugMode === 'outside';
+  if (fruitAssembly) fruitAssembly.group.visible = !hidePopsicle;
+  if (iceSystem) {
+    iceSystem.iceMesh.visible = !hidePopsicle;
+    iceSystem.backZMesh.visible = !hidePopsicle;
+  }
+  if (waterDrops) waterDrops.pendantGroup.visible = !hidePopsicle;
+  orbit.minDistance = toppingDebugMode !== 'off' ? 1.35 : 3.2;
+}
+
+const topFilterButtons = new Map<ToppingDebugFilter, HTMLButtonElement>();
+{
+  const filterEntries: Array<{ id: ToppingDebugFilter; label: string; swatch: string }> = [
+    { id: 'all', label: 'All', swatch: 'linear-gradient(135deg,#d81c48,#263058,#f2d232)' },
+    ...TOPPING_LIST.map((t) => ({ id: t.id as ToppingDebugFilter, label: t.label, swatch: t.swatch })),
+  ];
+  for (const ent of filterEntries) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip';
+    btn.dataset.tfilter = ent.id;
+    btn.innerHTML = `<span class="swatch" style="background:${ent.swatch}"></span><span>${ent.label}</span>`;
+    btn.addEventListener('click', () => {
+      toppingDebugFilter = ent.id;
+      if (toppingDebugMode === 'off') toppingDebugMode = 'both';
+      applyToppingDebugState(true);
+    });
+    topFilterChipsEl.appendChild(btn);
+    topFilterButtons.set(ent.id, btn);
+  }
+}
+
+function syncToppingDebugUI() {
+  const stageLabels: Record<ToppingDebugMode, string> = {
+    outside: 'In air (no ice)',
+    both: 'Inside & outside ice',
+    inside: 'Inside ice only',
+    off: floatAirRaspberry ? 'Normal + air raspberry' : 'Normal popsicle',
+  };
+  topStageNote.textContent = stageLabels[toppingDebugMode];
+  for (const btn of topModeBtns) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.tmode === toppingDebugMode));
+  }
+  for (const [id, btn] of topFilterButtons) {
+    btn.setAttribute('aria-pressed', String(id === toppingDebugFilter));
+  }
+  topFilterNote.textContent =
+    toppingDebugFilter === 'all'
+      ? 'All 6'
+      : (TOPPING_LIST.find((t) => t.id === toppingDebugFilter)?.label ?? toppingDebugFilter);
+  chkAirRasp.checked = floatAirRaspberry;
+  chkTopSpin.checked = toppingDebugSpin;
+  slTopLight.value = String(Math.round(toppingDebugLightDeg));
+  valTopLight.textContent = `${Math.round(toppingDebugLightDeg)}°`;
+  slTopGlow.value = RASPBERRY_LIGHT_UNIFORMS.uTransBoost.value.toFixed(2);
+  valTopGlow.textContent = `${RASPBERRY_LIGHT_UNIFORMS.uTransBoost.value.toFixed(2)}×`;
+  slTopMelt.value = clamp(meltState.melt, 0, 0.85).toFixed(2);
+  valTopMelt.textContent = meltState.melt.toFixed(2);
+}
+
+function applyToppingDebugState(syncRecipe = true) {
+  if (syncRecipe) {
+    if (toppingDebugMode === 'both' || toppingDebugMode === 'inside') {
+      if (!savedNormalRecipe) {
+        savedNormalRecipe = {
+          base: currentRecipe.base,
+          flavors: [...currentRecipe.flavors],
+          toppings: [...currentRecipe.toppings],
+        };
+      }
+      const nextToppings: ToppingId[] =
+        toppingDebugFilter === 'all' ? TOPPING_LIST.map((t) => t.id) : [toppingDebugFilter];
+      const nextFlavors: FlavorId[] =
+        toppingDebugFilter === 'raspberry'
+          ? ['raspberry']
+          : toppingDebugFilter === 'blueberry'
+            ? ['blueberry']
+            : toppingDebugFilter === 'shaved-lemon'
+              ? ['lemon']
+              : currentRecipe.flavors.length > 0
+                ? currentRecipe.flavors
+                : ['strawberry'];
+      applyRecipe({ base: currentRecipe.base, flavors: nextFlavors, toppings: nextToppings }, false);
+    } else if (toppingDebugMode === 'off' && savedNormalRecipe) {
+      const restore = savedNormalRecipe;
+      savedNormalRecipe = null;
+      applyRecipe(restore, false);
+    }
+  }
+  applyToppingDebugVisibility();
+  syncToppingDebugUI();
+  renderDirty = true;
+}
+
+for (const btn of topModeBtns) {
+  btn.addEventListener('click', () => {
+    const next = btn.dataset.tmode as ToppingDebugMode;
+    if (next === toppingDebugMode) return;
+    toppingDebugMode = next;
+    applyToppingDebugState(true);
+  });
+}
+
+chkAirRasp.addEventListener('change', () => {
+  floatAirRaspberry = chkAirRasp.checked;
+  applyToppingDebugState(false);
+});
+
+chkTopSpin.addEventListener('change', () => {
+  toppingDebugSpin = chkTopSpin.checked;
+  renderDirty = true;
+});
+
+slTopLight.addEventListener('input', () => {
+  toppingDebugLightDeg = Number(slTopLight.value);
+  valTopLight.textContent = `${Math.round(toppingDebugLightDeg)}°`;
+  renderDirty = true;
+});
+
+slTopGlow.addEventListener('input', () => {
+  RASPBERRY_LIGHT_UNIFORMS.uTransBoost.value = Number(slTopGlow.value);
+  valTopGlow.textContent = `${RASPBERRY_LIGHT_UNIFORMS.uTransBoost.value.toFixed(2)}×`;
+  renderDirty = true;
+});
+
+slTopMelt.addEventListener('input', () => {
+  syncSystemsToMelt(Number(slTopMelt.value));
+  valTopMelt.textContent = meltState.melt.toFixed(2);
+  valMelt.textContent = meltState.melt.toFixed(2);
+  slMelt.value = meltState.melt.toFixed(3);
+});
+
+btnTopReset.addEventListener('click', () => {
+  toppingDebugMode = 'off';
+  toppingDebugFilter = 'all';
+  floatAirRaspberry = false;
+  toppingDebugLightDeg = -112;
+  toppingDebugSpin = false;
+  RASPBERRY_LIGHT_UNIFORMS.uTransBoost.value = 1.45;
+  applyToppingDebugState(true);
+});
+
+btnToppings.addEventListener('click', () => {
+  const open = toppingsPanel.hidden;
+  toppingsPanel.hidden = !open;
+  btnToppings.setAttribute('aria-expanded', String(open));
+  if (open) {
+    if (!customizePanel.hidden) {
+      customizePanel.hidden = true;
+      btnCustomize.setAttribute('aria-expanded', 'false');
+    }
+    if (!settingsPanel.hidden) {
+      settingsPanel.hidden = true;
+      btnSettings.setAttribute('aria-expanded', 'false');
+    }
+    if (toppingDebugMode === 'off') {
+      toppingDebugMode = 'both';
+      applyToppingDebugState(true);
+    } else {
+      syncToppingDebugUI();
+    }
+  }
+});
+
 btnCustomize.addEventListener('click', () => {
   const open = customizePanel.hidden;
   customizePanel.hidden = !open;
@@ -1489,6 +1717,10 @@ btnCustomize.addEventListener('click', () => {
   if (open && !settingsPanel.hidden) {
     settingsPanel.hidden = true;
     btnSettings.setAttribute('aria-expanded', 'false');
+  }
+  if (open && !toppingsPanel.hidden) {
+    toppingsPanel.hidden = true;
+    btnToppings.setAttribute('aria-expanded', 'false');
   }
 });
 
@@ -1525,6 +1757,10 @@ btnSettings.addEventListener('click', () => {
   if (open && !customizePanel.hidden) {
     customizePanel.hidden = true;
     btnCustomize.setAttribute('aria-expanded', 'false');
+  }
+  if (open && !toppingsPanel.hidden) {
+    toppingsPanel.hidden = true;
+    btnToppings.setAttribute('aria-expanded', 'false');
   }
 });
 
@@ -1675,6 +1911,10 @@ window.addEventListener('keydown', (e) => {
       settingsPanel.hidden = true;
       btnSettings.setAttribute('aria-expanded', 'false');
     }
+    if (!toppingsPanel.hidden) {
+      toppingsPanel.hidden = true;
+      btnToppings.setAttribute('aria-expanded', 'false');
+    }
     return;
   }
   if (e.code === 'Space') {
@@ -1690,6 +1930,8 @@ window.addEventListener('keydown', (e) => {
     buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
   } else if (e.key === 'c' || e.key === 'C') {
     if (showSettings) btnCustomize.click();
+  } else if (e.key === 't' || e.key === 'T') {
+    if (showSettings) btnToppings.click();
   } else if (e.key >= '1' && e.key <= '9') {
     const preset = POPSICLE_PRESETS[Number(e.key) - 1];
     if (preset) applyPreset(preset);
@@ -1917,7 +2159,19 @@ function renderPicturePasses() {
   const gl = renderer.getContext();
 
   // Keep studio key lights & rear lightbox locked to the viewer's azimuth so 360° turntable stays evenly backlit!
-  solidLights.rotation.y = Math.atan2(camera.position.x - orbit.target.x, camera.position.z - orbit.target.z);
+  const camAzimuth = Math.atan2(camera.position.x - orbit.target.x, camera.position.z - orbit.target.z);
+  solidLights.rotation.y = camAzimuth;
+
+  // Synchronize grazing side-back key light & raspberry side-translucency direction!
+  // In Topping Debug View, anchor in world space at `toppingDebugLightDeg` so orbiting sweeps around the side beam;
+  // in normal popsicle view, lock at -112° relative to the camera so exposed raspberries always catch dramatic side light!
+  const sideAz =
+    toppingDebugMode !== 'off' || floatAirRaspberry
+      ? (toppingDebugLightDeg * Math.PI) / 180
+      : camAzimuth + (-112 * Math.PI) / 180;
+  RASPBERRY_LIGHT_UNIFORMS.uSideLightDir.value.set(Math.sin(sideAz), 0.24, Math.cos(sideAz)).normalize();
+  sideKeyLight.position.copy(RASPBERRY_LIGHT_UNIFORMS.uSideLightDir.value).multiplyScalar(4.0);
+  sideKeyLight.intensity = toppingDebugMode !== 'off' ? 1.75 : 1.25;
 
   // Sync camera.matrixWorldInverse after turntable/setCamera lookAt() before projecting the studio halo!
   camera.updateMatrixWorld();
@@ -1925,6 +2179,16 @@ function renderPicturePasses() {
   // Project popsicle center into screen UV so studio lightbox halo tracks subtly when orbiting!
   _centerProj.set(0, 0.08, 0).project(camera);
   backdropUniforms.uHaloCenter.value.set(_centerProj.x * 0.5 + 0.5, _centerProj.y * 0.5 + 0.5);
+
+  // Fast direct studio render when inspecting toppings strictly outside the ice!
+  if (toppingDebugMode === 'outside') {
+    renderer.setRenderTarget(compositeRT);
+    renderer.setClearColor(clearColorDark, 1);
+    renderer.clear(true, true, false);
+    renderer.render(backdropScene, fsCam);
+    renderer.render(solidScene, camera);
+    return;
+  }
 
   // --- PASS 1: Back-Face Ice Camera Depth (measures exact optical slab thickness from any 3D angle!) ---
   renderer.setRenderTarget(backIceZRT);
@@ -2128,7 +2392,12 @@ function tick(now: number) {
   const targetHeat = warmingActive ? (pointerPressed ? 1.0 : 0.42) : 0.0;
   meltState.pointerHeat += (targetHeat - meltState.pointerHeat) * Math.min(1, rawDt * 8.0);
 
-  if (dt > 0 && reveal >= 0.85 && fruitAssembly && iceSystem && waterDrops && liquidFilm) {
+  if (dt > 0 && toppingDebugStage && toppingDebugStage.group.visible && toppingDebugSpin) {
+    toppingDebugStage.update(dt, true);
+    renderDirty = true;
+  }
+
+  if (dt > 0 && reveal >= 0.85 && toppingDebugMode !== 'outside' && fruitAssembly && iceSystem && waterDrops && liquidFilm) {
     const { meltScale, fluidScale, fruitScale } = computeFallDilation(dt, fruitAssembly.hasFallingFruitInView());
     const dtMelt = dt * meltScale;
     const dtFluid = dt * fluidScale;
@@ -2338,6 +2607,9 @@ async function bootAsync() {
 if (paused && !holdLoader) {
   // Deterministic paused boot (headless verification & preset icon prerendering): ready on frame 0!
   buildPopsicle(currentSeed, initialMelt);
+  if (toppingDebugMode !== 'off' || floatAirRaspberry) {
+    applyToppingDebugState(true);
+  }
   reveal = 1;
   revealing = true;
   endWire();
@@ -2347,7 +2619,15 @@ if (paused && !holdLoader) {
   // Interactive boot: instant wireframe drawing + staggered GPU warm-up + smooth 1.6s reveal!
   applyMeltCameraZoom(0, true);
   renderFrame();
-  void bootAsync();
+  void bootAsync().then(() => {
+    if (toppingDebugMode !== 'off' || floatAirRaspberry) {
+      applyToppingDebugState(true);
+      if (params.has('toppings')) {
+        toppingsPanel.hidden = false;
+        btnToppings.setAttribute('aria-expanded', 'true');
+      }
+    }
+  });
 }
 
 // Expose deterministic inspection API for Playwright verification captures
@@ -2478,6 +2758,28 @@ if (paused && !holdLoader) {
         };
       })
       .filter((item) => item.visible && (item.detached || item.exposure >= 0.28));
+  },
+  setToppingDebug(opts: {
+    mode?: ToppingDebugMode;
+    filter?: ToppingDebugFilter;
+    airRaspberry?: boolean;
+    lightDeg?: number;
+    transBoost?: number;
+    spin?: boolean;
+    openPanel?: boolean;
+  }) {
+    if (opts.mode !== undefined) toppingDebugMode = opts.mode;
+    if (opts.filter !== undefined) toppingDebugFilter = opts.filter;
+    if (opts.airRaspberry !== undefined) floatAirRaspberry = opts.airRaspberry;
+    if (opts.lightDeg !== undefined) toppingDebugLightDeg = opts.lightDeg;
+    if (opts.transBoost !== undefined) RASPBERRY_LIGHT_UNIFORMS.uTransBoost.value = opts.transBoost;
+    if (opts.spin !== undefined) toppingDebugSpin = opts.spin;
+    if (opts.openPanel !== undefined) {
+      toppingsPanel.hidden = !opts.openPanel;
+      btnToppings.setAttribute('aria-expanded', String(opts.openPanel));
+    }
+    applyToppingDebugState(true);
+    renderFrame();
   },
   getState() {
     return {

@@ -31,6 +31,17 @@
 
     <div id="dev-dock" class="dev-dock" hidden>
       <div class="dev-dock-btns">
+        <button id="btn-toppings" class="pill-btn" type="button" title="Debug toppings inside &amp; outside ice (T)" aria-label="Debug toppings" aria-expanded="false" aria-controls="toppings-panel">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="9.5" cy="11" r="2.2"></circle>
+            <circle cx="14.5" cy="11" r="2.2"></circle>
+            <circle cx="12" cy="7.5" r="2.1"></circle>
+            <circle cx="10.2" cy="15.2" r="2.1"></circle>
+            <circle cx="13.8" cy="15.2" r="2.1"></circle>
+            <circle cx="12" cy="18.2" r="1.9"></circle>
+          </svg>
+          <span>Toppings</span>
+        </button>
         <button id="btn-customize" class="pill-btn" type="button" title="Customize popsicle (C)" aria-label="Customize popsicle" aria-expanded="false" aria-controls="customize-panel">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M7 10a5 5 0 0 1 10 0v6a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 16v-6Z"></path>
@@ -46,6 +57,39 @@
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
         </button>
+      </div>
+      <div id="toppings-panel" class="toppings-panel" hidden>
+        <div class="cust-head">
+          <b>Topping Debug</b>
+          <div class="cust-actions">
+            <button id="btn-top-reset" class="mini-btn" type="button" title="Reset debug view">Reset</button>
+          </div>
+        </div>
+
+        <div class="cust-section">
+          <div class="cust-label"><span>Stage</span><span id="top-stage-note" class="cust-hint">Inside &amp; outside ice</span></div>
+          <div class="seg-toggle seg-4" role="group" aria-label="Topping debug stage">
+            <button type="button" class="seg-btn" data-tmode="outside" aria-pressed="false">Outside</button>
+            <button type="button" class="seg-btn" data-tmode="both" aria-pressed="false">In + Out</button>
+            <button type="button" class="seg-btn" data-tmode="inside" aria-pressed="false">Inside</button>
+            <button type="button" class="seg-btn" data-tmode="off" aria-pressed="true">Off</button>
+          </div>
+        </div>
+
+        <div class="cust-section">
+          <div class="cust-label"><span>Topping</span><span id="top-filter-note" class="cust-hint">All 6</span></div>
+          <div id="top-filter-chips" class="chip-grid" role="group" aria-label="Topping filter"></div>
+        </div>
+
+        <div class="cust-section">
+          <div class="top-checks">
+            <label class="top-check"><input id="chk-air-rasp" type="checkbox" /><span>Air Raspberry</span></label>
+            <label class="top-check"><input id="chk-top-spin" type="checkbox" /><span>Slow Spin</span></label>
+          </div>
+          <label class="row"><span>Light</span><input id="sl-top-light" type="range" min="-180" max="180" step="2" value="-112" /><output id="val-top-light">-112°</output></label>
+          <label class="row"><span>Glow</span><input id="sl-top-glow" type="range" min="0.3" max="2.8" step="0.05" value="1.45" /><output id="val-top-glow">1.45×</output></label>
+          <label class="row"><span>Melt</span><input id="sl-top-melt" type="range" min="0" max="0.85" step="0.01" value="0.04" /><output id="val-top-melt">0.04</output></label>
+        </div>
       </div>
       <div id="customize-panel" class="customize-panel" hidden>
         <div class="cust-head">
