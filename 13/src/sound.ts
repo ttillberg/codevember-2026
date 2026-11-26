@@ -42,6 +42,8 @@ export class LabyrinthSound {
   private noiseBuf: AudioBuffer | null = null;
 
   private enabled = true;
+  private backgrounded = false;
+  private suspendTimer: number | null = null;
   private lastHitAt = 0;
   private chordIndex = 0;
   private chordTimer: number | null = null;
@@ -66,10 +68,50 @@ export class LabyrinthSound {
     if (this.sfxBus) {
       this.sfxBus.gain.setTargetAtTime(on ? 1.0 : 0.0001, now, 0.04);
     }
-    if (on) {
+    if (on && !this.backgrounded) {
+      if (this.ctx.state === 'suspended') void this.ctx.resume();
       this.ensureSchedulers();
     } else {
       this.stopSchedulers();
+    }
+  }
+
+  /** Cleanly mute and suspend all audio when the window blurs or tab hides, resuming smoothly on focus */
+  setBackgrounded(paused: boolean) {
+    if (paused === this.backgrounded) return;
+    this.backgrounded = paused;
+    if (!this.ctx) return;
+
+    if (this.suspendTimer !== null) {
+      window.clearTimeout(this.suspendTimer);
+      this.suspendTimer = null;
+    }
+
+    const now = this.ctx.currentTime;
+    if (paused) {
+      this.stopSchedulers();
+      if (this.rollGain) this.rollGain.gain.setTargetAtTime(0, now, 0.02);
+      if (this.sfxBus) this.sfxBus.gain.setTargetAtTime(0.0001, now, 0.02);
+      if (this.musicMaster) {
+        this.musicMaster.gain.cancelScheduledValues(now);
+        this.musicMaster.gain.setTargetAtTime(0.0001, now, 0.025);
+      }
+      this.suspendTimer = window.setTimeout(() => {
+        this.suspendTimer = null;
+        if (this.backgrounded && this.ctx && this.ctx.state === 'running') {
+          void this.ctx.suspend();
+        }
+      }, 110);
+    } else if (this.enabled) {
+      if (this.ctx.state === 'suspended') {
+        void this.ctx.resume();
+      }
+      if (this.sfxBus) this.sfxBus.gain.setTargetAtTime(1.0, now, 0.04);
+      if (this.musicMaster) {
+        this.musicMaster.gain.cancelScheduledValues(now);
+        this.musicMaster.gain.setTargetAtTime(0.54, now, 0.55);
+      }
+      this.ensureSchedulers();
     }
   }
 

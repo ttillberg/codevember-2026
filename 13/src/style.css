@@ -92,7 +92,7 @@ canvas.aiming {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: 1px;
   pointer-events: none;
   color: #1c1c1c;
 }
@@ -124,7 +124,7 @@ canvas.aiming {
   padding: 0;
   margin: 0;
   color: inherit;
-  font: 700 24px/1 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 700 24px/0.94 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   letter-spacing: -0.015em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -138,24 +138,14 @@ canvas.aiming {
   cursor: pointer;
   transition: opacity 0.15s ease;
 }
-.level-num.dev-select::after {
-  content: "▾";
-  font-size: 11px;
-  line-height: 1;
-  opacity: 0.55;
-  transition: transform 0.15s ease;
-}
-.level-num.dev-select[aria-expanded="true"]::after {
-  transform: rotate(180deg);
-}
 .level-num.dev-select:hover {
   opacity: 0.72;
 }
 .level-title {
-  font: 600 11px/1.2 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font: 600 9.5px/1.1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  opacity: 0.72;
+  opacity: 0.68;
   white-space: nowrap;
 }
 
@@ -363,7 +353,7 @@ canvas.aiming {
     font-size: 19px;
   }
   .level-title {
-    font-size: 10px;
+    font-size: 9px;
   }
   .tap-cue {
     bottom: calc(max(18px, env(safe-area-inset-bottom)) + 52px);

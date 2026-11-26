@@ -570,8 +570,10 @@ function buildHalfPipeEdgeGeometry(
     return out.set(dA.x * wA + dB.x * wB, dA.y * wA + dB.y * wB, dA.z * wA + dB.z * wB).normalize();
   };
 
-  // Trim pipe ends cleanly to the outer rim of each spherical junction bowl so pipes never slice across hub centers!
-  const hubTrimFrac = Math.min(0.24, 0.072 / Math.max(0.15, edge.arcLen));
+  // Trim pipe ends cleanly to the exact angular perimeter of each spherical junction bowl (rOut / R_BALL_PIPE)
+  // so half-pipe rails NEVER stab through or cross each other inside hub bowls!
+  const bowlOuterAng = 0.088 / R_BALL_PIPE; // ~0.121 rad
+  const hubTrimFrac = Math.min(0.34, bowlOuterAng / Math.max(0.18, edge.arcLen));
 
   for (let s = 0; s <= steps; s++) {
     const rawT = s / steps;
@@ -609,14 +611,16 @@ function buildHalfPipeEdgeGeometry(
   troughGeo.setIndex(indices);
   troughGeo.computeVertexNormals();
 
-  // Subtle machined external structural ribs along the underside of the half-pipe (visible through clear windows!)
+  // Subtle machined external structural ribs along the underside of the half-pipe (kept clear of junction bowls!)
   const ribGeos: THREE.BufferGeometry[] = [];
-  const ribCount = Math.max(2, Math.floor(edge.arcLen * 3.8));
+  const ribCount = Math.max(1, Math.floor((edge.arcLen - bowlOuterAng * 2) * 3.5));
   const ribArc = new THREE.TorusGeometry(rOut + 0.005, 0.0075, 8, 18, maxTheta * 2);
   // Orient torus arc around bottom (-Y)
   ribArc.rotateZ(-Math.PI / 2 - maxTheta);
+  const ribMinT = Math.min(0.45, hubTrimFrac + 0.05);
+  const ribMaxT = Math.max(0.55, 1 - hubTrimFrac - 0.05);
   for (let r = 1; r <= ribCount; r++) {
-    const t = r / (ribCount + 1);
+    const t = ribMinT + (r / (ribCount + 1)) * (ribMaxT - ribMinT);
     slerpDir(t, dir);
     const t2 = Math.min(1, t + 0.01);
     slerpDir(t2, nextDir);
@@ -643,12 +647,12 @@ function buildPipeNodeGeometry(node: PipeNode): { bowlGeo: THREE.BufferGeometry;
   const bowlParts: THREE.BufferGeometry[] = [];
   const metalParts: THREE.BufferGeometry[] = [];
 
-  // Hemispherical U-bowl cradle around node center at R_BALL_PIPE
-  const rIn = 0.07;
-  const rOut = 0.086;
+  // Smooth open hemispherical cradle dish around node center at R_BALL_PIPE (open upper rim lets incoming half-pipes flow cleanly!)
+  const rIn = 0.072;
+  const rOut = 0.088;
   const bowlPts: THREE.Vector2[] = [];
-  const segs = 10;
-  const maxAng = (102 * Math.PI) / 180;
+  const segs = 12;
+  const maxAng = (72 * Math.PI) / 180;
   for (let i = 0; i <= segs; i++) {
     const a = (maxAng * i) / segs;
     bowlPts.push(new THREE.Vector2(Math.max(0.0001, Math.sin(a) * rIn), R_BALL_PIPE - Math.cos(a) * rIn));
@@ -902,7 +906,7 @@ function buildWallColumnSeamGeometry(wall: WallSlot): THREE.BufferGeometry {
   };
 
   for (const endSign of [1, -1] as const) {
-    const ringNear = fullProfilePts(-0.0002, endSign);
+    const ringNear = fullProfilePts(0.0002, endSign);
     const ringFar = fullProfilePts(seamWidth, endSign);
     const n = ringNear.length;
     const base = positions.length / 3;
@@ -921,6 +925,90 @@ function buildWallColumnSeamGeometry(wall: WallSlot): THREE.BufferGeometry {
         indices.push(a, b, d, b, c, d);
       } else {
         indices.push(a, d, b, b, d, c);
+      }
+    }
+  }
+
+  // Deterministic scattered architectural panel seams on ~34% of walls (strictly following wall curves & lines!)
+  const sampleSlice = (t: number, width: number) => {
+    const halfT = (width * 0.5) / Math.max(0.05, arcLen);
+    const tA = Math.max(0.08, t - halfT);
+    const tB = Math.min(0.92, t + halfT);
+    const ringPtsAt = (tt: number): [number, number, number][] => {
+      const phi = wall.kind === 'lat' ? wall.phiStart : wall.phiStart + totalPhiSpan * tt;
+      const theta = wall.kind === 'lon' ? wall.thetaStart : wall.thetaStart + totalThetaSpan * tt;
+      sphToDir(phi, theta, dir);
+      if (wall.kind === 'lat') {
+        tangent.set(-Math.sin(theta), 0, Math.cos(theta)).normalize();
+      } else {
+        tangent.set(Math.cos(phi) * Math.cos(theta), -Math.sin(phi), Math.cos(phi) * Math.sin(theta)).normalize();
+      }
+      binormal.crossVectors(dir, tangent).normalize();
+
+      const out: [number, number, number][] = [];
+      for (let p = 0; p < profile.length; p++) {
+        const [offset, radius] = profile[p];
+        pt.copy(dir).multiplyScalar(radius).addScaledVector(binormal, offset * radius);
+        pt.normalize().multiplyScalar(radius);
+        out.push([pt.x, pt.y, pt.z]);
+      }
+      return out;
+    };
+    const rA = ringPtsAt(tA);
+    const rB = ringPtsAt(tB);
+    const n = rA.length;
+    const base = positions.length / 3;
+    for (let i = 0; i < n; i++) positions.push(rA[i][0], rA[i][1], rA[i][2]);
+    for (let i = 0; i < n; i++) positions.push(rB[i][0], rB[i][1], rB[i][2]);
+    for (let i = 0; i < n - 1; i++) {
+      const a = base + i;
+      const b = base + n + i;
+      const c = base + n + i + 1;
+      const d = base + i + 1;
+      indices.push(a, b, d, b, c, d);
+    }
+  };
+
+  const h = (((wall.id + 13) * 2654435761) >>> 0) / 4294967296;
+  if (arcLen > 0.22 && h < 0.34) {
+    if (h < 0.2) {
+      // Off-center transverse panel slice (stays clear of center padlock / arrow glyphs)
+      sampleSlice(h < 0.1 ? 0.29 : 0.71, 0.0014);
+    } else {
+      // Curved longitudinal datum seam running along both vertical side faces of the wall
+      const rBand = R_FLOOR + (R_WALL - R_FLOOR) * (h < 0.27 ? 0.62 : 0.38);
+      const halfBand = 0.00085;
+      const bandSteps = Math.max(8, Math.ceil(arcLen * 24));
+      const trimFrac = Math.min(0.28, (POST_RAD_UPPER + 0.0015) / Math.max(0.05, arcLen));
+      for (const side of [-1, 1]) {
+        const off = side * (WALL_HALF_WIDTH * 1.01 + lift);
+        const base = positions.length / 3;
+        for (let s = 0; s <= bandSteps; s++) {
+          const tt = trimFrac + (s / bandSteps) * (1 - trimFrac * 2);
+          const phi = wall.kind === 'lat' ? wall.phiStart : wall.phiStart + totalPhiSpan * tt;
+          const theta = wall.kind === 'lon' ? wall.thetaStart : wall.thetaStart + totalThetaSpan * tt;
+          sphToDir(phi, theta, dir);
+          if (wall.kind === 'lat') {
+            tangent.set(-Math.sin(theta), 0, Math.cos(theta)).normalize();
+          } else {
+            tangent.set(Math.cos(phi) * Math.cos(theta), -Math.sin(phi), Math.cos(phi) * Math.sin(theta)).normalize();
+          }
+          binormal.crossVectors(dir, tangent).normalize();
+
+          for (const rr of [rBand - halfBand, rBand + halfBand]) {
+            pt.copy(dir).multiplyScalar(rr).addScaledVector(binormal, off * rr);
+            pt.normalize().multiplyScalar(rr);
+            positions.push(pt.x, pt.y, pt.z);
+          }
+        }
+        for (let s = 0; s < bandSteps; s++) {
+          const a = base + s * 2;
+          const b = a + 1;
+          const c = a + 2;
+          const d = a + 3;
+          if (side > 0) indices.push(a, b, c, b, d, c);
+          else indices.push(a, c, b, b, c, d);
+        }
       }
     }
   }
@@ -1057,6 +1145,114 @@ function buildSeamGridGeometry(grid: SphereGrid): THREE.BufferGeometry {
     const q = new THREE.Quaternion().setFromUnitVectors(up, post.dir);
     ring.applyQuaternion(q);
     geos.push(ring);
+  }
+
+  return mergeGeometries(geos);
+}
+
+/**
+ * Deterministic scattered floor panel sub-seams (latitude arcs, longitude lines, and crisp 90° L-hatches)
+ * strictly following the spherical grid curves on ~44% of solid floor tiles.
+ */
+function buildFloorSubSeamsGeometry(grid: SphereGrid): THREE.BufferGeometry {
+  const geos: THREE.BufferGeometry[] = [];
+  const rSeam = R_FLOOR + 0.00105;
+  const halfW = 0.00115;
+  const margin = WALL_HALF_WIDTH * 1.12;
+
+  const pA = new THREE.Vector3();
+  const pB = new THREE.Vector3();
+
+  const addLatArc = (phi: number, t0: number, t1: number) => {
+    if (t1 - t0 < 0.03) return;
+    const steps = Math.max(4, Math.ceil((t1 - t0) * Math.sin(phi) * 28));
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    for (let s = 0; s <= steps; s++) {
+      const u = s / steps;
+      const th = t0 + u * (t1 - t0);
+      sphToDir(phi - halfW, th, pA);
+      sphToDir(phi + halfW, th, pB);
+      positions.push(pA.x * rSeam, pA.y * rSeam, pA.z * rSeam, pB.x * rSeam, pB.y * rSeam, pB.z * rSeam);
+      normals.push(pA.x, pA.y, pA.z, pB.x, pB.y, pB.z);
+      uvs.push(u, 0, u, 1);
+    }
+    for (let s = 0; s < steps; s++) {
+      const a = s * 2;
+      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(indices);
+    geos.push(g);
+  };
+
+  const addLonLine = (theta: number, p0: number, p1: number) => {
+    if (p1 - p0 < 0.03) return;
+    const steps = Math.max(4, Math.ceil((p1 - p0) * 28));
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    for (let s = 0; s <= steps; s++) {
+      const u = s / steps;
+      const ph = p0 + u * (p1 - p0);
+      const dTh = halfW / Math.max(0.18, Math.sin(ph));
+      sphToDir(ph, theta - dTh, pA);
+      sphToDir(ph, theta + dTh, pB);
+      positions.push(pA.x * rSeam, pA.y * rSeam, pA.z * rSeam, pB.x * rSeam, pB.y * rSeam, pB.z * rSeam);
+      normals.push(pA.x, pA.y, pA.z, pB.x, pB.y, pB.z);
+      uvs.push(u, 0, u, 1);
+    }
+    for (let s = 0; s < steps; s++) {
+      const a = s * 2;
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(indices);
+    geos.push(g);
+  };
+
+  for (const cell of grid.cells) {
+    if (cell.panelKind !== 'solid' || cell.band === 0 || cell.band === BANDS.length - 1) continue;
+    const h = (((cell.id + 41) * 2654435761) >>> 0) / 4294967296;
+    if (h > 0.44) continue;
+
+    const phiSpan = cell.phiMax - cell.phiMin;
+    const p0 = cell.phiMin + margin;
+    const p1 = cell.phiMax - margin;
+    const midSin = Math.max(0.25, Math.sin(cell.centerPhi));
+    const thMargin = margin / midSin;
+    const t0 = cell.thetaMin + thMargin;
+    const t1 = cell.thetaMax - thMargin;
+    const thSpan = t1 - t0;
+    if (p1 <= p0 + 0.04 || thSpan <= 0.05) continue;
+
+    const h2 = (((cell.id + 97) * 1597334677) >>> 0) / 4294967296;
+
+    if (h < 0.16) {
+      const frac = h2 < 0.5 ? 0.28 : 0.72;
+      addLatArc(cell.phiMin + phiSpan * frac, t0, t1);
+    } else if (h < 0.3) {
+      const frac = h2 < 0.5 ? 0.3 : 0.7;
+      addLonLine(t0 + thSpan * frac, p0, p1);
+    } else {
+      const pFrac = h2 < 0.5 ? 0.32 : 0.68;
+      const tFrac = h2 < 0.25 || h2 > 0.75 ? 0.34 : 0.66;
+      const pCorner = cell.phiMin + phiSpan * pFrac;
+      const tCorner = t0 + thSpan * tFrac;
+      if (tFrac < 0.5) addLatArc(pCorner, t0, tCorner);
+      else addLatArc(pCorner, tCorner, t1);
+      if (pFrac < 0.5) addLonLine(tCorner, p0, pCorner);
+      else addLonLine(tCorner, pCorner, p1);
+    }
   }
 
   return mergeGeometries(geos);
@@ -1753,6 +1949,13 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   seamMesh.receiveShadow = true;
   root.add(seamMesh);
   disposables.push(seamGeo);
+
+  // Subtle deterministic architectural floor panel sub-seams following latitude/longitude curves
+  const floorSubSeamsGeo = buildFloorSubSeamsGeometry(grid);
+  const floorSubSeamsMesh = new THREE.Mesh(floorSubSeamsGeo, seamMat);
+  floorSubSeamsMesh.receiveShadow = true;
+  root.add(floorSubSeamsMesh);
+  disposables.push(floorSubSeamsGeo);
 
   const baseWallMat = new THREE.MeshStandardMaterial({
     color: COLOR_WALL_RAISED,

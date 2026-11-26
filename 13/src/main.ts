@@ -574,7 +574,15 @@ window.addEventListener('keyup', (e) => {
 });
 window.addEventListener('blur', () => {
   cmdHeld = false;
+  keysDown.clear();
   canvas.classList.remove('aiming');
+  sound.setBackgrounded(true);
+});
+window.addEventListener('focus', () => {
+  if (!document.hidden) sound.setBackgrounded(false);
+});
+document.addEventListener('visibilitychange', () => {
+  sound.setBackgrounded(document.hidden);
 });
 
 function resetCurrentLevel() {

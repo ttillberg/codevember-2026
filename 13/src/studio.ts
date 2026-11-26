@@ -56,9 +56,9 @@ export function createAimReticle(radius: number): AimReticleRig {
     vOffset += n * 2;
   };
 
-  // 1. Delicate curved spherical center ring (angular radius ~0.080 rad, framing the chrome steel ball cleanly)
+  // 1. Small hairline curved spherical center ring
   const ringSegs = 64;
-  const ringTheta = 0.08;
+  const ringTheta = 0.036;
   const ringPts: THREE.Vector3[] = [];
   for (let i = 0; i < ringSegs; i++) {
     const a = (i / ringSegs) * Math.PI * 2;
@@ -70,12 +70,12 @@ export function createAimReticle(radius: number): AimReticleRig {
       ),
     );
   }
-  pushStrip(ringPts, 0.0032, true);
+  pushStrip(ringPts, 0.0011, true);
 
-  // 2. Four curved great-circle crosshair arms (+X, -X, +Y, -Y) hugging the sphere curvature
+  // 2. Four razor-thin curved great-circle crosshair arms (+X, -X, +Y, -Y) hugging the sphere curvature
   const armSegs = 12;
-  const armStart = 0.104;
-  const armEnd = 0.245;
+  const armStart = 0.056;
+  const armEnd = 0.205;
   const dirs: [number, number][] = [
     [1, 0],
     [-1, 0],
@@ -88,7 +88,7 @@ export function createAimReticle(radius: number): AimReticleRig {
       const th = armStart + (armEnd - armStart) * (i / armSegs);
       armPts.push(new THREE.Vector3(dx * Math.sin(th) * radius, dy * Math.sin(th) * radius, Math.cos(th) * radius));
     }
-    pushStrip(armPts, 0.0035, false);
+    pushStrip(armPts, 0.0011, false);
   }
 
   const geo = new THREE.BufferGeometry();
