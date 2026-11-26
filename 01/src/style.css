@@ -477,6 +477,10 @@ body {
   background: rgba(28, 28, 28, 0.05);
 }
 
+.debug-seg-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .debug-seg-3 {
   grid-template-columns: repeat(3, 1fr);
 }
@@ -540,6 +544,7 @@ body {
   border: 1px solid rgba(28, 28, 28, 0.12);
   background: rgba(245, 244, 240, 0.72);
   overflow: hidden;
+  cursor: pointer;
 }
 
 .debug-curve-box svg {
@@ -573,17 +578,29 @@ body {
 .debug-curve-box .curve-stroke {
   fill: none;
   stroke: var(--ink);
-  stroke-width: 1.85;
+  stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: stroke 140ms ease, stroke-width 140ms ease;
 }
 
 .debug-curve-box .curve-stroke-next {
   fill: none;
-  stroke: rgba(28, 28, 28, 0.42);
-  stroke-width: 1.5;
+  stroke: rgba(28, 28, 28, 0.36);
+  stroke-width: 1.45;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: stroke 140ms ease, stroke-width 140ms ease;
+}
+
+.debug-curve-box.editing-next .curve-stroke {
+  stroke: rgba(28, 28, 28, 0.36);
+  stroke-width: 1.45;
+}
+
+.debug-curve-box.editing-next .curve-stroke-next {
+  stroke: var(--ink);
+  stroke-width: 1.9;
 }
 
 .debug-curve-box .curve-dot {

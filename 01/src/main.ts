@@ -38,9 +38,11 @@ import type { CityBuildingPlot } from './cityGenerator';
 import type { CityView, CityViewStats } from './cityView';
 import {
   DEFAULT_AUTO_FOLD_CURVE,
+  DEFAULT_NEXT_FOLD_CURVE,
   DUAL_CURVE_MAX_T,
   buildDualFoldCurveSvg,
   evaluateFoldCurve,
+  type FoldCurveShape,
 } from './foldCurve';
 
 const THUMB_SIZE = 240;
@@ -93,6 +95,9 @@ const dbgCameraTrick = document.getElementById('dbg-camera-trick') as HTMLSelect
 const dbgGlideFold = document.getElementById('dbg-glide-fold') as HTMLInputElement;
 const dbgFadeProj = document.getElementById('dbg-fade-proj') as HTMLInputElement;
 const dbgAutoBpm = document.getElementById('dbg-auto-bpm') as HTMLElement;
+const dbgCurveBox = document.getElementById('dbg-curve-box') as HTMLDivElement;
+const dbgCurveTabs = document.getElementById('dbg-curve-tabs') as HTMLDivElement;
+const dbgCurveTabBtns = Array.from(dbgCurveTabs.querySelectorAll<HTMLButtonElement>('.debug-seg-btn'));
 const dbgCurvePath = document.getElementById('dbg-curve-path') as unknown as SVGPathElement;
 const dbgCurvePath2 = document.getElementById('dbg-curve-path2') as unknown as SVGPathElement;
 const dbgCurveOverlap = document.getElementById('dbg-curve-overlap') as unknown as SVGRectElement;
@@ -178,7 +183,7 @@ btnCatalog.innerHTML = ICON_GRID;
 btnCity.innerHTML = ICON_CITY;
 btnDebug.innerHTML = ICON_GEAR;
 
-const SETTINGS_STORAGE_KEY = 'codevember-2026:01:settings:v5';
+const SETTINGS_STORAGE_KEY = 'codevember-2026:01:settings:v6';
 
 const VALID_TOPOLOGIES: readonly NetTopology[] = ['cross', 'ribbon', 'hex', 'oct', 'lwing', 'setback', 'village'];
 const VALID_ROOFS: readonly RoofType[] = ['gable', 'mansard', 'spire', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
@@ -220,6 +225,9 @@ interface DebugSettings {
   autoEaseIn: number;
   autoEaseOut: number;
   autoCurve: number;
+  autoEaseIn2: number;
+  autoEaseOut2: number;
+  autoCurve2: number;
   autoHandoff: number;
   cutoutDropDelay: number;
   shadowStrength: number;
@@ -247,14 +255,17 @@ const FACTORY_SETTINGS: DebugSettings = {
   seed: 0,
   color: false,
   spin: true,
-  cameraTrick: 'off',
+  cameraTrick: 'balanced',
   glideOnFold: true,
-  fadeProjOnFold: true,
+  fadeProjOnFold: false,
   autoFold: false,
   autoSpeed: DEFAULT_AUTO_FOLD_CURVE.speed,
   autoEaseIn: DEFAULT_AUTO_FOLD_CURVE.inPct,
   autoEaseOut: DEFAULT_AUTO_FOLD_CURVE.outPct,
   autoCurve: DEFAULT_AUTO_FOLD_CURVE.curvePct,
+  autoEaseIn2: DEFAULT_NEXT_FOLD_CURVE.inPct,
+  autoEaseOut2: DEFAULT_NEXT_FOLD_CURVE.outPct,
+  autoCurve2: DEFAULT_NEXT_FOLD_CURVE.curvePct,
   autoHandoff: DEFAULT_AUTO_FOLD_CURVE.handoffPct,
   cutoutDropDelay: 0.55,
   shadowStrength: 100,
@@ -352,6 +363,15 @@ function loadSavedSettings(): DebugSettings {
       }
       if (typeof parsed.autoCurve === 'number' && Number.isFinite(parsed.autoCurve)) {
         s.autoCurve = Math.max(0, Math.min(100, parsed.autoCurve));
+      }
+      if (typeof parsed.autoEaseIn2 === 'number' && Number.isFinite(parsed.autoEaseIn2)) {
+        s.autoEaseIn2 = Math.max(0, Math.min(100, parsed.autoEaseIn2));
+      }
+      if (typeof parsed.autoEaseOut2 === 'number' && Number.isFinite(parsed.autoEaseOut2)) {
+        s.autoEaseOut2 = Math.max(0, Math.min(100, parsed.autoEaseOut2));
+      }
+      if (typeof parsed.autoCurve2 === 'number' && Number.isFinite(parsed.autoCurve2)) {
+        s.autoCurve2 = Math.max(0, Math.min(100, parsed.autoCurve2));
       }
       if (typeof parsed.autoHandoff === 'number' && Number.isFinite(parsed.autoHandoff)) {
         s.autoHandoff = Math.max(35, Math.min(140, parsed.autoHandoff));
@@ -504,6 +524,22 @@ let autoCurve =
   pAutoCurve !== null && Number.isFinite(Number(pAutoCurve))
     ? Math.max(0, Math.min(100, Number(pAutoCurve)))
     : initialSettings.autoCurve;
+const pAutoIn2 = params.get('autoIn2');
+let autoEaseIn2 =
+  pAutoIn2 !== null && Number.isFinite(Number(pAutoIn2))
+    ? Math.max(0, Math.min(100, Number(pAutoIn2)))
+    : initialSettings.autoEaseIn2;
+const pAutoOut2 = params.get('autoOut2');
+let autoEaseOut2 =
+  pAutoOut2 !== null && Number.isFinite(Number(pAutoOut2))
+    ? Math.max(0, Math.min(100, Number(pAutoOut2)))
+    : initialSettings.autoEaseOut2;
+const pAutoCurve2 = params.get('autoCurve2');
+let autoCurve2 =
+  pAutoCurve2 !== null && Number.isFinite(Number(pAutoCurve2))
+    ? Math.max(0, Math.min(100, Number(pAutoCurve2)))
+    : initialSettings.autoCurve2;
+let editingCurveTab: 1 | 2 = 1;
 const pAutoHandoff = params.get('autoHandoff');
 let autoHandoff =
   pAutoHandoff !== null && Number.isFinite(Number(pAutoHandoff))
@@ -585,8 +621,20 @@ function formatHandoffTag(pct: number): string {
   return `+${rounded - 100}% pause`;
 }
 
+function getFoldCurve1(): FoldCurveShape {
+  return { inPct: autoEaseIn, outPct: autoEaseOut, curvePct: autoCurve };
+}
+
+function getFoldCurve2(): FoldCurveShape {
+  return { inPct: autoEaseIn2, outPct: autoEaseOut2, curvePct: autoCurve2 };
+}
+
+function getCurveForGeneration(gen: number): FoldCurveShape {
+  return gen % 2 === 1 ? getFoldCurve1() : getFoldCurve2();
+}
+
 function updateCurvePreview(): void {
-  const g = buildDualFoldCurveSvg(autoEaseIn, autoEaseOut, autoCurve, autoHandoff, 220, 58, 8, 7);
+  const g = buildDualFoldCurveSvg(getFoldCurve1(), getFoldCurve2(), autoHandoff, 220, 58, 8, 7);
   dbgCurvePath.setAttribute('d', g.path1);
   dbgCurvePath2.setAttribute('d', g.path2);
   dbgCurveOverlap.setAttribute('x', g.overlapX.toFixed(1));
@@ -600,34 +648,70 @@ function updateCurvePreview(): void {
   dbgCurveCutoutLine.setAttribute('x1', cutoutX.toFixed(1));
   dbgCurveCutoutLine.setAttribute('x2', cutoutX.toFixed(1));
   dbgCurveCutoutLine.style.opacity = cutoutDropDelay > 0.005 ? '1' : '0.35';
+  dbgCurveBox.classList.toggle('editing-next', editingCurveTab === 2);
   dbgAutoBpm.textContent = formatHandoffTag(autoHandoff);
 }
 
-function updateCurvePlayhead(activeU: number, active: boolean, outgoingU: number | null): void {
+function syncCurveTabSliders(): void {
+  const active = editingCurveTab === 1 ? getFoldCurve1() : getFoldCurve2();
+  for (const btn of dbgCurveTabBtns) {
+    const isSel = btn.dataset.curveTab === String(editingCurveTab);
+    btn.classList.toggle('active', isSel);
+    btn.setAttribute('aria-selected', isSel ? 'true' : 'false');
+  }
+  dbgAutoIn.value = String(Math.round(active.inPct));
+  dbgAutoInVal.textContent = `${Math.round(active.inPct)}%`;
+  dbgAutoOut.value = String(Math.round(active.outPct));
+  dbgAutoOutVal.textContent = `${Math.round(active.outPct)}%`;
+  dbgAutoCurve.value = String(Math.round(active.curvePct));
+  dbgAutoCurveVal.textContent = `${Math.round(active.curvePct)}%`;
+  updateCurvePreview();
+}
+
+function updateCurvePlayhead(
+  activeU: number,
+  active: boolean,
+  activeGen: number,
+  outgoingU: number | null,
+  outgoingGen: number | null,
+): void {
   if (debugPanel.hidden) return;
   const handoffT = autoHandoff / 100;
   const tToX = (t: number) => 8 + (t / DUAL_CURVE_MAX_T) * 204;
   const yToSvg = (y: number) => 7 + (1 - y) * 44;
+  const c1 = getFoldCurve1();
+  const c2 = getFoldCurve2();
 
-  if (outgoingU !== null && active) {
-    // Live dual-house overlap: Curve 1 dot finishes outgoing tail while Curve 2 dot rises in lockstep!
-    const tOut = clamp01(outgoingU);
-    const tIn = clamp01(activeU);
-    dbgCurveDot.classList.add('active');
-    dbgCurveDot.setAttribute('cx', tToX(tOut).toFixed(1));
-    dbgCurveDot.setAttribute('cy', yToSvg(evaluateFoldCurve(tOut, autoEaseIn, autoEaseOut, autoCurve)).toFixed(1));
-    dbgCurveDot2.classList.add('active');
-    dbgCurveDot2.setAttribute('cx', tToX(handoffT + tIn).toFixed(1));
-    dbgCurveDot2.setAttribute('cy', yToSvg(evaluateFoldCurve(tIn, autoEaseIn, autoEaseOut, autoCurve)).toFixed(1));
+  const placeOnSlot = (dot: SVGCircleElement, slot: 1 | 2, uRaw: number) => {
+    const u = clamp01(uRaw);
+    const c = slot === 1 ? c1 : c2;
+    const t = slot === 1 ? u : handoffT + u;
+    dot.classList.add('active');
+    dot.setAttribute('cx', tToX(t).toFixed(1));
+    dot.setAttribute('cy', yToSvg(evaluateFoldCurve(u, c.inPct, c.outPct, c.curvePct)).toFixed(1));
+  };
+
+  if (!active && outgoingU === null) {
+    dbgCurveDot.classList.remove('active');
+    dbgCurveDot2.classList.remove('active');
     return;
   }
 
-  dbgCurveDot2.classList.remove('active');
-  dbgCurveDot.classList.toggle('active', active);
-  if (!active) return;
-  const u = clamp01(activeU);
-  dbgCurveDot.setAttribute('cx', tToX(u).toFixed(1));
-  dbgCurveDot.setAttribute('cy', yToSvg(evaluateFoldCurve(u, autoEaseIn, autoEaseOut, autoCurve)).toFixed(1));
+  const activeSlot: 1 | 2 = activeGen % 2 === 1 ? 1 : 2;
+  if (active) {
+    placeOnSlot(activeSlot === 1 ? dbgCurveDot : dbgCurveDot2, activeSlot, activeU);
+  } else {
+    (activeSlot === 1 ? dbgCurveDot : dbgCurveDot2).classList.remove('active');
+  }
+
+  if (outgoingU !== null && outgoingGen !== null) {
+    const outSlot: 1 | 2 = outgoingGen % 2 === 1 ? 1 : 2;
+    if (outSlot !== activeSlot) {
+      placeOnSlot(outSlot === 1 ? dbgCurveDot : dbgCurveDot2, outSlot, outgoingU);
+      return;
+    }
+  }
+  (activeSlot === 1 ? dbgCurveDot2 : dbgCurveDot).classList.remove('active');
 }
 
 function syncDebugControls(): void {
@@ -678,15 +762,9 @@ function syncDebugControls(): void {
   dbgAutoSpeedVal.textContent = `${autoSpeed.toFixed(2)}×`;
   dbgAutoHandoff.value = String(Math.round(autoHandoff));
   dbgAutoHandoffVal.textContent = `${Math.round(autoHandoff)}%`;
-  dbgAutoIn.value = String(Math.round(autoEaseIn));
-  dbgAutoInVal.textContent = `${Math.round(autoEaseIn)}%`;
-  dbgAutoOut.value = String(Math.round(autoEaseOut));
-  dbgAutoOutVal.textContent = `${Math.round(autoEaseOut)}%`;
-  dbgAutoCurve.value = String(Math.round(autoCurve));
-  dbgAutoCurveVal.textContent = `${Math.round(autoCurve)}%`;
   dbgCutoutDelay.value = String(Math.round(cutoutDropDelay * 100));
   dbgCutoutDelayVal.textContent = `${cutoutDropDelay.toFixed(2)}s`;
-  updateCurvePreview();
+  syncCurveTabSliders();
 
   // Light & shadow controls
   dbgShadowStrength.value = String(Math.round(shadowStrength));
@@ -729,6 +807,9 @@ function saveDebugSettings(): void {
       autoEaseIn,
       autoEaseOut,
       autoCurve,
+      autoEaseIn2,
+      autoEaseOut2,
+      autoCurve2,
       autoHandoff,
       cutoutDropDelay,
       shadowStrength,
@@ -1087,6 +1168,8 @@ interface PanelState {
 }
 
 interface OutgoingLiveHouse {
+  generation: number;
+  curve: FoldCurveShape;
   rig: OrigamiHouseRig;
   mats: OrigamiMaterials;
   panelState: Map<FoldablePanelId, PanelState>;
@@ -1507,6 +1590,8 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
     outCam.updateMatrixWorld(true);
     rig.root.visible = false;
     outgoing = {
+      generation,
+      curve: getCurveForGeneration(generation),
       rig,
       mats: materials,
       panelState: clonedPanels,
@@ -1625,8 +1710,8 @@ function computeFoldProgress(): number {
  * lifts promptly on Beat 1 (so the incoming house starts raising early during the overlap!)
  * then decelerates gracefully through 75% -> 100% into a soft seamless finish.
  */
-function easePaperFold(x: number): number {
-  return evaluateFoldCurve(x, autoEaseIn, autoEaseOut, autoCurve);
+function easePaperFold(x: number, curve: FoldCurveShape = getCurveForGeneration(generation)): number {
+  return evaluateFoldCurve(x, curve.inPct, curve.outPct, curve.curvePct);
 }
 
 function startPanelCurve(ps: PanelState, target: number, durationSec: number, delaySec = 0): void {
@@ -1998,6 +2083,10 @@ function resetToFactory(): void {
   autoEaseIn = FACTORY_SETTINGS.autoEaseIn;
   autoEaseOut = FACTORY_SETTINGS.autoEaseOut;
   autoCurve = FACTORY_SETTINGS.autoCurve;
+  autoEaseIn2 = FACTORY_SETTINGS.autoEaseIn2;
+  autoEaseOut2 = FACTORY_SETTINGS.autoEaseOut2;
+  autoCurve2 = FACTORY_SETTINGS.autoCurve2;
+  editingCurveTab = 1;
   autoHandoff = FACTORY_SETTINGS.autoHandoff;
   cutoutDropDelay = FACTORY_SETTINGS.cutoutDropDelay;
   shadowStrength = FACTORY_SETTINGS.shadowStrength;
@@ -3121,21 +3210,41 @@ dbgAutoHandoff.addEventListener('input', () => {
   updateCurvePreview();
   saveDebugSettings();
 });
+for (const btn of dbgCurveTabBtns) {
+  btn.addEventListener('click', () => {
+    editingCurveTab = btn.dataset.curveTab === '2' ? 2 : 1;
+    syncCurveTabSliders();
+  });
+}
+dbgCurveBox.addEventListener('click', (e) => {
+  const rect = dbgCurveBox.getBoundingClientRect();
+  if (rect.width <= 0) return;
+  const relX = (e.clientX - rect.left) / rect.width;
+  const split = Math.min(0.65, Math.max(0.32, (autoHandoff / 100) / DUAL_CURVE_MAX_T + 0.08));
+  editingCurveTab = relX >= split ? 2 : 1;
+  syncCurveTabSliders();
+});
 dbgAutoIn.addEventListener('input', () => {
-  autoEaseIn = Math.max(0, Math.min(100, Number(dbgAutoIn.value) || 0));
-  dbgAutoInVal.textContent = `${Math.round(autoEaseIn)}%`;
+  const v = Math.max(0, Math.min(100, Number(dbgAutoIn.value) || 0));
+  if (editingCurveTab === 1) autoEaseIn = v;
+  else autoEaseIn2 = v;
+  dbgAutoInVal.textContent = `${Math.round(v)}%`;
   updateCurvePreview();
   saveDebugSettings();
 });
 dbgAutoOut.addEventListener('input', () => {
-  autoEaseOut = Math.max(0, Math.min(100, Number(dbgAutoOut.value) || 0));
-  dbgAutoOutVal.textContent = `${Math.round(autoEaseOut)}%`;
+  const v = Math.max(0, Math.min(100, Number(dbgAutoOut.value) || 0));
+  if (editingCurveTab === 1) autoEaseOut = v;
+  else autoEaseOut2 = v;
+  dbgAutoOutVal.textContent = `${Math.round(v)}%`;
   updateCurvePreview();
   saveDebugSettings();
 });
 dbgAutoCurve.addEventListener('input', () => {
-  autoCurve = Math.max(0, Math.min(100, Number(dbgAutoCurve.value) || 0));
-  dbgAutoCurveVal.textContent = `${Math.round(autoCurve)}%`;
+  const v = Math.max(0, Math.min(100, Number(dbgAutoCurve.value) || 0));
+  if (editingCurveTab === 1) autoCurve = v;
+  else autoCurve2 = v;
+  dbgAutoCurveVal.textContent = `${Math.round(v)}%`;
   updateCurvePreview();
   saveDebugSettings();
 });
@@ -3340,6 +3449,9 @@ if (isDebugMode && params.has('city')) {
         inPct?: number;
         outPct?: number;
         curvePct?: number;
+        inPct2?: number;
+        outPct2?: number;
+        curvePct2?: number;
         handoffPct?: number;
         cutoutDelaySec?: number;
       }) => void;
@@ -3367,6 +3479,9 @@ if (isDebugMode && params.has('city')) {
         autoEaseIn: number;
         autoEaseOut: number;
         autoCurve: number;
+        autoEaseIn2: number;
+        autoEaseOut2: number;
+        autoCurve2: number;
         autoHandoff: number;
         cutoutDropDelay: number;
         cameraTrick: CameraTrickMode;
@@ -3552,6 +3667,9 @@ if (isDebugMode && params.has('city')) {
     inPct?: number;
     outPct?: number;
     curvePct?: number;
+    inPct2?: number;
+    outPct2?: number;
+    curvePct2?: number;
     handoffPct?: number;
     cutoutDelaySec?: number;
   }) {
@@ -3566,6 +3684,15 @@ if (isDebugMode && params.has('city')) {
     }
     if (typeof opts.curvePct === 'number' && Number.isFinite(opts.curvePct)) {
       autoCurve = Math.max(0, Math.min(100, opts.curvePct));
+    }
+    if (typeof opts.inPct2 === 'number' && Number.isFinite(opts.inPct2)) {
+      autoEaseIn2 = Math.max(0, Math.min(100, opts.inPct2));
+    }
+    if (typeof opts.outPct2 === 'number' && Number.isFinite(opts.outPct2)) {
+      autoEaseOut2 = Math.max(0, Math.min(100, opts.outPct2));
+    }
+    if (typeof opts.curvePct2 === 'number' && Number.isFinite(opts.curvePct2)) {
+      autoCurve2 = Math.max(0, Math.min(100, opts.curvePct2));
     }
     if (typeof opts.handoffPct === 'number' && Number.isFinite(opts.handoffPct)) {
       autoHandoff = Math.max(35, Math.min(140, opts.handoffPct));
@@ -3625,6 +3752,9 @@ if (isDebugMode && params.has('city')) {
       autoEaseIn,
       autoEaseOut,
       autoCurve,
+      autoEaseIn2,
+      autoEaseOut2,
+      autoCurve2,
       autoHandoff,
       cutoutDropDelay,
       cameraTrick: debugCameraTrick,
@@ -3722,7 +3852,7 @@ function animate(now: number): void {
     }
     outgoingPlayheadU = outMaxU;
   }
-  updateCurvePlayhead(activeAnimMaxU, anyPanelAnimating, outgoingPlayheadU);
+  updateCurvePlayhead(activeAnimMaxU, anyPanelAnimating, generation, outgoingPlayheadU, outgoing ? outgoing.generation : null);
 
   const foldProg = computeFoldProgress();
   materials.setProjectionFade(computeProjectionFade(foldProg));
@@ -3845,7 +3975,7 @@ function animate(now: number): void {
         } else {
           ps.animElapsed += foldDt;
           const u = clamp01(ps.animElapsed / ps.animDuration);
-          ps.fold = ps.startFold + (ps.target - ps.startFold) * easePaperFold(u);
+          ps.fold = ps.startFold + (ps.target - ps.startFold) * easePaperFold(u, outgoing.curve);
           if (u >= 1) {
             ps.fold = ps.target;
             ps.animating = false;

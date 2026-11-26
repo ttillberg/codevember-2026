@@ -4,19 +4,24 @@
  *   - `inPct` (`0..100`): ease-in ramp weight at the start (`u -> 0`)
  *   - `outPct` (`0..100`): ease-out deceleration tail at the end (`u -> 1`)
  *   - `curvePct` (`0..100`): curve steepness (`0` = linear, `50` = smooth cubic-bezier, `100` = crisp S-curve)
- *   - `handoffPct` (`35..140`): when the next house starts folding relative to the current house's fold (`<100%` = live overlap, `100%` = back-to-back, `>100%` = hold pause)
+ *   - `handoffPct` (`35..140`): when the next house starts folding relative to the current house's fold
+ *
+ * Supports independent curves for alternating folds (`Fold 1` = odd layers, `Fold 2` = even layers)!
  */
 
-export interface AutoFoldCurveParams {
+export interface FoldCurveShape {
+  /** Ease-in strength percentage (`0..100`) */
+  inPct: number;
+  /** Ease-out strength percentage (`0..100`) */
+  outPct: number;
+  /** Curve steepness percentage (`0..100`) */
+  curvePct: number;
+}
+
+export interface AutoFoldCurveParams extends FoldCurveShape {
   /** Overall auto-fold speed multiplier (`0.25..3.0`, default `1.0`) */
   speed: number;
-  /** Ease-in strength percentage (`0..100`, default `40`) */
-  inPct: number;
-  /** Ease-out strength percentage (`0..100`, default `40`) */
-  outPct: number;
-  /** Curve steepness percentage (`0..100`, default `100` for crisp S-curve) */
-  curvePct: number;
-  /** Next-fold trigger timing as % of House 1's fold duration (`35..140`, default `70`) */
+  /** Next-fold trigger timing as % of House 1's fold duration (`35..140`, default `99`) */
   handoffPct: number;
 }
 
@@ -25,7 +30,13 @@ export const DEFAULT_AUTO_FOLD_CURVE: Readonly<AutoFoldCurveParams> = {
   inPct: 40,
   outPct: 40,
   curvePct: 75,
-  handoffPct: 99,
+  handoffPct: 85,
+};
+
+export const DEFAULT_NEXT_FOLD_CURVE: Readonly<FoldCurveShape> = {
+  inPct: 40,
+  outPct: 40,
+  curvePct: 75,
 };
 
 export const DUAL_CURVE_MAX_T = 2.4;
@@ -52,7 +63,6 @@ export function evaluateCubicBezier(u: number, x1: number, y1: number, x2: numbe
   const sampleDX = (t: number) => (3 * ax * t + 2 * bx) * t + cx;
   const sampleY = (t: number) => ((ay * t + by) * t + cy) * t;
 
-  // Fast Newton-Raphson solve with guaranteed bracketed bisection fallback
   let t = x;
   for (let i = 0; i < 6; i++) {
     const err = sampleX(t) - x;
@@ -95,19 +105,16 @@ export function evaluateFoldCurve(u: number, inPct: number, outPct: number, curv
     return x;
   }
 
-  // Keep handles strictly inside `(0, 1)` so x(t) is strictly increasing with zero vertical singularity
   const x1 = inAmt * 0.96;
   const x2 = 1 - outAmt * 0.96;
 
   if (c01 <= 0.5) {
-    // 0% -> 50%: smoothly bend from pure linear (`y1 = x1, y2 = x2`) to classic cubic-bezier (`y1 = 0, y2 = 1`)
     const s = c01 * 2;
     const y1 = x1 * (1 - s);
     const y2 = x2 + (1 - x2) * s;
     return evaluateCubicBezier(x, x1, y1, x2, y2);
   }
 
-  // 50% -> 100%: progressively compound the cubic-bezier for a crisp sculptural S-curve
   const extra = (c01 - 0.5) * 2;
   const first = evaluateCubicBezier(x, x1, 0, x2, 1);
   const second = evaluateCubicBezier(first, x1, 0, x2, 1);
@@ -141,11 +148,10 @@ export function buildFoldCurveSvgPath(
   return d;
 }
 
-/** Build House 1 + House 2 overlapping S-curve SVG geometry on a fixed `[0..2.4]` timeline so dragging `Next fold` slides House 2 live! */
+/** Build Fold 1 + Fold 2 independent curve SVG geometry on a fixed `[0..2.4]` timeline */
 export function buildDualFoldCurveSvg(
-  inPct: number,
-  outPct: number,
-  curvePct: number,
+  curve1: FoldCurveShape,
+  curve2: FoldCurveShape,
   handoffPct: number,
   width = 220,
   height = 58,
@@ -162,11 +168,22 @@ export function buildDualFoldCurveSvg(
   const innerW = width - padX * 2;
   const handoffT = Math.max(0.35, Math.min(1.4, handoffPct / 100));
   const tToX = (t: number) => padX + (t / DUAL_CURVE_MAX_T) * innerW;
-  const path1 = buildFoldCurveSvgPath(inPct, outPct, curvePct, width, height, padX, padY, 32, 0, DUAL_CURVE_MAX_T);
+  const path1 = buildFoldCurveSvgPath(
+    curve1.inPct,
+    curve1.outPct,
+    curve1.curvePct,
+    width,
+    height,
+    padX,
+    padY,
+    32,
+    0,
+    DUAL_CURVE_MAX_T,
+  );
   const path2 = buildFoldCurveSvgPath(
-    inPct,
-    outPct,
-    curvePct,
+    curve2.inPct,
+    curve2.outPct,
+    curve2.curvePct,
     width,
     height,
     padX,

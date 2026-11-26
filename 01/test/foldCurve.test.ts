@@ -67,14 +67,30 @@ describe('Auto-fold easing curve (`evaluateFoldCurve`)', () => {
     );
     expect(single.startsWith('M')).toBe(true);
 
-    const overlap = buildDualFoldCurveSvg(40, 40, 100, 70);
+    const overlap = buildDualFoldCurveSvg(
+      { inPct: 40, outPct: 40, curvePct: 100 },
+      { inPct: 10, outPct: 85, curvePct: 75 },
+      70,
+    );
     expect(overlap.path1.startsWith('M')).toBe(true);
     expect(overlap.path2.startsWith('M')).toBe(true);
     expect(overlap.handoffX).toBeLessThan(overlap.end1X);
     expect(overlap.overlapW).toBeGreaterThan(10);
 
-    const gap = buildDualFoldCurveSvg(40, 40, 100, 120);
+    const gap = buildDualFoldCurveSvg(
+      { inPct: 40, outPct: 40, curvePct: 100 },
+      { inPct: 80, outPct: 20, curvePct: 90 },
+      120,
+    );
     expect(gap.handoffX).toBeGreaterThan(gap.end1X);
     expect(gap.overlapW).toBe(0);
+    // Changing Curve 2 changes path2 while leaving path1 unchanged
+    const alt = buildDualFoldCurveSvg(
+      { inPct: 40, outPct: 40, curvePct: 100 },
+      { inPct: 5, outPct: 95, curvePct: 100 },
+      120,
+    );
+    expect(alt.path1).toBe(gap.path1);
+    expect(alt.path2).not.toBe(gap.path2);
   });
 });
