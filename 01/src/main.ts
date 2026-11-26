@@ -36,6 +36,12 @@ import {
 import type { CatalogThumbRenderer, CatalogViewMode } from './catalogThumbRenderer';
 import type { CityBuildingPlot } from './cityGenerator';
 import type { CityView, CityViewStats } from './cityView';
+import {
+  DEFAULT_AUTO_FOLD_CURVE,
+  DUAL_CURVE_MAX_T,
+  buildDualFoldCurveSvg,
+  evaluateFoldCurve,
+} from './foldCurve';
 
 const THUMB_SIZE = 240;
 
@@ -86,6 +92,35 @@ const dbgSpin = document.getElementById('dbg-spin') as HTMLInputElement;
 const dbgCameraTrick = document.getElementById('dbg-camera-trick') as HTMLSelectElement;
 const dbgGlideFold = document.getElementById('dbg-glide-fold') as HTMLInputElement;
 const dbgFadeProj = document.getElementById('dbg-fade-proj') as HTMLInputElement;
+const dbgAutoBpm = document.getElementById('dbg-auto-bpm') as HTMLElement;
+const dbgCurvePath = document.getElementById('dbg-curve-path') as unknown as SVGPathElement;
+const dbgCurvePath2 = document.getElementById('dbg-curve-path2') as unknown as SVGPathElement;
+const dbgCurveOverlap = document.getElementById('dbg-curve-overlap') as unknown as SVGRectElement;
+const dbgCurveEnd1 = document.getElementById('dbg-curve-end1') as unknown as SVGLineElement;
+const dbgCurveCutoutLine = document.getElementById('dbg-curve-cutout-line') as unknown as SVGLineElement;
+const dbgCurveHandoffLine = document.getElementById('dbg-curve-handoff-line') as unknown as SVGLineElement;
+const dbgCurveDot = document.getElementById('dbg-curve-dot') as unknown as SVGCircleElement;
+const dbgCurveDot2 = document.getElementById('dbg-curve-dot2') as unknown as SVGCircleElement;
+const dbgAutoSpeed = document.getElementById('dbg-auto-speed') as HTMLInputElement;
+const dbgAutoSpeedVal = document.getElementById('dbg-auto-speed-val') as HTMLElement;
+const dbgAutoHandoff = document.getElementById('dbg-auto-handoff') as HTMLInputElement;
+const dbgAutoHandoffVal = document.getElementById('dbg-auto-handoff-val') as HTMLElement;
+const dbgAutoIn = document.getElementById('dbg-auto-in') as HTMLInputElement;
+const dbgAutoInVal = document.getElementById('dbg-auto-in-val') as HTMLElement;
+const dbgAutoOut = document.getElementById('dbg-auto-out') as HTMLInputElement;
+const dbgAutoOutVal = document.getElementById('dbg-auto-out-val') as HTMLElement;
+const dbgAutoCurve = document.getElementById('dbg-auto-curve') as HTMLInputElement;
+const dbgAutoCurveVal = document.getElementById('dbg-auto-curve-val') as HTMLElement;
+const dbgCutoutDelay = document.getElementById('dbg-cutout-delay') as HTMLInputElement;
+const dbgCutoutDelayVal = document.getElementById('dbg-cutout-delay-val') as HTMLElement;
+const dbgShadowStrength = document.getElementById('dbg-shadow-strength') as HTMLInputElement;
+const dbgShadowStrengthVal = document.getElementById('dbg-shadow-strength-val') as HTMLElement;
+const dbgShadowBlur = document.getElementById('dbg-shadow-blur') as HTMLInputElement;
+const dbgShadowBlurVal = document.getElementById('dbg-shadow-blur-val') as HTMLElement;
+const dbgSunAzimuth = document.getElementById('dbg-sun-azimuth') as HTMLInputElement;
+const dbgSunAzimuthVal = document.getElementById('dbg-sun-azimuth-val') as HTMLElement;
+const dbgSunElevation = document.getElementById('dbg-sun-elevation') as HTMLInputElement;
+const dbgSunElevationVal = document.getElementById('dbg-sun-elevation-val') as HTMLElement;
 const dbgShuffle = document.getElementById('dbg-shuffle') as HTMLButtonElement;
 const dbgOpenCatalog = document.getElementById('dbg-open-catalog') as HTMLButtonElement;
 const dbgOpenCity = document.getElementById('dbg-open-city') as HTMLButtonElement;
@@ -143,12 +178,20 @@ btnCatalog.innerHTML = ICON_GRID;
 btnCity.innerHTML = ICON_CITY;
 btnDebug.innerHTML = ICON_GEAR;
 
-const SETTINGS_STORAGE_KEY = 'codevember-2026:01:settings:v1';
+const SETTINGS_STORAGE_KEY = 'codevember-2026:01:settings:v5';
 
 const VALID_TOPOLOGIES: readonly NetTopology[] = ['cross', 'ribbon', 'hex', 'oct', 'lwing', 'setback', 'village'];
 const VALID_ROOFS: readonly RoofType[] = ['gable', 'mansard', 'spire', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
-type CameraTrickMode = 'off' | 'drastic' | 'overhead' | 'rolled' | 'low' | 'subtle';
-const VALID_CAMERA_TRICKS: readonly CameraTrickMode[] = ['off', 'drastic', 'overhead', 'rolled', 'low', 'subtle'];
+type CameraTrickMode = 'off' | 'balanced' | 'drastic' | 'overhead' | 'rolled' | 'low' | 'subtle';
+const VALID_CAMERA_TRICKS: readonly CameraTrickMode[] = [
+  'off',
+  'balanced',
+  'drastic',
+  'overhead',
+  'rolled',
+  'low',
+  'subtle',
+];
 
 interface DebugSettings {
   model: number | null;
@@ -173,6 +216,16 @@ interface DebugSettings {
   glideOnFold: boolean;
   fadeProjOnFold: boolean;
   autoFold: boolean;
+  autoSpeed: number;
+  autoEaseIn: number;
+  autoEaseOut: number;
+  autoCurve: number;
+  autoHandoff: number;
+  cutoutDropDelay: number;
+  shadowStrength: number;
+  shadowBlur: number;
+  sunAzimuth: number;
+  sunElevation: number;
 }
 
 const FACTORY_SETTINGS: DebugSettings = {
@@ -194,10 +247,20 @@ const FACTORY_SETTINGS: DebugSettings = {
   seed: 0,
   color: false,
   spin: true,
-  cameraTrick: 'drastic',
-  glideOnFold: false,
+  cameraTrick: 'off',
+  glideOnFold: true,
   fadeProjOnFold: true,
   autoFold: false,
+  autoSpeed: DEFAULT_AUTO_FOLD_CURVE.speed,
+  autoEaseIn: DEFAULT_AUTO_FOLD_CURVE.inPct,
+  autoEaseOut: DEFAULT_AUTO_FOLD_CURVE.outPct,
+  autoCurve: DEFAULT_AUTO_FOLD_CURVE.curvePct,
+  autoHandoff: DEFAULT_AUTO_FOLD_CURVE.handoffPct,
+  cutoutDropDelay: 0.55,
+  shadowStrength: 100,
+  shadowBlur: 1.0,
+  sunAzimuth: 62,
+  sunElevation: 49,
 };
 
 function loadSavedSettings(): DebugSettings {
@@ -278,6 +341,36 @@ function loadSavedSettings(): DebugSettings {
       if (typeof parsed.glideOnFold === 'boolean') s.glideOnFold = parsed.glideOnFold;
       if (typeof parsed.fadeProjOnFold === 'boolean') s.fadeProjOnFold = parsed.fadeProjOnFold;
       if (typeof parsed.autoFold === 'boolean') s.autoFold = parsed.autoFold;
+      if (typeof parsed.autoSpeed === 'number' && Number.isFinite(parsed.autoSpeed)) {
+        s.autoSpeed = Math.max(0.25, Math.min(3.0, parsed.autoSpeed));
+      }
+      if (typeof parsed.autoEaseIn === 'number' && Number.isFinite(parsed.autoEaseIn)) {
+        s.autoEaseIn = Math.max(0, Math.min(100, parsed.autoEaseIn));
+      }
+      if (typeof parsed.autoEaseOut === 'number' && Number.isFinite(parsed.autoEaseOut)) {
+        s.autoEaseOut = Math.max(0, Math.min(100, parsed.autoEaseOut));
+      }
+      if (typeof parsed.autoCurve === 'number' && Number.isFinite(parsed.autoCurve)) {
+        s.autoCurve = Math.max(0, Math.min(100, parsed.autoCurve));
+      }
+      if (typeof parsed.autoHandoff === 'number' && Number.isFinite(parsed.autoHandoff)) {
+        s.autoHandoff = Math.max(35, Math.min(140, parsed.autoHandoff));
+      }
+      if (typeof parsed.cutoutDropDelay === 'number' && Number.isFinite(parsed.cutoutDropDelay)) {
+        s.cutoutDropDelay = Math.max(0, Math.min(2.5, parsed.cutoutDropDelay));
+      }
+      if (typeof parsed.shadowStrength === 'number' && Number.isFinite(parsed.shadowStrength)) {
+        s.shadowStrength = Math.max(0, Math.min(200, parsed.shadowStrength));
+      }
+      if (typeof parsed.shadowBlur === 'number' && Number.isFinite(parsed.shadowBlur)) {
+        s.shadowBlur = Math.max(0, Math.min(8, parsed.shadowBlur));
+      }
+      if (typeof parsed.sunAzimuth === 'number' && Number.isFinite(parsed.sunAzimuth)) {
+        s.sunAzimuth = ((parsed.sunAzimuth % 360) + 360) % 360;
+      }
+      if (typeof parsed.sunElevation === 'number' && Number.isFinite(parsed.sunElevation)) {
+        s.sunElevation = Math.max(12, Math.min(85, parsed.sunElevation));
+      }
     }
   } catch {
     // Ignore storage access errors (private mode, restricted iframe, etc.)
@@ -391,6 +484,56 @@ let autoFoldEnabled =
   params.get('auto') !== null
     ? params.get('auto') !== '0'
     : initialSettings.autoFold;
+const pAutoSpeed = params.get('autoSpeed');
+let autoSpeed =
+  pAutoSpeed !== null && Number.isFinite(Number(pAutoSpeed))
+    ? Math.max(0.25, Math.min(3.0, Number(pAutoSpeed)))
+    : initialSettings.autoSpeed;
+const pAutoIn = params.get('autoIn');
+let autoEaseIn =
+  pAutoIn !== null && Number.isFinite(Number(pAutoIn))
+    ? Math.max(0, Math.min(100, Number(pAutoIn)))
+    : initialSettings.autoEaseIn;
+const pAutoOut = params.get('autoOut');
+let autoEaseOut =
+  pAutoOut !== null && Number.isFinite(Number(pAutoOut))
+    ? Math.max(0, Math.min(100, Number(pAutoOut)))
+    : initialSettings.autoEaseOut;
+const pAutoCurve = params.get('autoCurve');
+let autoCurve =
+  pAutoCurve !== null && Number.isFinite(Number(pAutoCurve))
+    ? Math.max(0, Math.min(100, Number(pAutoCurve)))
+    : initialSettings.autoCurve;
+const pAutoHandoff = params.get('autoHandoff');
+let autoHandoff =
+  pAutoHandoff !== null && Number.isFinite(Number(pAutoHandoff))
+    ? Math.max(35, Math.min(140, Number(pAutoHandoff)))
+    : initialSettings.autoHandoff;
+const pCutoutDelay = params.get('cutoutDelay');
+let cutoutDropDelay =
+  pCutoutDelay !== null && Number.isFinite(Number(pCutoutDelay))
+    ? Math.max(0, Math.min(2.5, Number(pCutoutDelay)))
+    : initialSettings.cutoutDropDelay;
+const pShadow = params.get('shadow');
+let shadowStrength =
+  pShadow !== null && Number.isFinite(Number(pShadow))
+    ? Math.max(0, Math.min(200, Number(pShadow)))
+    : initialSettings.shadowStrength;
+const pShadowBlur = params.get('shadowBlur');
+let shadowBlur =
+  pShadowBlur !== null && Number.isFinite(Number(pShadowBlur))
+    ? Math.max(0, Math.min(8, Number(pShadowBlur)))
+    : initialSettings.shadowBlur;
+const pAzimuth = params.get('azimuth');
+let sunAzimuth =
+  pAzimuth !== null && Number.isFinite(Number(pAzimuth))
+    ? ((Number(pAzimuth) % 360) + 360) % 360
+    : initialSettings.sunAzimuth;
+const pElevation = params.get('elevation');
+let sunElevation =
+  pElevation !== null && Number.isFinite(Number(pElevation))
+    ? Math.max(12, Math.min(85, Number(pElevation)))
+    : initialSettings.sunElevation;
 const FOLD_BPM = 115;
 const FOLD_BEAT_SEC = 60 / FOLD_BPM; // ~0.52174s per quarter-note beat
 const FOLD_BAR_SEC = FOLD_BEAT_SEC * 4; // ~2.08696s bar cadence @ 115 BPM (launches next house around ~74–78%!)
@@ -429,6 +572,62 @@ function getMixCacheKey(): string {
   const cKey = mixConsistency === null ? 'd' : Math.round(mixConsistency * 100);
   const hKey = mixHeightScale === null ? 'd' : Math.round(mixHeightScale * 100);
   return `${forcedModelSlot ?? 'a'}|${mixHouses ?? 'a'}|${mixTopology ?? 'a'}|${mixRoof ?? 'a'}|${mixGableProfile ?? 'a'}|${mixWindow ?? 'a'}|${mixWinOpening ?? 'a'}|${mixWinDetail ?? 'a'}|${mixBays ?? 'a'}|${mixDoor ?? 'a'}|${mixLevels ?? 'a'}|${hKey}|${cKey}|${mixSeed}`;
+}
+
+function getAutoHandoffSec(): number {
+  return FOLD_HOUSE_SEC * (autoHandoff / 100);
+}
+
+function formatHandoffTag(pct: number): string {
+  const rounded = Math.round(pct);
+  if (rounded < 100) return `${100 - rounded}% overlap`;
+  if (rounded === 100) return 'back-to-back';
+  return `+${rounded - 100}% pause`;
+}
+
+function updateCurvePreview(): void {
+  const g = buildDualFoldCurveSvg(autoEaseIn, autoEaseOut, autoCurve, autoHandoff, 220, 58, 8, 7);
+  dbgCurvePath.setAttribute('d', g.path1);
+  dbgCurvePath2.setAttribute('d', g.path2);
+  dbgCurveOverlap.setAttribute('x', g.overlapX.toFixed(1));
+  dbgCurveOverlap.setAttribute('width', g.overlapW.toFixed(1));
+  dbgCurveEnd1.setAttribute('x1', g.end1X.toFixed(1));
+  dbgCurveEnd1.setAttribute('x2', g.end1X.toFixed(1));
+  dbgCurveHandoffLine.setAttribute('x1', g.handoffX.toFixed(1));
+  dbgCurveHandoffLine.setAttribute('x2', g.handoffX.toFixed(1));
+  const cutoutT = Math.min(1, cutoutDropDelay / FOLD_HOUSE_SEC);
+  const cutoutX = 8 + (cutoutT / DUAL_CURVE_MAX_T) * 204;
+  dbgCurveCutoutLine.setAttribute('x1', cutoutX.toFixed(1));
+  dbgCurveCutoutLine.setAttribute('x2', cutoutX.toFixed(1));
+  dbgCurveCutoutLine.style.opacity = cutoutDropDelay > 0.005 ? '1' : '0.35';
+  dbgAutoBpm.textContent = formatHandoffTag(autoHandoff);
+}
+
+function updateCurvePlayhead(activeU: number, active: boolean, outgoingU: number | null): void {
+  if (debugPanel.hidden) return;
+  const handoffT = autoHandoff / 100;
+  const tToX = (t: number) => 8 + (t / DUAL_CURVE_MAX_T) * 204;
+  const yToSvg = (y: number) => 7 + (1 - y) * 44;
+
+  if (outgoingU !== null && active) {
+    // Live dual-house overlap: Curve 1 dot finishes outgoing tail while Curve 2 dot rises in lockstep!
+    const tOut = clamp01(outgoingU);
+    const tIn = clamp01(activeU);
+    dbgCurveDot.classList.add('active');
+    dbgCurveDot.setAttribute('cx', tToX(tOut).toFixed(1));
+    dbgCurveDot.setAttribute('cy', yToSvg(evaluateFoldCurve(tOut, autoEaseIn, autoEaseOut, autoCurve)).toFixed(1));
+    dbgCurveDot2.classList.add('active');
+    dbgCurveDot2.setAttribute('cx', tToX(handoffT + tIn).toFixed(1));
+    dbgCurveDot2.setAttribute('cy', yToSvg(evaluateFoldCurve(tIn, autoEaseIn, autoEaseOut, autoCurve)).toFixed(1));
+    return;
+  }
+
+  dbgCurveDot2.classList.remove('active');
+  dbgCurveDot.classList.toggle('active', active);
+  if (!active) return;
+  const u = clamp01(activeU);
+  dbgCurveDot.setAttribute('cx', tToX(u).toFixed(1));
+  dbgCurveDot.setAttribute('cy', yToSvg(evaluateFoldCurve(u, autoEaseIn, autoEaseOut, autoCurve)).toFixed(1));
 }
 
 function syncDebugControls(): void {
@@ -472,6 +671,32 @@ function syncDebugControls(): void {
   dbgGlideFold.checked = debugGlideOnFoldEnabled;
   dbgFadeProj.checked = debugFadeProjEnabled;
   chkAuto.checked = autoFoldEnabled;
+
+  // Auto-fold curve, speed & next-fold handoff controls
+  const speedPct = Math.round(autoSpeed * 100);
+  dbgAutoSpeed.value = String(speedPct);
+  dbgAutoSpeedVal.textContent = `${autoSpeed.toFixed(2)}×`;
+  dbgAutoHandoff.value = String(Math.round(autoHandoff));
+  dbgAutoHandoffVal.textContent = `${Math.round(autoHandoff)}%`;
+  dbgAutoIn.value = String(Math.round(autoEaseIn));
+  dbgAutoInVal.textContent = `${Math.round(autoEaseIn)}%`;
+  dbgAutoOut.value = String(Math.round(autoEaseOut));
+  dbgAutoOutVal.textContent = `${Math.round(autoEaseOut)}%`;
+  dbgAutoCurve.value = String(Math.round(autoCurve));
+  dbgAutoCurveVal.textContent = `${Math.round(autoCurve)}%`;
+  dbgCutoutDelay.value = String(Math.round(cutoutDropDelay * 100));
+  dbgCutoutDelayVal.textContent = `${cutoutDropDelay.toFixed(2)}s`;
+  updateCurvePreview();
+
+  // Light & shadow controls
+  dbgShadowStrength.value = String(Math.round(shadowStrength));
+  dbgShadowStrengthVal.textContent = `${Math.round(shadowStrength)}%`;
+  dbgShadowBlur.value = String(shadowBlur);
+  dbgShadowBlurVal.textContent = shadowBlur.toFixed(1);
+  dbgSunAzimuth.value = String(Math.round(sunAzimuth));
+  dbgSunAzimuthVal.textContent = `${Math.round(sunAzimuth)}°`;
+  dbgSunElevation.value = String(Math.round(sunElevation));
+  dbgSunElevationVal.textContent = `${Math.round(sunElevation)}°`;
 }
 
 function saveDebugSettings(): void {
@@ -500,6 +725,16 @@ function saveDebugSettings(): void {
       glideOnFold: debugGlideOnFoldEnabled,
       fadeProjOnFold: debugFadeProjEnabled,
       autoFold: autoFoldEnabled,
+      autoSpeed,
+      autoEaseIn,
+      autoEaseOut,
+      autoCurve,
+      autoHandoff,
+      cutoutDropDelay,
+      shadowStrength,
+      shadowBlur,
+      sunAzimuth,
+      sunElevation,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   } catch {
@@ -543,9 +778,7 @@ const camera = new THREE.PerspectiveCamera(28, 1, 0.3, 650);
 const hemi = new THREE.HemisphereLight('#fffdf8', '#e0ddd6', 1.50);
 scene.add(hemi);
 
-const SUN_DIR_COLOR = new THREE.Vector3(5.8, 21.0, 3.6).normalize();
-const SUN_DIR_WHITE = new THREE.Vector3(10.5, 19.0, 8.2).normalize();
-const sunDirActive = SUN_DIR_COLOR.clone();
+const sunDirActive = new THREE.Vector3(10.5, 19.0, 8.2).normalize();
 const sun = new THREE.DirectionalLight('#fffdf9', 1.18);
 sun.position.copy(sunDirActive).multiplyScalar(28);
 sun.castShadow = true;
@@ -561,13 +794,15 @@ sun.shadow.normalBias = 0.016;
 sun.shadow.radius = 2.8;
 scene.add(sun);
 
+const FILL_BASE_POS = new THREE.Vector3(-14, 9, -10);
 const fill = new THREE.DirectionalLight('#f8f7f2', 0.24);
-fill.position.set(-14, 9, -10);
+fill.position.copy(FILL_BASE_POS);
 scene.add(fill);
 
 // Soft warm studio under-bounce light so underside worm's-eye camera views sculpt eaves & paper facades crisply!
+const UNDER_FILL_BASE_POS = new THREE.Vector3(12, -22, 14);
 const underFill = new THREE.DirectionalLight('#fbfaf6', 0.44);
-underFill.position.set(12, -22, 14);
+underFill.position.copy(UNDER_FILL_BASE_POS);
 scene.add(underFill);
 
 // Build TWO ping-pong duplex paper material sets sharing ONE single procedural washi fiber texture pair!
@@ -585,7 +820,8 @@ let swapShadowExtent = 14;
 let finalShadowExtent = 14;
 
 function applyShadowFrustum(extent: number): void {
-  const e = Math.max(14, extent);
+  const lowSunSpread = sunDirActive.y < 0.72 ? Math.min(1.65, 0.76 / Math.max(0.28, sunDirActive.y)) : 1;
+  const e = Math.max(14, extent * lowSunSpread);
   const sunDist = Math.max(28, e * 1.75);
   sun.position.copy(sunDirActive).multiplyScalar(sunDist);
   sun.shadow.camera.left = -e;
@@ -698,6 +934,25 @@ function computeProjectionJumpView(
     };
   }
 
+  if (mode === 'balanced') {
+    // Balanced sculptural jump-cuts (default): bold yaw swings + quite tilted Dutch rolls (±15°..±24°),
+    // strictly staying between comfortable low 3/4 (~22°) and high 3/4 (~55°) — never flat ground, never straight top-down!
+    const step = ((g - 1) % 5 + 5) % 5;
+    if (step === 0) {
+      return { toYaw: curYaw + 1.32, toPitch: 0.96, toRoll: 0.28, toDist: baseDist };
+    }
+    if (step === 1) {
+      return { toYaw: curYaw - 1.95, toPitch: 0.38, toRoll: -0.34, toDist: baseDist };
+    }
+    if (step === 2) {
+      return { toYaw: curYaw + 1.58, toPitch: 0.84, toRoll: -0.40, toDist: baseDist };
+    }
+    if (step === 3) {
+      return { toYaw: curYaw - 1.45, toPitch: 0.48, toRoll: 0.42, toDist: baseDist };
+    }
+    return { toYaw: curYaw + 2.08, toPitch: 0.72, toRoll: -0.26, toDist: baseDist };
+  }
+
   if (mode === 'drastic') {
     // Extreme above-ground Escher cycle (NEVER under the house!):
     //   0. Straight Overhead Plan (`+85°`) — front view shatters & folds straight up toward the lens!
@@ -768,6 +1023,35 @@ function computeIdealFraming(net: BuiltHouseNet): { dist: number; lookY: number;
   return { dist, lookY, shadowExtent };
 }
 
+function syncTurntableLights(viewYaw = curYaw, shadowExtent = curShadowExtent): void {
+  // Lock studio key sun, fill lights & environment to viewer azimuth (`viewYaw - defaultYaw`) so turning
+  // acts like a real physical studio turntable: the house spins while the cast shadow stays in the same spot!
+  const relYaw = viewYaw - defaultYaw;
+  const azRad = THREE.MathUtils.degToRad(sunAzimuth) + relYaw;
+  const elRad = THREE.MathUtils.degToRad(sunElevation);
+  sunDirActive
+    .set(
+      Math.cos(elRad) * Math.sin(azRad),
+      Math.sin(elRad),
+      Math.cos(elRad) * Math.cos(azRad),
+    )
+    .normalize();
+  const c = Math.cos(relYaw);
+  const s = Math.sin(relYaw);
+  fill.position.set(
+    FILL_BASE_POS.x * c + FILL_BASE_POS.z * s,
+    FILL_BASE_POS.y,
+    -FILL_BASE_POS.x * s + FILL_BASE_POS.z * c,
+  );
+  underFill.position.set(
+    UNDER_FILL_BASE_POS.x * c + UNDER_FILL_BASE_POS.z * s,
+    UNDER_FILL_BASE_POS.y,
+    -UNDER_FILL_BASE_POS.x * s + UNDER_FILL_BASE_POS.z * c,
+  );
+  scene.environmentRotation.y = relYaw;
+  applyShadowFrustum(shadowExtent);
+}
+
 function syncCameraFromOrbit(): void {
   camera.up.set(0, 1, 0);
   camera.position.set(
@@ -779,6 +1063,8 @@ function syncCameraFromOrbit(): void {
   if (Math.abs(curRoll) > 1e-5) {
     camera.rotateZ(curRoll);
   }
+
+  syncTurntableLights(curYaw, curShadowExtent);
 
   // Keep white-on-white studio fog scaled strictly from `curDist` so big zoomed-out houses stay crisp
   // and fog NEVER shifts on the exact swap frame!
@@ -889,7 +1175,8 @@ function schedulePrepareNext(gen: number, delayMs = 90): void {
   if (prepareTimerId !== null) window.clearTimeout(prepareTimerId);
   prepareTimerId = window.setTimeout(() => {
     prepareTimerId = null;
-    if (cutoutDropState === 'falling') {
+    const activelyDropping = cutoutDropState === 'falling' && cutoutDropElapsed >= cutoutDropDelay;
+    if (activelyDropping && (!autoFoldEnabled || autoBeatElapsed < getAutoHandoffSec() * 0.65)) {
       schedulePrepareNext(gen, 220);
       return;
     }
@@ -926,30 +1213,46 @@ function applyActiveOutsideColor(includeOutgoing = true): void {
   if (includeOutgoing && outgoing) {
     applyPaperColorsTo(outgoing.mats, outgoing.rig);
   }
+
+  // Align studio directional sun & fill lights with current turntable angle so shadow direction stays fixed on screen!
+  syncTurntableLights(curYaw, curShadowExtent);
+
+  const baseHemi = debugColorEnabled ? 1.50 : 1.78;
+  const baseSun = debugColorEnabled ? 1.18 : 2.05;
+  const baseFill = debugColorEnabled ? 0.24 : 0.28;
+  const sNorm = Math.max(0, Math.min(2, shadowStrength / 100));
+
   if (debugColorEnabled) {
-    sunDirActive.copy(SUN_DIR_COLOR);
     hemi.color.set('#fffdf8');
     hemi.groundColor.set('#e0ddd6');
-    hemi.intensity = 1.50;
     sun.color.set('#fffdf9');
-    sun.intensity = 1.18;
     fill.color.set('#f8f7f2');
-    fill.intensity = 0.24;
     renderer.toneMappingExposure = 1.02;
   } else {
-    // Same warm ivory "white" as the #f5f4f0 studio paper backdrop: sunlit roofs match #f5f4f0
-    // seamlessly while raking 56° gallery sun carves warm ivory sculptural planes & shadows!
-    sunDirActive.copy(SUN_DIR_WHITE);
     hemi.color.set('#fffef9');
     hemi.groundColor.set('#dfd9ce');
-    hemi.intensity = 1.78;
     sun.color.set('#fffdf6');
-    sun.intensity = 2.05;
     fill.color.set('#f5f4f0');
-    fill.intensity = 0.28;
     renderer.toneMappingExposure = 1.08;
   }
-  applyShadowFrustum(curShadowExtent);
+
+  // Shadow strength (`0..200%`):
+  //   0..100%: smoothly scales Three.js `shadow.intensity` while preserving exact studio lighting balance.
+  // 100..200%: shifts ambient fill into directional key light to carve deeper shadows without blowing out bright paper!
+  sun.castShadow = sNorm > 0.005;
+  sun.shadow.intensity = Math.min(1, sNorm);
+  sun.shadow.radius = shadowBlur;
+
+  if (sNorm > 1) {
+    const boost = sNorm - 1;
+    hemi.intensity = baseHemi * (1 - boost * 0.52);
+    fill.intensity = baseFill * (1 - boost * 0.65);
+    sun.intensity = baseSun + (baseHemi * boost * 0.52) / Math.max(0.35, sunDirActive.y);
+  } else {
+    hemi.intensity = baseHemi;
+    fill.intensity = baseFill;
+    sun.intensity = baseSun;
+  }
 }
 
 function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = false): void {
@@ -1323,11 +1626,7 @@ function computeFoldProgress(): number {
  * then decelerates gracefully through 75% -> 100% into a soft seamless finish.
  */
 function easePaperFold(x: number): number {
-  const u = clamp01(x);
-  if (u <= 0 || u >= 1) return u;
-  const shaped = Math.pow(u, 0.86);
-  const sine = 0.5 - 0.5 * Math.cos(Math.PI * shaped);
-  return sine * 0.86 + shaped * 0.14;
+  return evaluateFoldCurve(x, autoEaseIn, autoEaseOut, autoCurve);
 }
 
 function startPanelCurve(ps: PanelState, target: number, durationSec: number, delaySec = 0): void {
@@ -1695,6 +1994,16 @@ function resetToFactory(): void {
   debugGlideOnFoldEnabled = FACTORY_SETTINGS.glideOnFold;
   debugFadeProjEnabled = FACTORY_SETTINGS.fadeProjOnFold;
   autoFoldEnabled = FACTORY_SETTINGS.autoFold;
+  autoSpeed = FACTORY_SETTINGS.autoSpeed;
+  autoEaseIn = FACTORY_SETTINGS.autoEaseIn;
+  autoEaseOut = FACTORY_SETTINGS.autoEaseOut;
+  autoCurve = FACTORY_SETTINGS.autoCurve;
+  autoHandoff = FACTORY_SETTINGS.autoHandoff;
+  cutoutDropDelay = FACTORY_SETTINGS.cutoutDropDelay;
+  shadowStrength = FACTORY_SETTINGS.shadowStrength;
+  shadowBlur = FACTORY_SETTINGS.shadowBlur;
+  sunAzimuth = FACTORY_SETTINGS.sunAzimuth;
+  sunElevation = FACTORY_SETTINGS.sunElevation;
   syncDebugControls();
   resetAll();
   applyActiveOutsideColor();
@@ -1770,10 +2079,7 @@ function syncUI(): void {
 
   btnAction.textContent = 'Fold';
   if (!allTargetFolded) {
-    const hoveredDef = hoveredPanel ? rig.net.panelMap.get(hoveredPanel) : null;
-    statusEl.textContent = hoveredDef
-      ? `${prefix}Fold ${hoveredDef.label.toLowerCase()}`
-      : `${prefix}Click Fold or drag any flap`;
+    statusEl.textContent = `${prefix}Click anywhere to fold`;
   } else if (!settledFolded) {
     statusEl.textContent = `${prefix}Folding`;
   } else {
@@ -1782,62 +2088,16 @@ function syncUI(): void {
 }
 
 // ----------------------------------------------------------------------------
-// Raycasting & Direct Hand-Folding Pointer Interaction
+// Click-Anywhere Fold & Drag-Anywhere Turntable Interaction
 // ----------------------------------------------------------------------------
-const raycaster = new THREE.Raycaster();
-const ndc = new THREE.Vector2();
-
-function pickPanel3D(clientX: number, clientY: number): FoldablePanelId | null {
-  const rect = canvas.getBoundingClientRect();
-  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(ndc, camera);
-
-  const targets: THREE.Object3D[] = [];
-  for (const id of rig.panelIds) {
-    const pv = rig.panels.get(id);
-    if (pv) targets.push(pv.mesh);
-  }
-  const hits = raycaster.intersectObjects(targets, false);
-  if (hits.length === 0) return null;
-  const ud = hits[0].object.userData as { kind?: string; id?: FoldablePanelId };
-  return ud.kind === 'panel' && ud.id ? ud.id : null;
-}
-
-function updateHover(clientX: number, clientY: number): void {
-  const next = pickPanel3D(clientX, clientY);
-  if (next !== hoveredPanel) {
-    hoveredPanel = next;
-    if (next) revealCreasesAfterSwap(true);
-    canvas.classList.toggle('can-fold', hoveredPanel !== null);
-    syncUI();
-  }
-}
-
 type DragMode =
   | { kind: 'none' }
-  | { kind: 'orbit'; lastX: number; lastY: number }
-  | { kind: 'fold'; panel: FoldablePanelId; startX: number; startY: number; startFold: number; moved: boolean };
+  | { kind: 'orbit'; startX: number; startY: number; lastX: number; lastY: number; moved: boolean };
 
 let drag: DragMode = { kind: 'none' };
 const activePointers = new Map<number, { x: number; y: number }>();
 let lastPinchDist = 0;
-
-function panelFoldDragSensitivity(pid: FoldablePanelId, dx: number, dy: number): number {
-  const pv = rig.panels.get(pid);
-  if (!pv) return -dy / 120;
-  const worldPos = new THREE.Vector3();
-  pv.pivot.getWorldPosition(worldPos);
-  const inward = new THREE.Vector3(-worldPos.x, 3.2, -worldPos.z).normalize();
-
-  const p0 = worldPos.clone().project(camera);
-  const p1 = worldPos.clone().addScaledVector(inward, 1.5).project(camera);
-  const sx = (p1.x - p0.x) * canvas.clientWidth * 0.5;
-  const sy = -(p1.y - p0.y) * canvas.clientHeight * 0.5;
-  const sLen = Math.hypot(sx, sy);
-  if (sLen < 1e-3) return -dy / 120;
-  return (dx * (sx / sLen) + dy * (sy / sLen)) / 115;
-}
+let pinchedThisGesture = false;
 
 canvas.addEventListener('pointerdown', (e) => {
   if (cityActive && cityView) {
@@ -1848,30 +2108,24 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-  if (activePointers.size === 2) {
+  if (activePointers.size >= 2) {
+    pinchedThisGesture = true;
     const pts = Array.from(activePointers.values());
     lastPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
     drag = { kind: 'none' };
+    canvas.classList.remove('orbiting');
     return;
   }
 
-  const pHit = pickPanel3D(e.clientX, e.clientY);
-  if (pHit) {
-    triggerCutoutDrop();
-    hoveredPanel = pHit;
-    drag = {
-      kind: 'fold',
-      panel: pHit,
-      startX: e.clientX,
-      startY: e.clientY,
-      startFold: panelState.get(pHit)?.fold ?? 0,
-      moved: false,
-    };
-    return;
-  }
-
-  drag = { kind: 'orbit', lastX: e.clientX, lastY: e.clientY };
-  canvas.classList.add('orbiting');
+  pinchedThisGesture = false;
+  drag = {
+    kind: 'orbit',
+    startX: e.clientX,
+    startY: e.clientY,
+    lastX: e.clientX,
+    lastY: e.clientY,
+    moved: false,
+  };
 });
 
 canvas.addEventListener('pointermove', (e) => {
@@ -1880,10 +2134,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   const prevPtr = activePointers.get(e.pointerId);
-  if (!prevPtr) {
-    if (e.pointerType === 'mouse') updateHover(e.clientX, e.clientY);
-    return;
-  }
+  if (!prevPtr) return;
   prevPtr.x = e.clientX;
   prevPtr.y = e.clientY;
 
@@ -1905,53 +2156,33 @@ canvas.addEventListener('pointermove', (e) => {
     const dy = e.clientY - drag.lastY;
     drag.lastX = e.clientX;
     drag.lastY = e.clientY;
-    if (Math.hypot(dx, dy) > 1.5) revealCreasesAfterSwap(true);
-    targetYaw -= dx * 0.0072;
-    targetPitch = Math.max(0.06, Math.min(1.50, targetPitch + dy * 0.0068));
-    return;
-  }
-
-  if (drag.kind === 'fold') {
-    const dx = e.clientX - drag.startX;
-    const dy = e.clientY - drag.startY;
-    if (Math.hypot(dx, dy) > 6) drag.moved = true;
+    if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 6) {
+      drag.moved = true;
+      canvas.classList.add('orbiting');
+    }
     if (drag.moved) {
-      const ps = panelState.get(drag.panel);
-      if (ps) {
-        const delta = panelFoldDragSensitivity(drag.panel, dx, dy);
-        const next = clamp01(drag.startFold + delta);
-        ps.delay = 0;
-        ps.animating = false;
-        ps.fold = next;
-        ps.startFold = next;
-        ps.target = next;
-        syncUI();
-      }
+      if (Math.hypot(dx, dy) > 1.5) revealCreasesAfterSwap(true);
+      targetYaw -= dx * 0.0072;
+      targetPitch = Math.max(0.06, Math.min(1.50, targetPitch + dy * 0.0068));
     }
   }
 });
 
 function endPointer(e: PointerEvent, isCancel: boolean): void {
   activePointers.delete(e.pointerId);
+  const wasClick = !isCancel && !pinchedThisGesture && drag.kind === 'orbit' && !drag.moved;
+
   if (activePointers.size === 0) {
     canvas.classList.remove('orbiting');
     lastPinchDist = 0;
-  }
-
-  if (!isCancel && drag.kind === 'fold') {
-    const ps = panelState.get(drag.panel);
-    if (ps) {
-      if (!drag.moved) {
-        startPanelCurve(ps, ps.target > 0.5 ? 0 : 1, 0.95, 0);
-      } else {
-        startPanelCurve(ps, ps.fold >= 0.45 ? 1 : 0, 0.65, 0);
-      }
-      syncUI();
-    }
+    pinchedThisGesture = false;
   }
 
   drag = { kind: 'none' };
-  if (e.pointerType === 'mouse') updateHover(e.clientX, e.clientY);
+
+  if (wasClick) {
+    triggerStepAction();
+  }
 }
 
 canvas.addEventListener('pointerup', (e) => {
@@ -2878,6 +3109,67 @@ dbgFadeProj.addEventListener('change', () => {
   materials.setProjectionFade(computeProjectionFade(computeFoldProgress()));
   saveDebugSettings();
 });
+dbgAutoSpeed.addEventListener('input', () => {
+  const pct = Math.max(25, Math.min(300, Number(dbgAutoSpeed.value) || 100));
+  autoSpeed = pct / 100;
+  dbgAutoSpeedVal.textContent = `${autoSpeed.toFixed(2)}×`;
+  saveDebugSettings();
+});
+dbgAutoHandoff.addEventListener('input', () => {
+  autoHandoff = Math.max(35, Math.min(140, Number(dbgAutoHandoff.value) || 70));
+  dbgAutoHandoffVal.textContent = `${Math.round(autoHandoff)}%`;
+  updateCurvePreview();
+  saveDebugSettings();
+});
+dbgAutoIn.addEventListener('input', () => {
+  autoEaseIn = Math.max(0, Math.min(100, Number(dbgAutoIn.value) || 0));
+  dbgAutoInVal.textContent = `${Math.round(autoEaseIn)}%`;
+  updateCurvePreview();
+  saveDebugSettings();
+});
+dbgAutoOut.addEventListener('input', () => {
+  autoEaseOut = Math.max(0, Math.min(100, Number(dbgAutoOut.value) || 0));
+  dbgAutoOutVal.textContent = `${Math.round(autoEaseOut)}%`;
+  updateCurvePreview();
+  saveDebugSettings();
+});
+dbgAutoCurve.addEventListener('input', () => {
+  autoCurve = Math.max(0, Math.min(100, Number(dbgAutoCurve.value) || 0));
+  dbgAutoCurveVal.textContent = `${Math.round(autoCurve)}%`;
+  updateCurvePreview();
+  saveDebugSettings();
+});
+dbgCutoutDelay.addEventListener('input', () => {
+  const cs = Math.max(0, Math.min(250, Number(dbgCutoutDelay.value) || 0));
+  cutoutDropDelay = cs / 100;
+  dbgCutoutDelayVal.textContent = `${cutoutDropDelay.toFixed(2)}s`;
+  updateCurvePreview();
+  saveDebugSettings();
+});
+dbgShadowStrength.addEventListener('input', () => {
+  shadowStrength = Math.max(0, Math.min(200, Number(dbgShadowStrength.value) || 0));
+  dbgShadowStrengthVal.textContent = `${Math.round(shadowStrength)}%`;
+  applyActiveOutsideColor();
+  saveDebugSettings();
+});
+dbgShadowBlur.addEventListener('input', () => {
+  shadowBlur = Math.max(0, Math.min(8, Number(dbgShadowBlur.value) || 0));
+  dbgShadowBlurVal.textContent = shadowBlur.toFixed(1);
+  applyActiveOutsideColor();
+  saveDebugSettings();
+});
+dbgSunAzimuth.addEventListener('input', () => {
+  sunAzimuth = ((Number(dbgSunAzimuth.value) || 0) % 360 + 360) % 360;
+  dbgSunAzimuthVal.textContent = `${Math.round(sunAzimuth)}°`;
+  applyActiveOutsideColor();
+  saveDebugSettings();
+});
+dbgSunElevation.addEventListener('input', () => {
+  sunElevation = Math.max(12, Math.min(85, Number(dbgSunElevation.value) || 55));
+  dbgSunElevationVal.textContent = `${Math.round(sunElevation)}°`;
+  applyActiveOutsideColor();
+  saveDebugSettings();
+});
 dbgResetFactory.addEventListener('click', () => {
   resetToFactory();
 });
@@ -3043,6 +3335,15 @@ if (isDebugMode && params.has('city')) {
       setGlideOnFold: (enabled: boolean) => void;
       setFadePrint: (enabled: boolean) => void;
       setAuto: (enabled: boolean) => void;
+      setAutoCurve: (opts: {
+        speed?: number;
+        inPct?: number;
+        outPct?: number;
+        curvePct?: number;
+        handoffPct?: number;
+        cutoutDelaySec?: number;
+      }) => void;
+      setLighting: (opts: { shadowStrength?: number; shadowBlur?: number; sunAzimuth?: number; sunElevation?: number }) => void;
       view: (yaw: number, pitch: number, dist: number, roll?: number) => void;
       info: () => {
         generation: number;
@@ -3062,6 +3363,19 @@ if (isDebugMode && params.has('city')) {
         pitch: number;
         bpm: number;
         barSec: number;
+        autoSpeed: number;
+        autoEaseIn: number;
+        autoEaseOut: number;
+        autoCurve: number;
+        autoHandoff: number;
+        cutoutDropDelay: number;
+        cameraTrick: CameraTrickMode;
+        glideOnFold: boolean;
+        fadePrint: boolean;
+        shadowStrength: number;
+        shadowBlur: number;
+        sunAzimuth: number;
+        sunElevation: number;
         foldProgress: number;
         overlapActive: boolean;
         outgoingFoldProgress: number;
@@ -3233,6 +3547,52 @@ if (isDebugMode && params.has('city')) {
       }
     }
   },
+  setAutoCurve(opts: {
+    speed?: number;
+    inPct?: number;
+    outPct?: number;
+    curvePct?: number;
+    handoffPct?: number;
+    cutoutDelaySec?: number;
+  }) {
+    if (typeof opts.speed === 'number' && Number.isFinite(opts.speed)) {
+      autoSpeed = Math.max(0.25, Math.min(3.0, opts.speed));
+    }
+    if (typeof opts.inPct === 'number' && Number.isFinite(opts.inPct)) {
+      autoEaseIn = Math.max(0, Math.min(100, opts.inPct));
+    }
+    if (typeof opts.outPct === 'number' && Number.isFinite(opts.outPct)) {
+      autoEaseOut = Math.max(0, Math.min(100, opts.outPct));
+    }
+    if (typeof opts.curvePct === 'number' && Number.isFinite(opts.curvePct)) {
+      autoCurve = Math.max(0, Math.min(100, opts.curvePct));
+    }
+    if (typeof opts.handoffPct === 'number' && Number.isFinite(opts.handoffPct)) {
+      autoHandoff = Math.max(35, Math.min(140, opts.handoffPct));
+    }
+    if (typeof opts.cutoutDelaySec === 'number' && Number.isFinite(opts.cutoutDelaySec)) {
+      cutoutDropDelay = Math.max(0, Math.min(2.5, opts.cutoutDelaySec));
+    }
+    syncDebugControls();
+    saveDebugSettings();
+  },
+  setLighting(opts: { shadowStrength?: number; shadowBlur?: number; sunAzimuth?: number; sunElevation?: number }) {
+    if (typeof opts.shadowStrength === 'number' && Number.isFinite(opts.shadowStrength)) {
+      shadowStrength = Math.max(0, Math.min(200, opts.shadowStrength));
+    }
+    if (typeof opts.shadowBlur === 'number' && Number.isFinite(opts.shadowBlur)) {
+      shadowBlur = Math.max(0, Math.min(8, opts.shadowBlur));
+    }
+    if (typeof opts.sunAzimuth === 'number' && Number.isFinite(opts.sunAzimuth)) {
+      sunAzimuth = ((opts.sunAzimuth % 360) + 360) % 360;
+    }
+    if (typeof opts.sunElevation === 'number' && Number.isFinite(opts.sunElevation)) {
+      sunElevation = Math.max(12, Math.min(85, opts.sunElevation));
+    }
+    applyActiveOutsideColor();
+    syncDebugControls();
+    saveDebugSettings();
+  },
   view(yaw: number, pitch: number, dist: number, roll = 0) {
     targetYaw = curYaw = yaw;
     targetPitch = curPitch = pitch;
@@ -3259,8 +3619,21 @@ if (isDebugMode && params.has('city')) {
       finalDist: Math.round(finalDist * 10) / 10,
       yaw: Math.round(curYaw * 1000) / 1000,
       pitch: Math.round(curPitch * 1000) / 1000,
-      bpm: FOLD_BPM,
-      barSec: Math.round(FOLD_BAR_SEC * 1000) / 1000,
+      bpm: Math.round((240 / (getAutoHandoffSec() / autoSpeed)) * 10) / 10,
+      barSec: Math.round((getAutoHandoffSec() / autoSpeed) * 1000) / 1000,
+      autoSpeed,
+      autoEaseIn,
+      autoEaseOut,
+      autoCurve,
+      autoHandoff,
+      cutoutDropDelay,
+      cameraTrick: debugCameraTrick,
+      glideOnFold: debugGlideOnFoldEnabled,
+      fadePrint: debugFadeProjEnabled,
+      shadowStrength,
+      shadowBlur,
+      sunAzimuth,
+      sunElevation,
       foldProgress: Math.round(computeFoldProgress() * 1000) / 1000,
       overlapActive: Boolean(outgoing),
       outgoingFoldProgress: outgoing
@@ -3302,52 +3675,69 @@ function animate(now: number): void {
     renderer.shadowMap.needsUpdate = true;
   }
 
-  // 1. Update panel folds (slower cubic-bezier curved stagger wave + gentle scrub follow!)
+  // 1. Update panel folds (live speed-scaled parameterized cubic-bezier wave + gentle scrub follow!)
+  const foldDt = dt * autoSpeed;
   let foldChanged = false;
+  let activeAnimMaxU = 0;
+  let anyPanelAnimating = false;
   for (const pid of rig.panelIds) {
     const ps = panelState.get(pid)!;
 
-    if (drag.kind !== 'fold' || drag.panel !== pid) {
-      if (ps.animating) {
-        if (ps.delay > 0) {
-          ps.delay = Math.max(0, ps.delay - dt);
-        } else {
-          ps.animElapsed += dt;
-          const u = clamp01(ps.animElapsed / ps.animDuration);
-          const eased = easePaperFold(u);
-          ps.fold = ps.startFold + (ps.target - ps.startFold) * eased;
-          if (u >= 1) {
-            ps.fold = ps.target;
-            ps.animating = false;
-          }
-        }
-        foldChanged = true;
+    if (ps.animating) {
+      anyPanelAnimating = true;
+      if (ps.delay > 0) {
+        ps.delay = Math.max(0, ps.delay - foldDt);
       } else {
-        const diff = ps.target - ps.fold;
-        if (Math.abs(diff) > 0.0004) {
-          ps.fold += diff * (1 - Math.exp(-dt * 7.5));
-          if (Math.abs(ps.target - ps.fold) <= 0.0008) ps.fold = ps.target;
-          foldChanged = true;
+        ps.animElapsed += foldDt;
+        const u = clamp01(ps.animElapsed / ps.animDuration);
+        if (u > activeAnimMaxU) activeAnimMaxU = u;
+        const eased = easePaperFold(u);
+        ps.fold = ps.startFold + (ps.target - ps.startFold) * eased;
+        if (u >= 1) {
+          ps.fold = ps.target;
+          ps.animating = false;
         }
+      }
+      foldChanged = true;
+    } else {
+      const diff = ps.target - ps.fold;
+      if (Math.abs(diff) > 0.0004) {
+        ps.fold += diff * (1 - Math.exp(-dt * 7.5));
+        if (Math.abs(ps.target - ps.fold) <= 0.0008) ps.fold = ps.target;
+        foldChanged = true;
       }
     }
 
-    const wantPeek = hoveredPanel === pid && drag.kind === 'none' ? 1 : 0;
-    ps.peek += (wantPeek - ps.peek) * (1 - Math.exp(-dt * 14));
-    const peekRad = ps.peek * (ps.fold > 0.5 ? -0.055 : 0.085);
-
-    rig.updatePanelVisual(pid, ps.fold, peekRad, hoveredPanel === pid);
+    rig.updatePanelVisual(pid, ps.fold, 0, false);
   }
+  let outgoingPlayheadU: number | null = null;
+  if (outgoing) {
+    let outMaxU = 0;
+    for (const pid of outgoing.rig.panelIds) {
+      const ps = outgoing.panelState.get(pid);
+      if (ps && ps.animDuration > 0) {
+        const u = clamp01(ps.animElapsed / ps.animDuration);
+        if (u > outMaxU) outMaxU = u;
+      }
+    }
+    outgoingPlayheadU = outMaxU;
+  }
+  updateCurvePlayhead(activeAnimMaxU, anyPanelAnimating, outgoingPlayheadU);
 
   const foldProg = computeFoldProgress();
   materials.setProjectionFade(computeProjectionFade(foldProg));
 
-  // 2. Animate falling outer cutout sheet + punched window chads (drops cleanly just before folding!)
+  // 2. Animate falling outer cutout sheet + punched window chads (respects configurable `cutoutDropDelay` timer!)
   if (cutoutDropState === 'falling') {
-    cutoutDropElapsed += dt;
-    const stillFalling = rig.updateCutoutDrop(cutoutDropElapsed);
-    if (!stillFalling) {
-      cutoutDropState = 'done';
+    cutoutDropElapsed += foldDt;
+    const dropTime = cutoutDropElapsed - cutoutDropDelay;
+    if (dropTime <= 0) {
+      rig.updateCutoutDrop(0);
+    } else {
+      const stillFalling = rig.updateCutoutDrop(dropTime);
+      if (!stillFalling) {
+        cutoutDropState = 'done';
+      }
     }
   }
 
@@ -3402,8 +3792,13 @@ function animate(now: number): void {
     applyShadowFrustum(curShadowExtent);
   }
 
-  // Pre-build next house early during the bar so Beat-1 handoffs stay 100% hitch-free!
-  if (autoFoldEnabled && foldProg > 0.35 && (!preparedNext || preparedNext.generation !== generation + 1)) {
+  // Pre-build next house early during the bar so handoffs stay 100% hitch-free even at aggressive early overlap!
+  const handoffSec = getAutoHandoffSec();
+  if (
+    autoFoldEnabled &&
+    (foldProg > 0.18 || autoBeatElapsed > handoffSec * 0.42) &&
+    (!preparedNext || preparedNext.generation !== generation + 1)
+  ) {
     schedulePrepareNext(generation + 1, 20);
   }
 
@@ -3413,9 +3808,9 @@ function animate(now: number): void {
     syncUI();
   }
 
-  // Phase-locked 115 BPM overlapping chain:
-  // Each house unfolds smoothly over 5.2 beats (~2.71s), while the next house launches on every
-  // 4-beat bar downbeat (~2.087s, right when the previous house hits ~77% and starts slowing!).
+  // Configurable overlapping auto-fold chain (`autoHandoff` = 35%..140% of House 1's fold duration):
+  //   <100% launches House 2 while House 1 is still finishing (live dual-house projection overlap!)
+  //    100% hands off cleanly back-to-back, >100% holds briefly on the finished house before next fold.
   if (autoFoldEnabled && drag.kind === 'none' && helpModal.hidden && catalogModal.hidden) {
     if (!autoBeatRunning) {
       autoBeatRunning = true;
@@ -3424,9 +3819,9 @@ function animate(now: number): void {
         triggerStepAction(true, 0);
       }
     } else {
-      autoBeatElapsed += dt;
-      if (autoBeatElapsed >= FOLD_BAR_SEC) {
-        const carry = Math.min(0.05, autoBeatElapsed - FOLD_BAR_SEC);
+      autoBeatElapsed += foldDt;
+      if (autoBeatElapsed >= handoffSec) {
+        const carry = Math.min(0.05, autoBeatElapsed - handoffSec);
         triggerStepAction(true, carry);
       }
     }
@@ -3446,9 +3841,9 @@ function animate(now: number): void {
       if (!ps) continue;
       if (ps.animating) {
         if (ps.delay > 0) {
-          ps.delay = Math.max(0, ps.delay - dt);
+          ps.delay = Math.max(0, ps.delay - foldDt);
         } else {
-          ps.animElapsed += dt;
+          ps.animElapsed += foldDt;
           const u = clamp01(ps.animElapsed / ps.animDuration);
           ps.fold = ps.startFold + (ps.target - ps.startFold) * easePaperFold(u);
           if (u >= 1) {
@@ -3494,7 +3889,7 @@ function animate(now: number): void {
     outgoing.rig.root.visible = true;
     studioFog.near = Math.max(44, outgoing.dist * 1.25);
     studioFog.far = Math.max(120, outgoing.dist * 3.15);
-    applyShadowFrustum(outgoing.shadowExtent);
+    syncTurntableLights(outgoing.yaw, outgoing.shadowExtent);
 
     const prevTarget = renderer.getRenderTarget();
     const prevToneMapping = renderer.toneMapping;
@@ -3510,7 +3905,7 @@ function animate(now: number): void {
     rig.root.visible = savedRigVis;
     studioFog.near = savedFogNear;
     studioFog.far = savedFogFar;
-    applyShadowFrustum(curShadowExtent);
+    syncTurntableLights(curYaw, curShadowExtent);
 
     // Once House A finishes 100%, its final crisp frame stays frozen in `targetRT` and we dispose the rig!
     if (!outStillMoving) {

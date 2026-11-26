@@ -50,7 +50,7 @@
     </div>
 
     <div class="bottom-right" hidden>
-      <span id="status-label" class="status-label" aria-live="polite">Click Fold or drag any flap</span>
+      <span id="status-label" class="status-label" aria-live="polite">Click anywhere to fold</span>
       <button id="btn-debug" class="icon-btn debug-trigger" type="button" title="Debug panel (D)" aria-label="Debug panel" aria-expanded="false" hidden></button>
     </div>
 
@@ -226,25 +226,92 @@
           <span>Rotate</span>
           <input id="dbg-spin" class="debug-switch" type="checkbox" checked />
         </label>
-        <label class="debug-row debug-row-stack" for="dbg-camera-trick" title="Secretly teleport the camera at the exact moment of 1:1 projection (overhead, rolled, inverted, low horizon)">
+        <label class="debug-row debug-row-stack" for="dbg-camera-trick" title="Secretly teleport the camera at the exact moment of 1:1 projection">
           <span>Camera trick</span>
           <select id="dbg-camera-trick" class="debug-select" aria-label="Projection camera trick">
+            <option value="off" selected>Off</option>
+            <option value="balanced">Balanced</option>
             <option value="drastic">Extreme (all angles)</option>
             <option value="overhead">Overhead (+85°)</option>
             <option value="rolled">Inverted / Rolled</option>
             <option value="low">Low horizon (+6°)</option>
             <option value="subtle">Subtle 3/4</option>
-            <option value="off">Off</option>
           </select>
         </label>
         <label class="debug-row" for="dbg-glide-fold" title="Smoothly re-transition camera perspective while the house folds">
           <span>Glide on fold</span>
-          <input id="dbg-glide-fold" class="debug-switch" type="checkbox" />
+          <input id="dbg-glide-fold" class="debug-switch" type="checkbox" checked />
         </label>
         <label class="debug-row" for="dbg-fade-proj" title="Fade out the projected previous-house texture after 50% folded">
           <span>Fade print (50%)</span>
           <input id="dbg-fade-proj" class="debug-switch" type="checkbox" checked />
         </label>
+        <div class="debug-divider"></div>
+        <div class="debug-section-head"><span>Auto fold</span><em id="dbg-auto-bpm">1% overlap</em></div>
+        <div class="debug-curve-box" aria-hidden="true">
+          <svg id="dbg-curve-svg" viewBox="0 0 220 58" preserveAspectRatio="none">
+            <rect id="dbg-curve-overlap" class="curve-overlap" x="92" y="7" width="1" height="44" />
+            <line id="dbg-curve-end1" class="curve-ref" x1="93" y1="7" x2="93" y2="51" />
+            <line id="dbg-curve-cutout-line" class="curve-cutout" x1="22" y1="36" x2="22" y2="51" />
+            <line id="dbg-curve-handoff-line" class="curve-handoff" x1="92" y1="7" x2="92" y2="51" />
+            <path id="dbg-curve-path2" class="curve-stroke-next" d="M92 51 L177 7" />
+            <path id="dbg-curve-path" class="curve-stroke" d="M8 51 L93 7" />
+            <circle id="dbg-curve-dot2" class="curve-dot-next" cx="92" cy="51" r="2.6" />
+            <circle id="dbg-curve-dot" class="curve-dot" cx="8" cy="51" r="3" />
+          </svg>
+        </div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-auto-speed">
+            <span class="debug-slider-head"><span>Speed</span><em id="dbg-auto-speed-val">1.00×</em></span>
+            <input id="dbg-auto-speed" class="debug-range" type="range" min="25" max="300" step="5" value="100" aria-label="Auto fold total speed" />
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-auto-handoff" title="When the next house starts folding relative to the end of the current one (<100% overlaps, 100% back-to-back, >100% pauses)">
+            <span class="debug-slider-head"><span>Next fold</span><em id="dbg-auto-handoff-val">99%</em></span>
+            <input id="dbg-auto-handoff" class="debug-range" type="range" min="35" max="140" step="1" value="99" aria-label="When next fold starts relative to current fold end" />
+          </label>
+        </div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-auto-in">
+            <span class="debug-slider-head"><span>% In</span><em id="dbg-auto-in-val">40%</em></span>
+            <input id="dbg-auto-in" class="debug-range" type="range" min="0" max="100" step="5" value="40" aria-label="Auto fold ease in percentage" />
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-auto-out">
+            <span class="debug-slider-head"><span>% Out</span><em id="dbg-auto-out-val">40%</em></span>
+            <input id="dbg-auto-out" class="debug-range" type="range" min="0" max="100" step="5" value="40" aria-label="Auto fold ease out percentage" />
+          </label>
+        </div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-auto-curve">
+            <span class="debug-slider-head"><span>Curve</span><em id="dbg-auto-curve-val">75%</em></span>
+            <input id="dbg-auto-curve" class="debug-range" type="range" min="0" max="100" step="5" value="75" aria-label="Auto fold curve steepness" />
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-cutout-delay" title="Delay before the outer paper cutout & punched window chads detach and fall away">
+            <span class="debug-slider-head"><span>Cutout</span><em id="dbg-cutout-delay-val">0.55s</em></span>
+            <input id="dbg-cutout-delay" class="debug-range" type="range" min="0" max="250" step="5" value="55" aria-label="Cutout fall away timer" />
+          </label>
+        </div>
+        <div class="debug-divider"></div>
+        <div class="debug-section-head"><span>Light &amp; shadow</span></div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-shadow-strength">
+            <span class="debug-slider-head"><span>Shadow</span><em id="dbg-shadow-strength-val">100%</em></span>
+            <input id="dbg-shadow-strength" class="debug-range" type="range" min="0" max="200" step="5" value="100" aria-label="Shadow strength" />
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-shadow-blur">
+            <span class="debug-slider-head"><span>Softness</span><em id="dbg-shadow-blur-val">1.0</em></span>
+            <input id="dbg-shadow-blur" class="debug-range" type="range" min="0" max="8" step="0.2" value="1" aria-label="Shadow softness" />
+          </label>
+        </div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-sun-azimuth">
+            <span class="debug-slider-head"><span>Azimuth</span><em id="dbg-sun-azimuth-val">62°</em></span>
+            <input id="dbg-sun-azimuth" class="debug-range" type="range" min="0" max="360" step="2" value="62" aria-label="Sun azimuth angle" />
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-sun-elevation">
+            <span class="debug-slider-head"><span>Elevation</span><em id="dbg-sun-elevation-val">49°</em></span>
+            <input id="dbg-sun-elevation" class="debug-range" type="range" min="12" max="85" step="1" value="49" aria-label="Sun elevation angle" />
+          </label>
+        </div>
       </div>
       <div class="debug-footer debug-footer-row debug-footer-3">
         <button id="dbg-open-catalog" class="debug-reset-btn" type="button">Grid</button>
@@ -319,7 +386,7 @@
           <button id="help-close" class="help-close" aria-label="Close">×</button>
         </div>
         <dl class="help-list">
-          <div><dt>Fold by hand</dt><dd>Click or drag any wall or roof flap directly up into place</dd></div>
+          <div><dt>Click anywhere</dt><dd>Fold the whole house and advance to the next sheet</dd></div>
           <div><dt><span class="key">Space</span></dt><dd>Fold the whole house in one staggered wave and project onto the next sheet</dd></div>
           <div><dt><span class="key">F</span></dt><dd>Toggle staggered fold / unfold</dd></div>
           <div><dt><span class="key">A</span></dt><dd>Toggle automatic continuous folding loop</dd></div>
