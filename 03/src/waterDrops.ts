@@ -505,7 +505,7 @@ function createMetaballResolveMaterial(sharedUniforms: WaterDropUniforms): THREE
 
         // Skip all drop-field fetches when Pass 6a had zero active splats (still keeps berry-ice seam blur above!)
         if (uHasDropField < 0.5) {
-          gl_FragColor = vec4(baseScene, 1.0);
+          gl_FragColor = vec4(baseScene, baseTag);
           return;
         }
 
@@ -519,7 +519,7 @@ function createMetaballResolveMaterial(sharedUniforms: WaterDropUniforms): THREE
 
         // Ultra-fast early exit on ~90% of pixels with zero nearby droplet or cast shadow!
         if (phi <= 0.008 && fShProbe.r <= 0.025) {
-          gl_FragColor = vec4(baseScene, 1.0);
+          gl_FragColor = vec4(baseScene, baseTag);
           return;
         }
 
@@ -559,7 +559,7 @@ function createMetaballResolveMaterial(sharedUniforms: WaterDropUniforms): THREE
         // Pure shadow pixel outside the feathered drop boundary -> skip expensive Sobel & refraction!
         float outerMargin = max(0.032, 0.095 * uEdgeSoftness + 0.024);
         if (phi <= ISO_THRESH - outerMargin) {
-          gl_FragColor = vec4(shadowedBase, 1.0);
+          gl_FragColor = vec4(shadowedBase, baseTag);
           return;
         }
 
@@ -674,7 +674,7 @@ function createMetaballResolveMaterial(sharedUniforms: WaterDropUniforms): THREE
         float mask = smoothstep(ISO_THRESH - aaWidth * 0.68, ISO_THRESH + aaWidth * 0.85, phi);
 
         vec3 outCol = mix(shadowedBase, col, mask);
-        gl_FragColor = vec4(outCol, 1.0);
+        gl_FragColor = vec4(outCol, max(baseTag, mask));
       }
     `,
   });

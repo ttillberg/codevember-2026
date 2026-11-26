@@ -301,6 +301,100 @@ canvas {
   box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.55);
 }
 
+/* Bottom-center prerendered popsicle preset switcher */
+.preset-dock {
+  position: fixed;
+  z-index: 3;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 7px;
+  border-radius: 18px;
+  border: 1px solid var(--pill-border);
+  background: rgba(255, 250, 246, 0.56);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 10px 28px rgba(28, 20, 18, 0.10);
+  max-width: calc(100vw - 24px);
+}
+
+.preset-btn {
+  appearance: none;
+  position: relative;
+  width: 40px;
+  height: 48px;
+  padding: 3px 2px 2px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  transition: background 140ms ease, border-color 140ms ease, transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 140ms ease;
+}
+
+.preset-btn img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(28, 16, 12, 0.16));
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), filter 150ms ease;
+}
+
+.preset-btn:hover {
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.preset-btn:hover img {
+  transform: translateY(-3px) scale(1.12);
+  filter: drop-shadow(0 5px 8px rgba(28, 16, 12, 0.22));
+}
+
+.preset-btn:active {
+  transform: scale(0.94);
+}
+
+.preset-btn[aria-pressed="true"] {
+  background: rgba(28, 28, 28, 0.10);
+  border-color: rgba(28, 28, 28, 0.38);
+  box-shadow: 0 2px 8px rgba(28, 20, 18, 0.10);
+}
+
+.preset-btn[aria-pressed="true"] img {
+  transform: translateY(-1px) scale(1.06);
+}
+
+.preset-btn::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 9px);
+  transform: translateX(-50%) translateY(4px);
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(28, 28, 28, 0.88);
+  color: #f8f4f1;
+  font: 600 10.5px/1 Inter, system-ui, sans-serif;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 130ms ease, transform 140ms ease;
+}
+
+.preset-btn:hover::after,
+.preset-btn:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* Dev-only bottom-right tuning workbench */
 .dev-dock {
   position: fixed;
@@ -488,108 +582,31 @@ canvas {
     right: max(12px, env(safe-area-inset-right));
     width: min(290px, calc(100vw - 24px));
   }
-}
-
-/* Dev-only top-left reference photo card positioned cleanly below the title plate */
-.ref-card {
-  position: fixed;
-  z-index: 3;
-  top: calc(max(24px, env(safe-area-inset-top)) + 84px);
-  left: max(24px, env(safe-area-inset-left));
-  margin: 0;
-  width: 196px;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 1px solid var(--pill-border);
-  background: rgba(255, 251, 248, 0.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 8px 24px rgba(28, 20, 18, 0.12);
-  transition: width 180ms ease;
-}
-
-.ref-card.expanded {
-  width: min(380px, 38vw);
-}
-
-.ref-card[hidden] {
-  display: none;
-}
-
-.ref-card img {
-  display: block;
-  width: 100%;
-  height: auto;
-  cursor: zoom-in;
-}
-
-.ref-card.expanded img {
-  cursor: zoom-out;
-}
-
-.ref-card figcaption {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 5px 8px 5px 10px;
-  font: 600 10.5px/1 Inter, system-ui, sans-serif;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-}
-
-.ref-close {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--ink);
-  font: 600 14px/1 Inter, system-ui, sans-serif;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.ref-close:hover {
-  background: rgba(28, 28, 28, 0.10);
-}
-
-.ref-pill {
-  position: fixed;
-  z-index: 3;
-  top: calc(max(24px, env(safe-area-inset-top)) + 84px);
-  left: max(24px, env(safe-area-inset-left));
-  appearance: none;
-  padding: 6px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--pill-border);
-  background: var(--pill-bg);
-  color: var(--ink);
-  font: 600 11px/1 Inter, system-ui, sans-serif;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-.ref-pill:hover {
-  background: var(--pill-hover);
-}
-
-.ref-pill[hidden] {
-  display: none;
+  .preset-dock {
+    bottom: max(12px, env(safe-area-inset-bottom));
+    gap: 2px;
+    padding: 4px 5px;
+    border-radius: 15px;
+  }
+  .preset-btn {
+    width: 34px;
+    height: 42px;
+    border-radius: 10px;
+  }
+  .preset-btn::after {
+    display: none;
+  }
+  .dev-dock {
+    bottom: max(68px, calc(env(safe-area-inset-bottom) + 60px));
+    right: max(12px, env(safe-area-inset-right));
+  }
 }
 
 /* ?clean: the scene alone */
 .clean .plate,
 .clean .controls,
 .clean .customize-panel,
-.clean .dev-dock,
-.clean .ref-card,
-.clean .ref-pill {
+.clean .preset-dock,
+.clean .dev-dock {
   display: none !important;
 }

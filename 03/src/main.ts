@@ -20,7 +20,10 @@ import {
   FLAVOR_LIST,
   FlavorId,
   normalizeRecipe,
+  POPSICLE_PRESETS,
+  PopsiclePreset,
   PopsicleRecipe,
+  recipesMatch,
   TOPPING_LIST,
   ToppingId,
 } from './recipe';
@@ -353,6 +356,7 @@ const depthOnlyMat = new THREE.MeshBasicMaterial({
 const displayUniforms = {
   uTex: { value: null as THREE.Texture | null },
   uTime: { value: 0 },
+  uMaskOnly: { value: 0 },
 };
 const displayMat = new THREE.ShaderMaterial({
   depthTest: false,
@@ -369,6 +373,7 @@ const displayMat = new THREE.ShaderMaterial({
     precision highp float;
     uniform sampler2D uTex;
     uniform float uTime;
+    uniform float uMaskOnly;
     varying vec2 vUv;
 
     // Clean ACES-fitted filmic curve preserving warm coral-reds and silky highlight desaturation!
@@ -388,7 +393,13 @@ const displayMat = new THREE.ShaderMaterial({
     }
 
     void main() {
-      vec3 hdr = texture2D(uTex, vUv).rgb;
+      vec4 tex = texture2D(uTex, vUv);
+      if (uMaskOnly > 0.5) {
+        float m = smoothstep(0.015, 0.22, tex.a);
+        gl_FragColor = vec4(vec3(m), 1.0);
+        return;
+      }
+      vec3 hdr = tex.rgb;
 
       // Photographic exposure calibration
       hdr *= 1.08;
@@ -1168,6 +1179,48 @@ const baseBtns = Array.from(customizePanel.querySelectorAll<HTMLButtonElement>('
 
 const btnReset = document.getElementById('btn-reset') as HTMLButtonElement;
 const btnSeed = document.getElementById('btn-seed') as HTMLButtonElement;
+const presetDock = document.getElementById('preset-dock') as HTMLElement;
+
+const ASSET_BASE = import.meta.env.BASE_URL ?? '/';
+const presetButtons = new Map<string, HTMLButtonElement>();
+for (let i = 0; i < POPSICLE_PRESETS.length; i++) {
+  const preset = POPSICLE_PRESETS[i];
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'preset-btn';
+  btn.dataset.preset = preset.id;
+  btn.dataset.label = preset.name;
+  btn.title = `${preset.name} (${i + 1})`;
+  btn.setAttribute('aria-label', preset.name);
+  btn.setAttribute('aria-pressed', 'false');
+  const img = document.createElement('img');
+  img.src = `${ASSET_BASE}presets/${preset.id}.webp`;
+  img.alt = '';
+  img.width = 80;
+  img.height = 112;
+  img.draggable = false;
+  img.decoding = 'async';
+  btn.appendChild(img);
+  btn.addEventListener('click', () => {
+    applyPreset(preset);
+  });
+  presetDock.appendChild(btn);
+  presetButtons.set(preset.id, btn);
+}
+
+function applyPreset(preset: PopsiclePreset) {
+  currentRecipe = normalizeRecipe(preset.recipe);
+  const nextMelt = meltState.melt > 0.65 ? DEFAULT_INITIAL_MELT : meltState.melt;
+  buildPopsicle(preset.seed, nextMelt);
+}
+
+function syncPresetUI() {
+  for (const preset of POPSICLE_PRESETS) {
+    const btn = presetButtons.get(preset.id);
+    if (!btn) continue;
+    btn.setAttribute('aria-pressed', String(recipesMatch(currentRecipe, preset.recipe)));
+  }
+}
 
 const devDock = document.getElementById('dev-dock') as HTMLDivElement;
 const btnSettings = document.getElementById('btn-settings') as HTMLButtonElement;
@@ -1209,32 +1262,6 @@ const dropControls: Array<{
 
 if (showSettings) {
   devDock.hidden = false;
-}
-
-// Dev-only top-left reference photo overlay (click image to enlarge/shrink, × to collapse)
-const refCard = document.getElementById('ref-card') as HTMLElement | null;
-const refImg = document.getElementById('ref-img') as HTMLImageElement | null;
-const btnRefClose = document.getElementById('btn-ref-close') as HTMLButtonElement | null;
-const btnRefOpen = document.getElementById('btn-ref-open') as HTMLButtonElement | null;
-
-if (import.meta.env.DEV && !params.has('clean') && refCard && refImg && btnRefClose && btnRefOpen) {
-  refImg.src = '/process/reference.jpg';
-  refCard.hidden = false;
-  refImg.addEventListener('error', () => {
-    refCard.hidden = true;
-    btnRefOpen.hidden = true;
-  });
-  refImg.addEventListener('click', () => {
-    refCard.classList.toggle('expanded');
-  });
-  btnRefClose.addEventListener('click', () => {
-    refCard.hidden = true;
-    btnRefOpen.hidden = false;
-  });
-  btnRefOpen.addEventListener('click', () => {
-    refCard.hidden = false;
-    btnRefOpen.hidden = true;
-  });
 }
 
 function syncWorkbenchUI() {
@@ -1340,6 +1367,7 @@ function syncCustomizeUI() {
     currentRecipe.toppings.length === 0
       ? 'None'
       : `${currentRecipe.toppings.length} selected`;
+  syncPresetUI();
 }
 
 btnCustomize.addEventListener('click', () => {
@@ -1540,6 +1568,9 @@ window.addEventListener('keydown', (e) => {
     buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
   } else if (e.key === 'c' || e.key === 'C') {
     btnCustomize.click();
+  } else if (e.key >= '1' && e.key <= '9') {
+    const preset = POPSICLE_PRESETS[Number(e.key) - 1];
+    if (preset) applyPreset(preset);
   }
 });
 
@@ -1940,6 +1971,21 @@ buildPopsicle(currentSeed, initialMelt);
       flavors: [...currentRecipe.flavors],
       toppings: [...currentRecipe.toppings],
     };
+  },
+  applyPreset(id: string) {
+    const preset = POPSICLE_PRESETS.find((p) => p.id === id);
+    if (!preset) return false;
+    currentRecipe = normalizeRecipe(preset.recipe);
+    buildPopsicle(preset.seed, DEFAULT_INITIAL_MELT);
+    renderFrame();
+    return true;
+  },
+  getPresets() {
+    return POPSICLE_PRESETS.map((p) => ({ id: p.id, name: p.name, seed: p.seed, recipe: p.recipe }));
+  },
+  setMaskMode(on: boolean) {
+    displayUniforms.uMaskOnly.value = on ? 1.0 : 0.0;
+    renderFrame();
   },
   setDropMode(mode: DropMode) {
     currentDropMode = mode;

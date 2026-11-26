@@ -242,6 +242,83 @@ export const DEFAULT_RECIPE: PopsicleRecipe = {
   toppings: ['strawberry', 'blueberry'],
 };
 
+export interface PopsiclePreset {
+  id: string;
+  name: string;
+  seed: number;
+  recipe: PopsicleRecipe;
+}
+
+export const POPSICLE_PRESETS: PopsiclePreset[] = [
+  {
+    id: 'berry-classic',
+    name: 'Berry Classic',
+    seed: 1,
+    recipe: { base: 'water', flavors: ['strawberry'], toppings: ['strawberry', 'blueberry'] },
+  },
+  {
+    id: 'mango-sunrise',
+    name: 'Mango Sunrise',
+    seed: 4,
+    recipe: { base: 'water', flavors: ['mango', 'orange'], toppings: ['raspberry', 'shaved-lemon'] },
+  },
+  {
+    id: 'pink-lemonade',
+    name: 'Pink Lemonade',
+    seed: 7,
+    recipe: { base: 'water', flavors: ['raspberry', 'lemon'], toppings: ['raspberry', 'shaved-lemon'] },
+  },
+  {
+    id: 'blueberry-ice',
+    name: 'Blueberry Ice',
+    seed: 9,
+    recipe: { base: 'water', flavors: ['blueberry'], toppings: ['blueberry', 'shaved-lemon'] },
+  },
+  {
+    id: 'watermelon-rush',
+    name: 'Watermelon',
+    seed: 12,
+    recipe: { base: 'water', flavors: ['watermelon'], toppings: ['strawberry', 'chocolate'] },
+  },
+  {
+    id: 'coconut-crumb',
+    name: 'Coconut Crumb',
+    seed: 3,
+    recipe: { base: 'coconut', flavors: [], toppings: ['kaksmulor'] },
+  },
+  {
+    id: 'berry-cream',
+    name: 'Berry Cream',
+    seed: 6,
+    recipe: { base: 'coconut', flavors: ['strawberry'], toppings: ['strawberry', 'raspberry'] },
+  },
+  {
+    id: 'choco-banana',
+    name: 'Choco Banana',
+    seed: 11,
+    recipe: { base: 'coconut', flavors: ['banana', 'chocolate'], toppings: ['chocolate', 'kaksmulor'] },
+  },
+  {
+    id: 'dark-fudge',
+    name: 'Dark Fudge',
+    seed: 14,
+    recipe: { base: 'coconut', flavors: ['chocolate'], toppings: ['chocolate', 'raspberry'] },
+  },
+];
+
+export function recipesMatch(a: PopsicleRecipe, b: PopsicleRecipe): boolean {
+  if (a.base !== b.base) return false;
+  if (a.flavors.length !== b.flavors.length || a.toppings.length !== b.toppings.length) return false;
+  for (let i = 0; i < a.flavors.length; i++) {
+    if (a.flavors[i] !== b.flavors[i]) return false;
+  }
+  const setB = new Set(b.toppings);
+  for (let i = 0; i < a.toppings.length; i++) {
+    if (!setB.has(a.toppings[i])) return false;
+  }
+  return true;
+}
+
 const PURE_COCONUT_SPEC: OpticalSpec = {
   sigma: [0.45, 0.55, 0.72],
   core: [1.34, 1.28, 1.18],

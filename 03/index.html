@@ -26,15 +26,6 @@
     <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span -->
     <div class="plate"><div class="head"><b>03 Melt</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">融解</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
 
-    <figure id="ref-card" class="ref-card" hidden>
-      <img id="ref-img" alt="Reference macro photo" draggable="false" />
-      <figcaption>
-        <span>Ref</span>
-        <button id="btn-ref-close" class="ref-close" type="button" title="Hide reference" aria-label="Hide reference">×</button>
-      </figcaption>
-    </figure>
-    <button id="btn-ref-open" class="ref-pill" type="button" hidden>Ref</button>
-
     <div class="controls" aria-label="Scene controls">
       <button id="btn-customize" class="pill-btn" type="button" title="Customize popsicle (C)" aria-label="Customize popsicle" aria-expanded="false" aria-controls="customize-panel">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -90,6 +81,8 @@
         <div id="cust-toppings" class="chip-grid" role="group" aria-label="Toppings"></div>
       </div>
     </div>
+
+    <nav id="preset-dock" class="preset-dock" aria-label="Popsicle presets"></nav>
 
     <div id="dev-dock" class="dev-dock" hidden>
       <button id="btn-settings" class="icon-btn" type="button" title="Tune parameters" aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">
