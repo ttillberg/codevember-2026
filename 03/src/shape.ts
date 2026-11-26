@@ -693,3 +693,136 @@ export function sampleIceContainment(
 export function iceContainmentDepth(x: number, y: number, z: number, state: MeltFieldState): number {
   return sampleIceContainment(x, y, z, state, _containmentScratch).depth;
 }
+
+export interface ExactIceSurfaceInfo {
+  /** Closest surface point on the live rendered popsicle mesh */
+  sx: number;
+  sy: number;
+  sz: number;
+  /** Outward unit normal of the live rendered popsicle mesh */
+  nx: number;
+  ny: number;
+  nz: number;
+  /** Signed distance outside the exact rendered surface (>0 outside, 0 on skin, <0 inside) */
+  signedOut: number;
+  /** True when the live ice is gone */
+  iceGone: boolean;
+}
+
+const _exactRow0: ProfileRowCache = { ..._sharedRowCache };
+const _exactRowP: ProfileRowCache = { ..._sharedRowCache };
+const _exactRowM: ProfileRowCache = { ..._sharedRowCache };
+const _exactPtA = { x: 0, y: 0, z: 0 };
+const _exactPtB = { x: 0, y: 0, z: 0 };
+const _exactPtTp = { x: 0, y: 0, z: 0 };
+const _exactPtTm = { x: 0, y: 0, z: 0 };
+const _exactPtVp = { x: 0, y: 0, z: 0 };
+const _exactPtVm = { x: 0, y: 0, z: 0 };
+
+/**
+ * Queries the exact live rendered popsicle mesh surface (including flutes, melt waves, crystal erosion,
+ * pointer heat dimples, and bottom rim swell) closest to `(x, y, z)`, returning the exact surface point,
+ * outward unit normal, and signed outward clearance (`> 0` outside ice, `< 0` inside ice).
+ */
+export function sampleExactIceSurface(
+  x: number,
+  y: number,
+  z: number,
+  frame: ProfileFrameCache,
+  state: MeltFieldState,
+  out: ExactIceSurfaceInfo,
+): ExactIceSurfaceInfo {
+  if (frame.iceAmount <= 0.001) {
+    out.sx = 0;
+    out.sy = frame.yBot;
+    out.sz = 0;
+    out.nx = 0;
+    out.ny = 1;
+    out.nz = 0;
+    out.signedOut = 99.0;
+    out.iceGone = true;
+    return out;
+  }
+
+  const vNorm = clamp((y - frame.yBot) / frame.bodyH, 0.002, 0.998);
+  const row = prepareProfileRow(vNorm, frame, _exactRow0);
+
+  // Candidate A: exact front/back face match preserving X
+  const uxA = clamp(Math.abs(x) / Math.max(0.015, row.halfW), 0, 0.996);
+  const sinA = (x >= 0 ? 1 : -1) * Math.pow(uxA, 1.0 / row.invExpX);
+  const cosA = (z >= 0 ? 1 : -1) * Math.sqrt(Math.max(0, 1.0 - sinA * sinA));
+  evaluatePopsicleVertex(sinA, cosA, frame, row, state, _exactPtA);
+
+  let sinT = sinA;
+  let cosT = cosA;
+  let sx = _exactPtA.x;
+  let sy = _exactPtA.y;
+  let sz = _exactPtA.z;
+
+  // Candidate B: side-wall match preserving Z when near the curved left/right edge
+  if (uxA >= 0.68) {
+    const uzB = clamp(Math.abs(z) / Math.max(0.012, row.halfD), 0, 0.996);
+    const cosB = (z >= 0 ? 1 : -1) * Math.pow(uzB, 1.0 / row.invExpZ);
+    const sinB = (x >= 0 ? 1 : -1) * Math.sqrt(Math.max(0, 1.0 - cosB * cosB));
+    evaluatePopsicleVertex(sinB, cosB, frame, row, state, _exactPtB);
+    const dSqA = (x - _exactPtA.x) * (x - _exactPtA.x) + (z - _exactPtA.z) * (z - _exactPtA.z);
+    const dSqB = (x - _exactPtB.x) * (x - _exactPtB.x) + (z - _exactPtB.z) * (z - _exactPtB.z);
+    if (dSqB < dSqA) {
+      sinT = sinB;
+      cosT = cosB;
+      sx = _exactPtB.x;
+      sy = _exactPtB.y;
+      sz = _exactPtB.z;
+    }
+  }
+
+  // Exact outward normal via surface tangents: (dP/dTheta) × (dP/dvNorm)
+  const theta = Math.atan2(sinT, cosT);
+  const dTh = 0.045;
+  evaluatePopsicleVertex(Math.sin(theta + dTh), Math.cos(theta + dTh), frame, row, state, _exactPtTp);
+  evaluatePopsicleVertex(Math.sin(theta - dTh), Math.cos(theta - dTh), frame, row, state, _exactPtTm);
+  const vP = Math.min(0.999, vNorm + 0.012);
+  const vM = Math.max(0.001, vNorm - 0.012);
+  const rowP = prepareProfileRow(vP, frame, _exactRowP);
+  const rowM = prepareProfileRow(vM, frame, _exactRowM);
+  evaluatePopsicleVertex(sinT, cosT, frame, rowP, state, _exactPtVp);
+  evaluatePopsicleVertex(sinT, cosT, frame, rowM, state, _exactPtVm);
+
+  const tx = _exactPtTp.x - _exactPtTm.x;
+  const ty = _exactPtTp.y - _exactPtTm.y;
+  const tz = _exactPtTp.z - _exactPtTm.z;
+  const vx = _exactPtVp.x - _exactPtVm.x;
+  const vy = _exactPtVp.y - _exactPtVm.y;
+  const vz = _exactPtVp.z - _exactPtVm.z;
+
+  let nx = ty * vz - tz * vy;
+  let ny = tz * vx - tx * vz;
+  let nz = tx * vy - ty * vx;
+  const nLen = Math.hypot(nx, ny, nz);
+  if (nLen > 1e-6) {
+    nx /= nLen;
+    ny /= nLen;
+    nz /= nLen;
+  } else {
+    nx = sinT;
+    ny = 0;
+    nz = cosT;
+  }
+
+  let signedOut = (x - sx) * nx + (y - sy) * ny + (z - sz) * nz;
+  if (y > frame.yTop) {
+    signedOut = Math.max(signedOut, y - frame.yTop);
+  } else if (vNorm <= 0.002 && y < sy) {
+    signedOut = Math.max(signedOut, sy - y);
+  }
+
+  out.sx = sx;
+  out.sy = sy;
+  out.sz = sz;
+  out.nx = nx;
+  out.ny = ny;
+  out.nz = nz;
+  out.signedOut = signedOut;
+  out.iceGone = false;
+  return out;
+}

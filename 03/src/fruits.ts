@@ -1,6 +1,18 @@
 import * as THREE from 'three';
 import { clamp, fbm3, mulberry32, smoothstep } from './rng';
-import { baseHalfWidthAt, getMeltBounds, iceContainmentDepth, MeltFieldState, POPSICLE, sampleIceContainment } from './shape';
+import {
+  baseHalfWidthAt,
+  ExactIceSurfaceInfo,
+  getMeltBounds,
+  iceContainmentDepth,
+  MeltFieldState,
+  POPSICLE,
+  prepareProfileFrame,
+  ProfileFrameCache,
+  sampleExactIceSurface,
+  sampleIceContainment,
+  sampleLocalHeat,
+} from './shape';
 import {
   DEFAULT_RECIPE,
   PopsicleRecipe,
@@ -52,6 +64,18 @@ export interface FruitItem {
   knockAccum: number;
   /** Initial frozen seat offset so shallow milk-mode inlays stay firmly embedded until actually melted loose */
   seatOffset: number;
+  /** True while a small light bit is clinging to & gliding down the viscous melt flow instead of free-falling */
+  flowRiding: boolean;
+  /** Elapsed seconds spent riding the melt flow (separate from free-fall detachTime so riding bits never vanish!) */
+  flowTime: number;
+  /** Per-piece deterministic meander phase for organic rivulet paths along the melting surface */
+  flowPhase: number;
+  /** Per-piece capillary stickiness [0..1] staggering release clearance, startup lag & stick-slip hesitation */
+  flowStickiness: number;
+  /** Per-piece natural melt-flow speed personality (slow syrupy creepers to slick rivulet riders) */
+  flowSpeedBias: number;
+  /** Exact frozen signed protrusion outside the rendered ice surface at melt=0 */
+  baseSignedOut0: number;
   /** Damped micro-recoil offset & velocity when an embedded fruit gets bumped by a falling berry */
   jostlePos: THREE.Vector3;
   jostleVel: THREE.Vector3;
@@ -1909,10 +1933,12 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
       );
       let z: number;
       if (isCoconut) {
-        // Place most pieces right near the front creamy surface (+Z) so fine crumbs, chips & zest peek vividly!
+        // Keep ~68% near the front creamy surface so fine crumbs, chips & zest peek vividly on frame 0,
+        // while seating ~32% slightly deeper so new hidden bits emerge organically mid-melt!
         const frontSide = rand() < 0.78 ? 1 : -1;
-        const depthSpread = isFineInlay ? 0.016 : 0.026;
-        const shallowZ = Math.max(0.02, maxSafeZ - rand() * depthSpread);
+        const deeperLayer = isFineInlay && rand() < 0.32;
+        const depthSpread = deeperLayer ? 0.020 + rand() * 0.038 : rand() * (isFineInlay ? 0.018 : 0.026);
+        const shallowZ = Math.max(0.015, maxSafeZ - depthSpread);
         z = frontSide * shallowZ;
       } else {
         z = clamp(zBias + (rand() * 2 - 1) * 0.026, -0.05, maxSafeZ);
@@ -2481,6 +2507,12 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       wetContact: 0,
       knockAccum: 0,
       seatOffset: 0,
+      flowRiding: false,
+      flowTime: 0,
+      flowPhase: rand() * Math.PI * 2,
+      flowStickiness: rand(),
+      flowSpeedBias: 0.35 + Math.pow(rand(), 1.35) * 1.45,
+      baseSignedOut0: -0.05,
       jostlePos: new THREE.Vector3(),
       jostleVel: new THREE.Vector3(),
       bendAmt: bb.x,
@@ -2549,6 +2581,8 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       f.exposure = 0;
       f.wetContact = 0;
       f.knockAccum = 0;
+      f.flowRiding = false;
+      f.flowTime = 0;
       f.jostlePos.set(0, 0, 0);
       f.jostleVel.set(0, 0, 0);
       f.bendAmt = f.baseBend.x;
@@ -2704,6 +2738,16 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     }
   }
 
+  /** Small, lightweight bits where capillary surface tension & syrup viscosity keep them riding the melt flow! */
+  function isSmallFlowBit(f: FruitItem): boolean {
+    if (f.kind === 'shaved-lemon') return true;
+    if (f.kind === 'chocolate') return f.radius <= 0.060;
+    if (f.kind === 'kaksmulor') return f.radius <= 0.056;
+    if (f.kind === 'raspberry') return f.radius <= 0.056;
+    if (f.kind === 'strawberry') return f.radius <= 0.072;
+    return false;
+  }
+
   /** Outward unit normal of the live melting popsicle SDF via central differences (zero-allocation). */
   function sampleIceSurfaceNormal(
     x: number,
@@ -2835,21 +2879,84 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     bottomLobes: [1, 1, 1, 1],
     pendantPull: [0, 0, 0, 0],
   };
+  const liveProfileFrame: ProfileFrameCache = prepareProfileFrame(frozenBaselineState);
+  const physExactSurf: ExactIceSurfaceInfo = {
+    sx: 0,
+    sy: 0,
+    sz: 0,
+    nx: 0,
+    ny: 0,
+    nz: 1,
+    signedOut: 0,
+    iceGone: false,
+  };
   for (const f of fruits) {
     const rawGrip0 = evaluateRawFruitGrip(f, frozenBaselineState, 0);
     const minFrozenSeat = 0.044 + f.radius * 0.36;
     f.seatOffset = Math.max(0, minFrozenSeat - rawGrip0);
+    sampleExactIceSurface(f.basePos.x, f.basePos.y, f.basePos.z, liveProfileFrame, frozenBaselineState, physExactSurf);
+    f.baseSignedOut0 = physExactSurf.signedOut;
   }
 
   function evaluateFruitGrip(f: FruitItem, meltState: MeltFieldState, slideY = 0): number {
     const rawGrip = evaluateRawFruitGrip(f, meltState, slideY);
-    const seatHold = f.seatOffset * (1.0 - smoothstep(0.56, 0.88, meltState.melt));
+    const seatHold = f.seatOffset * (1.0 - smoothstep(0.52, 0.86, meltState.melt));
     return rawGrip + seatHold - f.knockAccum;
+  }
+
+  /**
+   * Exact full-detachment test for small flow-riding bits against the live rendered ice surface:
+   * stays firmly frozen (>0) until the ice skin genuinely melts past the bit's body so it sits
+   * completely freed outside the surface — with organic per-bit stagger via `flowStickiness`.
+   */
+  function evaluateSmallBitGrip(
+    f: FruitItem,
+    frame: ProfileFrameCache,
+    meltState: MeltFieldState,
+    slideY: number,
+  ): number {
+    const rCol = fruitCollisionRadius(f);
+    const isFlat = FRUIT_PHYSICS[f.kind].isFlat;
+    sampleExactIceSurface(f.basePos.x, f.basePos.y + slideY, f.basePos.z, frame, meltState, physExactSurf);
+    if (physExactSurf.iceGone) return -1.0;
+
+    // Require the bit to be genuinely protruding OUTSIDE the exact live surface (not half-buried in solid fudge!)
+    const releaseOut = isFlat
+      ? 0.005 + f.flowStickiness * 0.012
+      : rCol * (0.42 + f.flowStickiness * 0.46);
+    const clearanceLeft = releaseOut - physExactSurf.signedOut;
+
+    // Also require real melt erosion from this bit's frozen frame-0 seat so shallow milk inlays never pop early
+    const surfaceRetreat = physExactSurf.signedOut - f.baseSignedOut0;
+    const minRetreat =
+      (isFlat ? 0.010 + f.flowStickiness * 0.018 : rCol * (0.46 + f.flowStickiness * 0.54)) *
+      (1.0 - smoothstep(0.68, 0.88, meltState.melt));
+    const retreatLeft = minRetreat - surfaceRetreat;
+
+    // Falling heavy berries knocking an already-exposed small bit can break its capillary cling early
+    const knockRelief = physExactSurf.signedOut > rCol * 0.12 ? f.knockAccum : 0;
+    return Math.max(clearanceLeft, retreatLeft) - knockRelief;
   }
 
   function applyPreReleasePose(f: FruitItem, grip: number, slideY = 0) {
     const gripFull = Math.max(0.045, f.radius * 0.48);
     f.exposure = clamp(1.0 - smoothstep(0.0, gripFull, grip), 0, 1);
+
+    // Small melt-flow bits stay completely frozen in place until fully detached — never creeping inside solid ice!
+    if (isSmallFlowBit(f)) {
+      f.mesh.position.set(
+        f.basePos.x + f.jostlePos.x * 0.4,
+        f.basePos.y + slideY + f.jostlePos.y * 0.4,
+        f.basePos.z + f.jostlePos.z * 0.4,
+      );
+      f.mesh.quaternion.copy(f.baseQuat);
+      f.mesh.scale.copy(f.baseScale);
+      if (f.thawUniform) {
+        f.thawUniform.value = smoothstep(0.15, 0.85, f.exposure);
+      }
+      return;
+    }
+
     const sagRaw = smoothstep(GRAB_EXPOSURE_MIN, 1.0, f.exposure);
     // Cubic-quadratic hybrid creep: firm while deeply frozen, noticeably yielding & tipping right before slipping free
     const sag = sagRaw * sagRaw * (0.65 + 0.35 * sagRaw);
@@ -2894,6 +3001,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
   function update(meltState: MeltFieldState, dt: number, stickWetness?: number) {
     const { yTop: yTopLive, yBot: yBotLive, slideY, iceAmount, iceGone } = getMeltBounds(meltState.melt);
+    prepareProfileFrame(meltState, liveProfileFrame);
     stickUniforms.uIceBottomY.value = yBotLive;
     stickUniforms.uIceTopY.value = yTopLive;
     stickUniforms.uIceAmount.value = iceAmount;
@@ -2929,16 +3037,23 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         }
       }
 
-      const grip = evaluateFruitGrip(f, meltState, slideY);
-      const shouldRelease = iceGone || (meltState.melt > 0.14 && grip <= 0);
+      const smallBit = isSmallFlowBit(f);
+      const grip = smallBit
+        ? evaluateSmallBitGrip(f, liveProfileFrame, meltState, slideY)
+        : evaluateFruitGrip(f, meltState, slideY);
+      const shouldRelease = iceGone || (meltState.melt > (smallBit ? 0.10 : 0.14) && grip <= 0);
 
       if (dt === 0) {
         if (shouldRelease) {
           f.detached = true;
+          f.flowRiding = false;
+          f.flowTime = 0;
           f.mesh.visible = false;
         } else {
           f.detached = false;
           f.detachTime = 0;
+          f.flowRiding = false;
+          f.flowTime = 0;
           f.detachOrigin.copy(f.basePos);
           f.cavityDepth = 0;
           f.stickCavity = 0;
@@ -2988,7 +3103,20 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           f.detached = true;
           f.detachTime = 0;
           f.detachOrigin.copy(f.mesh.position);
+          f.flowRiding = !iceGone && smallBit;
+          f.flowTime = 0;
           const rCol = fruitCollisionRadius(f);
+          if (f.flowRiding) {
+            // Start gently from rest on the wet surface so bits ooze into motion instead of snapping to cruise speed!
+            f.cavityDepth = 0;
+            f.stickCavity = 0;
+            f.wetContact = 1.0;
+            f.velocity.set(0, -0.012 * f.flowSpeedBias, 0);
+            f.angVel.set(0, 0, 0);
+            f.bendVel = 0;
+            if (f.thawUniform) f.thawUniform.value = 1.0;
+            continue;
+          }
           const dHere = iceGone
             ? -1.0
             : iceContainmentDepth(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState);
@@ -3043,7 +3171,11 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
       if (!f.detached || !f.mesh.visible || f.grabbed) continue;
-      f.detachTime += dt;
+      if (f.flowRiding) {
+        f.flowTime += dt;
+      } else {
+        f.detachTime += dt;
+      }
     }
 
     for (let s = 0; s < substeps; s++) {
@@ -3054,6 +3186,162 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
         const prof = FRUIT_PHYSICS[f.kind];
         const rCol = fruitCollisionRadius(f);
+
+        // === VISCOUS MELT-FLOW RIDING FOR SMALL BITS (shaved lemon, chocolate pearls, fine cookie crumbs, tiny bits) ===
+        // Once completely released outside the exact live ice surface, bits ooze & meander down the wet syrup film
+        // with natural per-bit speed & stick-slip variation, strictly OUTSIDE the rendered ice cream mesh (never re-entering!).
+        if (f.flowRiding) {
+          const px = f.mesh.position.x;
+          const py = f.mesh.position.y;
+          const pz = f.mesh.position.z;
+
+          const onStickBand =
+            py <= yBotLive + 0.028 &&
+            py > POPSICLE.stickBottomY + 0.035 &&
+            Math.abs(px) < STICK_HALF_W + rCol * 1.65 &&
+            Math.abs(pz) < STICK_HALF_D + rCol * 1.90;
+
+          if (!iceGone && py > yBotLive + 0.012 && Math.abs(px) < iceHalfWBound + rCol && Math.abs(pz) < iceHalfDBound + rCol) {
+            sampleExactIceSurface(px, py, pz, liveProfileFrame, meltState, physExactSurf);
+            physN.set(physExactSurf.nx, physExactSurf.ny, physExactSurf.nz);
+
+            // Stay on the ice film as long as we're near the outer skin and haven't hit a steep underside overhang
+            if (!physExactSurf.iceGone && physExactSurf.signedOut < rCol * 2.4 && physN.y > -0.56) {
+              // Local downward tangent along the exact curved melting ice face: t = g - (g · N) N
+              const gn = -physN.y;
+              let tx = -gn * physN.x;
+              let ty = -1.0 - gn * physN.y;
+              let tz = -gn * physN.z;
+              const tLen = Math.hypot(tx, ty, tz);
+              if (tLen > 1e-4) {
+                tx /= tLen;
+                ty /= tLen;
+                tz /= tLen;
+              } else {
+                tx = 0;
+                ty = -1;
+                tz = 0;
+              }
+
+              // Horizontal surface tangent for gentle meandering rivulet paths + subtle pull toward flute valleys
+              let sx = physN.z;
+              let sz = -physN.x;
+              const sLen = Math.hypot(sx, sz);
+              if (sLen > 1e-4) {
+                sx /= sLen;
+                sz /= sLen;
+              } else {
+                sx = 1;
+                sz = 0;
+              }
+              const meander =
+                Math.sin(py * 7.4 + f.flowPhase + meltState.time * (0.28 + f.flowSpeedBias * 0.18)) * 0.24 +
+                Math.cos(px * 9.5 - py * 4.8 + f.flowPhase * 1.7) * 0.14;
+              const nearestFluteX = px >= 0 ? POPSICLE.fluteX : -POPSICLE.fluteX;
+              const flutePull = clamp((nearestFluteX - px) * 1.15, -0.15, 0.15) * (1.0 - smoothstep(0.35, 0.72, meltState.melt));
+              const sideDrift = meander + flutePull * (physN.z >= 0 ? 1 : -1);
+
+              // Natural per-bit viscous creep: gentle break-away ramp + wide speed personality + organic stick-slip surges + heat!
+              const startupRamp = 0.08 + 0.92 * smoothstep(0.0, 0.55 + f.flowStickiness * 0.95, f.flowTime);
+              const pulse =
+                0.5 +
+                0.30 * Math.sin(py * 5.0 + f.flowPhase + meltState.time * (0.38 + f.flowSpeedBias * 0.34)) +
+                0.24 * Math.sin(f.flowTime * (0.95 + f.flowStickiness * 0.85) + f.flowPhase * 2.3);
+              const pClamped = clamp(pulse, 0, 1);
+              // Squared pulse creates authentic viscous stick-slip (brief slow hesitations + glossy rivulet glides!)
+              const stickSlip = 0.16 + 1.18 * pClamped * pClamped;
+              const sizeEase = clamp(0.036 / Math.max(0.016, f.radius), 0.58, 1.42);
+              const slopeEase = 0.35 + 0.65 * Math.abs(ty);
+              const localWarmth = sampleLocalHeat(px, py, meltState);
+              const baseRunoff = 0.08 + 0.26 * smoothstep(0.14, 0.78, meltState.melt) + localWarmth * 0.24;
+              const targetSpeed = baseRunoff * f.flowSpeedBias * sizeEase * slopeEase * startupRamp * stickSlip;
+
+              const vTargetX = (tx + sx * sideDrift) * targetSpeed;
+              const vTargetY = ty * targetSpeed;
+              const vTargetZ = (tz + sz * sideDrift) * targetSpeed;
+
+              const damp = 1.0 - Math.exp(-subDt * 7.5);
+              f.velocity.x += (vTargetX - f.velocity.x) * damp;
+              f.velocity.y += (vTargetY - f.velocity.y) * damp;
+              f.velocity.z += (vTargetZ - f.velocity.z) * damp;
+              f.mesh.position.addScaledVector(f.velocity, subDt);
+
+              // Strict one-way outer surface hug against the EXACT rendered popsicle mesh:
+              // back edge kisses the wet syrup meniscus (zero air gap), while center stays strictly OUTSIDE so it NEVER re-enters the ice!
+              sampleExactIceSurface(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, liveProfileFrame, meltState, physExactSurf);
+              physN.set(physExactSurf.nx, physExactSurf.ny, physExactSurf.nz);
+              const rideOut = prof.isFlat ? 0.009 : rCol * 0.62;
+              if (physExactSurf.signedOut < rideOut) {
+                // Hard outward normal projection: physically impossible to sink back inside the opaque ice cream!
+                f.mesh.position.addScaledVector(physN, rideOut - physExactSurf.signedOut);
+              } else {
+                // Gently keep capillary contact as the ice retreats inward, never pulling inside rideOut
+                const pullIn = Math.min(physExactSurf.signedOut - rideOut, 0.04) * 0.65;
+                f.mesh.position.addScaledVector(physN, -pullIn);
+              }
+
+              // Gentle rolling & alignment along the wet syrup flow
+              physRollAxis.crossVectors(physN, f.velocity).divideScalar(Math.max(0.04, rCol));
+              const rollAlpha = 1.0 - Math.exp(-subDt * 6.5);
+              f.angVel.lerp(physRollAxis.multiplyScalar(prof.isFlat ? 0.18 : 0.42), rollAlpha);
+              if (prof.isFlat) {
+                physFaceN.set(0, 0, 1).applyQuaternion(f.mesh.quaternion);
+                if (physFaceN.dot(physN) < 0) physFaceN.negate();
+                physAeroTorque.crossVectors(physFaceN, physN);
+                f.angVel.addScaledVector(physAeroTorque, 5.5 * subDt);
+              }
+              const wMagF = f.angVel.length();
+              if (wMagF > 1e-4) {
+                spinAxis.copy(f.angVel).divideScalar(wMagF);
+                spinQuat.setFromAxisAngle(spinAxis, wMagF * subDt);
+                f.mesh.quaternion.premultiply(spinQuat);
+                f.mesh.quaternion.normalize();
+              }
+              f.wetContact += (1.0 - f.wetContact) * Math.min(1, subDt * 12.0);
+              continue;
+            }
+          }
+
+          if (onStickBand) {
+            // Bits that wash onto the birch stick ride the wet sticky runoff film down the wood with natural speed variation!
+            const dStick = sampleStickSDF(px, py, pz, physStickN);
+            const stickPulse = 0.5 + 0.45 * Math.sin(py * 6.5 + f.flowPhase + f.flowTime * 1.1);
+            const stickSpeed =
+              (0.075 + 0.14 * smoothstep(0.20, 0.80, meltState.melt)) *
+              f.flowSpeedBias *
+              (0.28 + 0.92 * stickPulse * stickPulse);
+            const damp = 1.0 - Math.exp(-subDt * 7.5);
+            f.velocity.x += (Math.sin(py * 11.0 + f.flowPhase) * 0.016 - f.velocity.x) * damp;
+            f.velocity.y += (-stickSpeed - f.velocity.y) * damp;
+            f.velocity.z += (0 - f.velocity.z) * damp;
+            f.mesh.position.addScaledVector(f.velocity, subDt);
+            const targetStickDist = prof.isFlat ? 0.008 : rCol * 0.60;
+            const errS = targetStickDist - dStick;
+            if (errS > 0) {
+              // Never sink inside the wooden stick
+              f.mesh.position.addScaledVector(physStickN, errS);
+            } else {
+              f.mesh.position.addScaledVector(physStickN, Math.max(errS * 0.55, -0.02));
+            }
+            physRollAxis.crossVectors(physStickN, f.velocity).divideScalar(Math.max(0.04, rCol));
+            f.angVel.lerp(physRollAxis.multiplyScalar(0.32), 1.0 - Math.exp(-subDt * 6.0));
+            const wMagS = f.angVel.length();
+            if (wMagS > 1e-4) {
+              spinAxis.copy(f.angVel).divideScalar(wMagS);
+              spinQuat.setFromAxisAngle(spinAxis, wMagS * subDt);
+              f.mesh.quaternion.premultiply(spinQuat);
+              f.mesh.quaternion.normalize();
+            }
+            f.wetContact += (1.0 - f.wetContact) * Math.min(1, subDt * 12.0);
+            continue;
+          }
+
+          // Reached the bottom ice lip (away from stick) or bottom tip of stick (or ice gone): release cleanly into a drip fall!
+          f.flowRiding = false;
+          f.flowTime = 0;
+          f.detachTime = 0;
+          f.velocity.y = Math.min(f.velocity.y, -0.06);
+        }
 
         // Smooth suction-break ramp over first ~0.12s so detachment feels genuinely syrupy and weighty
         const peelRamp = 0.28 + 0.72 * smoothstep(0.0, 0.12, f.detachTime);
@@ -3331,6 +3619,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         for (let j = i + 1; j < fruits.length; j++) {
           const b = fruits[j];
           if (!b.detached || !b.mesh.visible || b.grabbed) continue;
+          if (a.flowRiding && b.flowRiding) continue;
           const rB = fruitCollisionRadius(b);
           const minDist = rA + rB;
           physRelPos.subVectors(b.mesh.position, a.mesh.position);
@@ -3419,8 +3708,8 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         );
       }
 
-      // Despawn cleanly once well below camera frustum (extra lifetime accommodates wet-ice slide + stick bounce!)
-      if (f.mesh.position.y < -5.2 || f.detachTime > 5.0) {
+      // Despawn cleanly once well below camera frustum (never hide slow flow-riding bits mid-glide!)
+      if (f.mesh.position.y < -5.2 || (!f.flowRiding && f.detachTime > 5.0)) {
         f.mesh.visible = false;
       }
     }
@@ -3483,6 +3772,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     clearGrabState();
     grabbedIdx = index;
     f.grabbed = true;
+    f.flowRiding = false;
     f.velocity.set(0, 0, 0);
     f.angVel.set(0, 0, 0);
     grabHoldTime = 0;
@@ -3693,7 +3983,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
   function hasFallingFruitInView(): boolean {
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
-      if (f.detached && f.mesh.visible && (f.grabbed || (f.mesh.position.y > -1.95 && f.detachTime < 3.6))) {
+      if (f.detached && !f.flowRiding && f.mesh.visible && (f.grabbed || (f.mesh.position.y > -1.95 && f.detachTime < 3.6))) {
         return true;
       }
     }
