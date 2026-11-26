@@ -1,7 +1,7 @@
 {
   "name": "day-01",
   "private": true,
-  "description": "Cut out a Malmö building and fold it up",
+  "description": "Cut and fold the simplest house from one square of origami paper",
   "type": "module",
   "scripts": {
     "dev": "vite",

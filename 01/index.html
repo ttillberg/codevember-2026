@@ -3,13 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#2b5546" />
+    <meta name="theme-color" content="#f5f4f0" />
     <title>01 · Fold · Codevember 2026</title>
-    <meta name="description" content="Cut out a Malmö building and fold it up" />
+    <meta name="description" content="Fold the simplest white paper house cut from one square of origami paper" />
     <meta name="author" content="Theo Tillberg" />
     <!-- share image: 01/about/screengrab.png, copied next to the build by scripts/build.mjs -->
     <meta property="og:title" content="01 · Fold · Codevember 2026" />
-    <meta property="og:description" content="Cut out a Malmö building and fold it up" />
+    <meta property="og:description" content="Fold the simplest white paper house cut from one square of origami paper" />
     <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/01/screengrab.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="1200" />
@@ -18,9 +18,47 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="./src/main.tsx"></script>
+    <canvas id="c"></canvas>
+
+    <div class="plate">
+      <div class="head">
+        <b>01 Fold</b>
+        <i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">折り</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i>
+      </div>
+    </div>
+
+    <div class="top-actions" aria-label="Sheet actions">
+      <button id="btn-next" class="icon-btn" title="Next fold step (Space)" aria-label="Next fold step"></button>
+      <button id="btn-reset" class="icon-btn" title="Unfold flat (R)" aria-label="Unfold flat"></button>
+      <button id="btn-help" class="icon-btn" title="Controls (?)" aria-label="Controls">?</button>
+    </div>
+
+    <div class="toolbar" role="toolbar" aria-label="Fold controls">
+      <button id="btn-action" class="action-btn" type="button">Fold walls</button>
+      <input id="progress-range" class="progress-range" type="range" min="0" max="1" step="0.002" value="0" aria-label="Fold progress" />
+      <span class="sep" aria-hidden="true"></span>
+      <span id="status-label" class="status-label" aria-live="polite">Click or drag any flap to fold</span>
+    </div>
+
+    <div class="help-backdrop" id="help-modal" hidden>
+      <div class="help-card" role="dialog" aria-modal="true" aria-label="Controls">
+        <div class="help-head">
+          <span>Controls</span>
+          <button id="help-close" class="help-close" aria-label="Close">×</button>
+        </div>
+        <dl class="help-list">
+          <div><dt>Fold by hand</dt><dd>Click or drag any wall or roof flap directly up into place</dd></div>
+          <div><dt><span class="key">Space</span></dt><dd>Step cleanly through walls, roof, and unfold</dd></div>
+          <div><dt><span class="key">F</span></dt><dd>Fold or unfold the entire house at once</dd></div>
+          <div><dt><span class="key">R</span></dt><dd>Unfold flat and reset camera</dd></div>
+          <div><dt>Drag desk</dt><dd>Orbit 360° around the paper; scroll or pinch to zoom</dd></div>
+        </dl>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
   </body>
 </html>
