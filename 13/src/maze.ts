@@ -788,47 +788,48 @@ export function createSphereGrid(): SphereGrid {
 
   // --- 4. Ten Curated Progressive Puzzle Levels (01 dead easy -> 10 super hard!) ---
   const blueprints: LevelBlueprint[] = [
-    // LEVEL 01: DEAD EASY — wide open tracks, 2 sequential checkpoints (01 -> 13), no portals, no toggles
+    // LEVEL 01: FIRST ROLL — crisp winding corridors with clear turns around the sphere (01 -> 02 -> 13), no portals, no switches
     {
       level: 1,
       name: 'FIRST ROLL',
-      difficulty: 'DEAD EASY',
-      seed: 1011,
-      lonBias: 0.1,
-      extraOpen: 0.56,
+      difficulty: 'EASY · TURN',
+      seed: 1019,
+      lonBias: 0.28,
+      extraOpen: 0.36,
       splitEquator: false,
       openShutters: [false, false, false, false, false, false],
       cpSpecs: [
-        { band: 2, col: 4 },
+        { band: 2, col: 7 },
+        { band: 5, col: 10 },
         { band: 7, col: 0, isFinish: true },
       ],
       toggleSpecs: [],
     },
-    // LEVEL 02: PORTAL INTRO — simple upper maze + open Shutters A & B, hit 01 -> drop into pipe for U2 -> emerge to 13!
+    // LEVEL 02: PORTAL INTRO — split equator with turning corridors on both sides (01 -> Shutter A -> U2 -> Shutter B -> 13)
     {
       level: 2,
       name: 'IRIS PORTAL',
-      difficulty: 'SIMPLE · PORTAL',
-      seed: 2027,
-      lonBias: 0.2,
-      extraOpen: 0.42,
-      splitEquator: false,
+      difficulty: 'EASY · PORTAL',
+      seed: 2029,
+      lonBias: 0.32,
+      extraOpen: 0.3,
+      splitEquator: true,
       openShutters: [true, true, false, false, false, false],
       cpSpecs: [
-        { band: 1, col: 2 },
+        { band: 2, col: 4 },
         { pipeHub: 0 }, // Glowing right beneath front window!
         { band: 7, col: 0, isFinish: true },
       ],
       toggleSpecs: [],
     },
-    // LEVEL 03: FIRST SWITCH — friendly open hemispheres split by a single Red equator gate bridge (SW A is 100% required!)
+    // LEVEL 03: FIRST SWITCH — split equator bridged by Red gate (SW A is 100% required!)
     {
       level: 3,
       name: 'FIRST SWITCH',
       difficulty: 'PLAN · SWITCH',
       seed: 3041,
-      lonBias: 0.2,
-      extraOpen: 0.34,
+      lonBias: 0.26,
+      extraOpen: 0.22,
       splitEquator: true,
       openShutters: [false, false, false, false, false, false],
       cpSpecs: [

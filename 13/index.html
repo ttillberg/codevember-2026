@@ -17,11 +17,12 @@
     <link rel="icon" href="data:," />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <canvas id="c"></canvas>
+    <canvas class="telemetry-canvas" id="telemetry-canvas" aria-hidden="true"></canvas>
 
     <!-- Title plate (docs/DESIGN.md) -->
     <div class="plate">
@@ -46,6 +47,12 @@
         </svg>
       </button>
       <button class="icon-btn" id="btn-help" type="button" title="Help (?)" aria-label="Help" aria-expanded="false">?</button>
+      <button class="icon-btn settings-btn" id="btn-settings" type="button" title="Studio settings" aria-label="Studio settings" hidden>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
     </div>
 
     <!-- Bottom-left level caption + reset button (click LEVEL N to select only in dev / ?settings) -->
@@ -81,30 +88,28 @@
       <span class="sw-dots" id="sw-dots" aria-label="Switch states" hidden></span>
     </div>
 
+    <!-- Subtle bottom-center tap prompt shown only while seated on/under an open hole -->
+    <button class="tap-cue" id="tap-cue" type="button" hidden>TAP TO ENTER</button>
+
     <!-- Minimalist help popover -->
     <div class="help-card" id="help-card" hidden>
       <p class="help-title">ADAPTIVE SPHERE LABYRINTH NO. 13</p>
       <p>Gravity pulls the steel ball toward the center of the screen. Light the checkpoint LEDs <strong>in exact order</strong> (only the active next LED glows).</p>
-      <p>Center an open <strong>diaphragm shutter</strong> to drop into or emerge from the half-pipe tubes below. Roll over colored <strong>SW A / SW B</strong> floor switches to flip matching neon-bar gate walls and iris shutters.</p>
+      <p>Pause over or under any open <strong>diaphragm hole</strong> (including the South Pole exit once unlocked) or colored <strong>SW A / SW B</strong> switch to feel the gentle detent, then <strong>tap once or rest 1s</strong> to activate.</p>
       <div class="help-keys">
-        <div><span class="key">DRAG</span> Slide sphere beneath ball</div>
+        <div><span class="key">DRAG</span> Slide sphere · <span class="key">TAP</span> / <span class="key">REST 1S</span> Use hole or switch</div>
         <div><span class="key">⌘ + DRAG</span> / <span class="key">2 FINGERS</span> Orbit camera to inspect</div>
         <div><span class="key">SCROLL</span> / <span class="key">PINCH</span> Zoom · <span class="key">R</span> Reset · <span class="key">M</span> Mute</div>
       </div>
     </div>
 
     <!-- Dev / ?settings workbench -->
-    <button class="icon-btn settings-btn" id="btn-settings" type="button" title="Studio settings" aria-label="Studio settings" hidden>
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
-    </button>
     <div class="settings-panel" id="settings-panel" hidden>
       <label>SSAO <input id="opt-ssao" type="range" min="0" max="1" step="0.02" value="0.56" /></label>
       <label>COLOR GRADE <input id="opt-grade" type="range" min="0" max="1.5" step="0.05" value="1.0" /></label>
       <label>PLASTIC SHELL <input id="opt-plastic" type="range" min="0" max="1.8" step="0.05" value="1.0" /></label>
       <label>SCRATCHES <input id="opt-scratches" type="range" min="0" max="2" step="0.05" value="1.0" /></label>
+      <label>TRACKING HUD <input id="opt-telemetry" type="checkbox" checked /></label>
     </div>
 
     <script type="module" src="./src/main.ts"></script>

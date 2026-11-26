@@ -186,6 +186,18 @@ for (const lvl of grid.levels) {
     if (r.solvable) {
       issues.push(`SKIPPABLE_PORTALS(steps=${r.minSteps})`);
     }
+    // On pure-portal levels (no switches), upper deck alone must NOT reach South Pole without crossing via portal!
+    if (lvl.toggles.length === 0) {
+      const upperOnly = {
+        ...lvl,
+        openShutters: lvl.openShutters.map(() => false),
+        checkpoints: [lvl.checkpoints[lvl.checkpoints.length - 1]],
+      };
+      const rFinish = solveLevel(upperOnly, cells, walls, adj, shutters, pipeNodes, pipeEdges);
+      if (rFinish.solvable) {
+        issues.push(`UPPER_BYPASS_TO_FINISH(steps=${rFinish.minSteps})`);
+      }
+    }
   }
 
   // 5. Placement integrity (unique solid cells, no overlap with start/window/shutter, no duplicate gate walls)

@@ -96,6 +96,8 @@ export interface LabyrinthRig {
   aoExcluded: THREE.Object3D[];
   applyWallExtensions: (wallExt: Float32Array) => void;
   applyShutterOpenings: (shutterOpen: Float32Array) => void;
+  applyPoleShutters: (northOpen: number, southOpen: number) => void;
+  setReadyHole: (shutterId: number, finishReady: boolean, dwell?: number, toggleId?: number) => void;
   setLevelVisuals: (level: LevelConfig) => void;
   updateLeds: (
     time: number,
@@ -1303,7 +1305,38 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     metalness: 0.45,
     roughness: 0.65,
   });
-  disposables.push(floorMat, steelMat, darkSlotMat);
+  const seamMat = new THREE.MeshStandardMaterial({
+    color: 0x867d70,
+    roughness: 0.9,
+    metalness: 0.0,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  const holeChamferMat = new THREE.MeshStandardMaterial({
+    color: 0xded6c8, // slightly brighter satin alabaster bevel lip catching studio light around every hole
+    roughness: 0.56,
+    roughnessMap: matteRough,
+    metalness: 0.02,
+  });
+  disposables.push(floorMat, steelMat, darkSlotMat, seamMat, holeChamferMat);
+
+  const buildHoleChamferGeo = (rHole: number) => {
+    const pts = [
+      new THREE.Vector2(rHole * 0.97, -0.009),
+      new THREE.Vector2(rHole * 1.015, -0.003),
+      new THREE.Vector2(rHole * 1.09, 0.0028),
+      new THREE.Vector2(rHole * 1.18, 0.0004),
+    ];
+    const g = new THREE.LatheGeometry(pts, 44);
+    g.computeVertexNormals();
+    return g;
+  };
+  const buildHoleSeamGeo = (rHole: number) => {
+    const g = new THREE.RingGeometry(rHole * 1.175, rHole * 1.205, 48);
+    g.rotateX(-Math.PI / 2);
+    return g;
+  };
 
   // =========================================================================
   // 1. UNDERNEATH INTERIOR CAVITY + SCULPTED HALF-PIPE TUBE SYSTEM
@@ -1424,12 +1457,14 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     opacity: 0.78,
   });
 
-  const irisBezelGeo = new THREE.TorusGeometry(holeWorldR * 1.0, 0.0072, 12, 36);
+  const irisBezelGeo = new THREE.TorusGeometry(holeWorldR * 1.0, 0.0052, 12, 36);
   irisBezelGeo.rotateX(Math.PI / 2);
-  const irisLedRingGeo = new THREE.TorusGeometry(holeWorldR * 0.905, 0.0034, 10, 36);
+  const irisChamferGeo = buildHoleChamferGeo(holeWorldR);
+  const irisSeamGeo = buildHoleSeamGeo(holeWorldR);
+  const irisLedRingGeo = new THREE.TorusGeometry(holeWorldR * 0.905, 0.0036, 10, 36);
   irisLedRingGeo.rotateX(Math.PI / 2);
   // Delicate recessed outer LED light-pipe ring + soft glow halo for toggle-linked shutters (no dark outline!)
-  const irisOuterNeonGeo = new THREE.TorusGeometry(holeWorldR * 1.115, 0.0038, 12, 42);
+  const irisOuterNeonGeo = new THREE.TorusGeometry(holeWorldR * 1.13, 0.0038, 12, 42);
   irisOuterNeonGeo.rotateX(Math.PI / 2);
   const shutterHaloGeo = new THREE.PlaneGeometry(holeWorldR * 3.1, holeWorldR * 3.1);
   shutterHaloGeo.rotateX(-Math.PI / 2);
@@ -1466,6 +1501,8 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     irisBladeMat,
     irisBladeLineMat,
     irisBezelGeo,
+    irisChamferGeo,
+    irisSeamGeo,
     irisLedRingGeo,
     irisOuterNeonGeo,
     shutterHaloGeo,
@@ -1481,9 +1518,19 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     shutterGroup.quaternion.setFromUnitVectors(upAxis, port.dir);
     root.add(shutterGroup);
 
-    // Machined brushed-steel outer iris bezel flush with the beige floor
+    // Sculpted beige chamfer collar + crisp hairline perimeter seam around the diaphragm aperture
+    const chamfer = new THREE.Mesh(irisChamferGeo, holeChamferMat);
+    chamfer.position.y = 0.001;
+    chamfer.receiveShadow = true;
+    shutterGroup.add(chamfer);
+
+    const holeSeam = new THREE.Mesh(irisSeamGeo, seamMat);
+    holeSeam.position.y = 0.0015;
+    shutterGroup.add(holeSeam);
+
+    // Machined brushed-steel inner iris lip seated cleanly inside the chamfer
     const bezel = new THREE.Mesh(irisBezelGeo, steelMat);
-    bezel.position.y = 0.002;
+    bezel.position.y = 0.0016;
     shutterGroup.add(bezel);
 
     // Inner portal status LED ring seated cleanly along the inner chamfer of the iris rim
@@ -1572,18 +1619,10 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   // 4. CRISP RECESSED FLOOR SEAM GRID + STEADY POLES + RETRACTABLE WALL BLADES
   // =========================================================================
   const seamGeo = buildSeamGridGeometry(grid);
-  const seamMat = new THREE.MeshStandardMaterial({
-    color: 0x867d70,
-    roughness: 0.9,
-    metalness: 0.0,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
   const seamMesh = new THREE.Mesh(seamGeo, seamMat);
   seamMesh.receiveShadow = true;
   root.add(seamMesh);
-  disposables.push(seamGeo, seamMat);
+  disposables.push(seamGeo);
 
   const baseWallMat = new THREE.MeshStandardMaterial({
     color: COLOR_WALL_RAISED,
@@ -1693,10 +1732,14 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   baseAoExcluded.push(startDecalMesh);
   disposables.push(startDecalTex, startDecalGeo, startDecalMat);
 
-  // Precision machined polar ball wells at BOTH North Pole (00 START launch) and South Pole (13 END drop)!
+  // Precision machined polar ball wells + 6-blade diaphragm shutters + chamfered seams at BOTH North & South Poles!
   const poleHoleR = Math.sin(0.072) * R_FLOOR; // ~0.0626 world radius (cradles 0.056 steel ball cleanly)
-  const poleRimGeo = new THREE.TorusGeometry(poleHoleR * 1.03, 0.0062, 12, 36);
+  const poleRimGeo = new THREE.TorusGeometry(poleHoleR * 1.01, 0.0048, 12, 36);
   poleRimGeo.rotateX(Math.PI / 2);
+  const poleChamferGeo = buildHoleChamferGeo(poleHoleR);
+  const poleSeamGeo = buildHoleSeamGeo(poleHoleR);
+  const poleIrisBladeGeo = buildIrisBladeGeometry(poleHoleR);
+  const poleIrisBladeEdgesGeo = new THREE.EdgesGeometry(poleIrisBladeGeo, 32);
 
   const poleShaftH = 0.155;
   const poleShaftGeo = new THREE.CylinderGeometry(poleHoleR * 0.99, poleHoleR * 0.92, poleShaftH, 28, 1, true);
@@ -1718,13 +1761,26 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   });
 
   const endDir = grid.cells[grid.cells.length - 1].centerDir;
-  for (const pDir of [startDir, endDir]) {
+  const poleIrisPivots: THREE.Group[][] = [[], []];
+  const poleDirs = [startDir, endDir];
+
+  for (let pi = 0; pi < poleDirs.length; pi++) {
+    const pDir = poleDirs[pi];
     const qPole = new THREE.Quaternion().setFromUnitVectors(upAxis, pDir);
     const poleGroup = new THREE.Group();
     poleGroup.quaternion.copy(qPole);
 
+    const chamfer = new THREE.Mesh(poleChamferGeo, holeChamferMat);
+    chamfer.position.y = R_FLOOR + 0.0005;
+    chamfer.receiveShadow = true;
+    poleGroup.add(chamfer);
+
+    const pSeam = new THREE.Mesh(poleSeamGeo, seamMat);
+    pSeam.position.y = R_FLOOR + 0.0014;
+    poleGroup.add(pSeam);
+
     const rim = new THREE.Mesh(poleRimGeo, steelMat);
-    rim.position.y = R_FLOOR + 0.0022;
+    rim.position.y = R_FLOOR + 0.0014;
     poleGroup.add(rim);
 
     const shaft = new THREE.Mesh(poleShaftGeo, steelMat);
@@ -1735,11 +1791,43 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     wellFloor.position.y = R_FLOOR - poleShaftH + 0.002;
     poleGroup.add(wellFloor);
 
+    // 6-blade mechanical camera-diaphragm iris inside each polar socket!
+    const pPivotR = poleHoleR * 1.04;
+    for (let k = 0; k < 6; k++) {
+      const a = (k * Math.PI * 2) / 6;
+      const pivot = new THREE.Group();
+      pivot.position.set(Math.cos(a) * pPivotR, R_FLOOR - 0.01 + k * 0.0006, Math.sin(a) * pPivotR);
+      pivot.rotation.y = -a;
+
+      const bladeHolder = new THREE.Group();
+      const bladeMesh = new THREE.Mesh(poleIrisBladeGeo, irisBladeMat);
+      bladeMesh.castShadow = true;
+      bladeMesh.receiveShadow = true;
+      bladeHolder.add(bladeMesh);
+
+      const bladeLines = new THREE.LineSegments(poleIrisBladeEdgesGeo, irisBladeLineMat);
+      bladeHolder.add(bladeLines);
+
+      pivot.add(bladeHolder);
+      poleGroup.add(pivot);
+      poleIrisPivots[pi].push(bladeHolder);
+    }
+
     root.add(poleGroup);
   }
-  const finishLedRingGeo = new THREE.TorusGeometry(poleHoleR * 1.15, 0.0046, 12, 36);
+  const finishLedRingGeo = new THREE.TorusGeometry(poleHoleR * 1.13, 0.0044, 12, 36);
   finishLedRingGeo.rotateX(Math.PI / 2);
-  disposables.push(poleRimGeo, poleShaftGeo, poleFloorGeo, poleWellMat, finishLedRingGeo);
+  disposables.push(
+    poleRimGeo,
+    poleChamferGeo,
+    poleSeamGeo,
+    poleIrisBladeGeo,
+    poleIrisBladeEdgesGeo,
+    poleShaftGeo,
+    poleFloorGeo,
+    poleWellMat,
+    finishLedRingGeo,
+  );
 
   // =========================================================================
   // 6. DYNAMIC PER-LEVEL PUZZLE ELEMENTS: SEQUENTIAL LEDs, TOGGLE PADS & NEON GATES
@@ -2327,6 +2415,38 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     }
   }
 
+  const lastPoleOpen = [-1, -1];
+  let readyShutterId = -1;
+  let readyFinish = false;
+  let readyDwell = 0;
+  let readyToggleId = -1;
+
+  function applyPoleShutters(northOpen: number, southOpen: number) {
+    const opens = [northOpen, southOpen];
+    for (let pi = 0; pi < 2; pi++) {
+      const open = Math.max(0, Math.min(1, opens[pi]));
+      if (Math.abs(open - lastPoleOpen[pi]) < 1e-4) continue;
+      lastPoleOpen[pi] = open;
+
+      const pivotAngle = open * 0.96;
+      const tuckScale = 1.0 - open * 0.42;
+      const pivots = poleIrisPivots[pi];
+      for (let k = 0; k < pivots.length; k++) {
+        const holder = pivots[k];
+        holder.rotation.y = pivotAngle;
+        holder.scale.set(tuckScale, 1, tuckScale);
+        holder.visible = open < 0.985;
+      }
+    }
+  }
+
+  function setReadyHole(shutterId: number, finishReady: boolean, dwell = 0, toggleId = -1) {
+    readyShutterId = shutterId;
+    readyFinish = finishReady;
+    readyDwell = dwell;
+    readyToggleId = toggleId;
+  }
+
   const colorAmber = new THREE.Color(0xff6e18);
   const colorCleared = new THREE.Color(0x2ce391);
   const colorFinishGlow = new THREE.Color(0x46f0a5);
@@ -2370,15 +2490,22 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
         led.haloMat.opacity = (isPipe ? 0.24 : 0.4) + breathe * 0.08;
         led.haloMesh.scale.setScalar((isPipe ? 0.78 : 1.0) + breathe * 0.08);
       } else if (i === nextIndex) {
-        const pulse = 0.5 + 0.5 * Math.sin(time * 3.6);
+        const pulse = 0.5 + 0.5 * Math.sin(time * (led.checkpoint.isFinish && readyFinish ? 6.2 : 3.6));
         const isPipe = led.checkpoint.layer === 'pipe';
-        const col = isPipe ? colorPipeTarget : colorAmber;
-        led.domeMat.color.setHex(isPipe ? 0xd0fff8 : 0xffe1c2);
+        const isSeatedFinish = led.checkpoint.isFinish && readyFinish;
+        const col = isSeatedFinish ? colorFinishGlow : isPipe ? colorPipeTarget : colorAmber;
+        led.domeMat.color.setHex(isSeatedFinish ? 0xf2fff8 : isPipe ? 0xd0fff8 : 0xffe1c2);
         led.domeMat.emissive.copy(col);
-        led.domeMat.emissiveIntensity = (isPipe ? 1.7 : 2.2) + pulse * (isPipe ? 1.2 : 2.1);
+        led.domeMat.emissiveIntensity = isSeatedFinish
+          ? 3.4 + readyDwell * 2.1 + pulse * 1.9
+          : (isPipe ? 1.7 : 2.2) + pulse * (isPipe ? 1.2 : 2.1);
         led.haloMat.color.copy(col);
-        led.haloMat.opacity = (isPipe ? 0.28 : 0.46) + pulse * (isPipe ? 0.2 : 0.36);
-        led.haloMesh.scale.setScalar((isPipe ? 0.82 : 1.02) + pulse * 0.26);
+        led.haloMat.opacity = isSeatedFinish
+          ? 0.58 + pulse * 0.28
+          : (isPipe ? 0.28 : 0.46) + pulse * (isPipe ? 0.2 : 0.36);
+        led.haloMesh.scale.setScalar(
+          isSeatedFinish ? 1.18 + pulse * 0.22 : (isPipe ? 0.82 : 1.02) + pulse * 0.26,
+        );
       } else {
         // Locked future checkpoint in strict sequence: clearly dimmed/off so next target is unmistakable!
         led.domeMat.color.setHex(0xc8c2b7);
@@ -2394,10 +2521,13 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       const tv = toggleVisuals[i];
       const active = (toggleMask & (1 << tv.pad.id)) !== 0;
       const press = togglePulse[tv.pad.id] || 0;
-      tv.capMesh.position.y = tv.baseY - press * 0.0065 - (active ? 0.0028 : 0);
-      const breathe = 0.5 + 0.5 * Math.sin(time * 2.8 + i);
-      tv.capMat.emissiveIntensity = active ? 0.72 + breathe * 0.24 : 0.22 + breathe * 0.08;
-      tv.pipMat.emissiveIntensity = active ? 3.2 : 0.9 + breathe * 0.4;
+      const isReady = tv.pad.id === readyToggleId;
+      const seatDepress = isReady ? 0.0016 + readyDwell * 0.0034 : 0;
+      tv.capMesh.position.y = tv.baseY - press * 0.0065 - (active ? 0.0028 : 0) - seatDepress;
+      const breathe = 0.5 + 0.5 * Math.sin(time * (isReady ? 6.2 : 2.8) + i);
+      const readyBoost = isReady ? 0.45 + readyDwell * 0.85 + breathe * 0.35 : 0;
+      tv.capMat.emissiveIntensity = (active ? 0.72 + breathe * 0.24 : 0.22 + breathe * 0.08) + readyBoost;
+      tv.pipMat.emissiveIntensity = (active ? 3.2 : 0.9 + breathe * 0.4) + readyBoost * 1.8;
     }
 
     // 3. Gentle living LED neon pulse on color-coded gate bars, retracted floor slots, and linked shutter rings
@@ -2408,13 +2538,26 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       gn.haloMat.opacity = 0.28 + pulse * 0.14;
       gn.floorBarMat.emissiveIntensity = 1.45 + pulse * 0.45;
     }
+    const readyPulse = 0.5 + 0.5 * Math.sin(time * 6.4);
     for (let i = 0; i < shutterRigs.length; i++) {
       const s = shutterRigs[i];
+      const isReady = s.port.id === readyShutterId && s.lastOpen > 0.5;
       if (s.linkedColorId >= 0) {
         const pulse = 0.5 + 0.5 * Math.sin(time * 2.6 + s.linkedColorId * 2.1);
         const openBoost = s.lastOpen > 0 ? s.lastOpen * 0.75 : 0;
-        s.outerNeonMat.emissiveIntensity = 1.85 + openBoost + pulse * 0.55;
-        s.outerHaloMat.opacity = 0.18 + (s.lastOpen > 0 ? s.lastOpen * 0.12 : 0) + pulse * 0.08;
+        const readyBoost = isReady ? 1.35 + readyDwell * 1.65 + readyPulse * 0.95 : 0;
+        s.outerNeonMat.emissiveIntensity = 1.85 + openBoost + pulse * 0.55 + readyBoost;
+        s.outerHaloMat.opacity = Math.min(0.62, 0.18 + (s.lastOpen > 0 ? s.lastOpen * 0.12 : 0) + pulse * 0.08 + (isReady ? 0.16 + readyDwell * 0.1 : 0));
+        s.ringLedMat.emissiveIntensity = 1.3 + Math.max(0, s.lastOpen) * 1.1 + readyBoost * 1.2;
+      } else if (isReady) {
+        s.ringLedMat.color.setHex(0xf2fff9);
+        s.ringLedMat.emissive.setHex(0x3af0a2);
+        s.ringLedMat.emissiveIntensity = 2.85 + readyDwell * 2.1 + readyPulse * 1.65;
+      } else {
+        const open = Math.max(0, s.lastOpen);
+        s.ringLedMat.emissive.setHex(0x2ee69c);
+        s.ringLedMat.emissiveIntensity = open * 1.55;
+        s.ringLedMat.color.setHex(open > 0.35 ? 0xd2ffed : 0x9b9488);
       }
     }
 
@@ -2471,6 +2614,8 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     aoExcluded,
     applyWallExtensions,
     applyShutterOpenings,
+    applyPoleShutters,
+    setReadyHole,
     setLevelVisuals,
     updateLeds,
     setPlasticOpacity,

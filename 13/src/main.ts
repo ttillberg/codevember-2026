@@ -5,6 +5,7 @@ import { SphereBallPhysics } from './physics';
 import { StudioPost } from './post';
 import { LabyrinthSound } from './sound';
 import { createAimReticle, setupStudio } from './studio';
+import { TelemetryOverlay } from './telemetryHud';
 
 const params = new URLSearchParams(location.search);
 if (params.has('clean')) document.body.classList.add('clean');
@@ -37,6 +38,7 @@ camera.lookAt(0, -0.02, 0);
 const studio = setupStudio(renderer, scene);
 const post = new StudioPost(renderer, scene, camera);
 const sound = new LabyrinthSound();
+const telemetry = new TelemetryOverlay(document.getElementById('telemetry-canvas') as HTMLCanvasElement);
 
 const floatGroup = new THREE.Group();
 scene.add(floatGroup);
@@ -90,6 +92,12 @@ const shutterOpen = new Float32Array(shutterCount);
 const shutterStartOpen = new Float32Array(shutterCount);
 const shutterTargetOpen = new Float32Array(shutterCount);
 const shutterDelay = new Float32Array(shutterCount);
+const shutterSnap = new Float32Array(shutterCount);
+const effectiveShutterOpen = new Float32Array(shutterCount);
+
+// Polar diaphragm iris opening state [0..1] (0 = closed, 1 = open)
+let northIrisOpen = 0;
+let southIrisOpen = 0;
 
 // Toggle press visual depression bounce [0..1]
 const togglePulse = new Float32Array(4);
@@ -100,8 +108,11 @@ let activeWaveSpread = 0.4;
 
 const physics = new SphereBallPhysics(grid, grid.levels[currentLevelIdx]);
 
-// Hero pose frames start chrome ball prominently near center-top with diaphragm shutters, clear windows & SWEDEN tape below
-const initialQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.76, -0.34, 0.05, 'YXZ'));
+// Hero top-down North Pole pose: chrome ball rests dead-center inside the aiming reticle on 00 START with NORTH POLE tape upright below
+const initialQuat = new THREE.Quaternion()
+  .setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2 - DEFAULT_CAM_PITCH)
+  .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.34))
+  .normalize();
 const sphereQuat = initialQuat.clone();
 const angVel = new THREE.Vector3(0, 0, 0);
 
@@ -115,6 +126,7 @@ const levelPicker = document.getElementById('level-picker')!;
 const btnReset = document.getElementById('btn-reset')!;
 const btnSound = document.getElementById('btn-sound')!;
 const btnHelp = document.getElementById('btn-help')!;
+const tapCueBtn = document.getElementById('tap-cue') as HTMLButtonElement;
 const helpCard = document.getElementById('help-card')!;
 const btnSettings = document.getElementById('btn-settings')!;
 const settingsPanel = document.getElementById('settings-panel')!;
@@ -259,6 +271,12 @@ function loadLevelNow(
 
   rig.setLevelVisuals(level);
   rig.applyShutterOpenings(shutterOpen);
+  if (instant) {
+    northIrisOpen = 0;
+    southIrisOpen = 0;
+    shutterSnap.fill(0);
+    rig.applyPoleShutters(0, 0);
+  }
   syncAoExclusions();
   updateStatusUI();
 }
@@ -359,6 +377,10 @@ let prevTwoDist = 0;
 let cmdHeld = false;
 let lastPointerX = 0;
 let lastPointerY = 0;
+let tapStartX = 0;
+let tapStartY = 0;
+let tapStartTime = 0;
+let tapMoved = false;
 const camUp = new THREE.Vector3();
 const camRight = new THREE.Vector3();
 const dragQuatX = new THREE.Quaternion();
@@ -395,12 +417,17 @@ canvas.addEventListener('pointerdown', (e) => {
     canvas.classList.add(dragMode === 'camera' ? 'aiming' : 'dragging');
     lastPointerX = e.clientX;
     lastPointerY = e.clientY;
+    tapStartX = e.clientX;
+    tapStartY = e.clientY;
+    tapStartTime = performance.now();
+    tapMoved = false;
     if (dragMode === 'sphere') angVel.set(0, 0, 0);
     lastMoveTime = performance.now();
   } else if (activePointers.size === 2) {
     // Two fingers on touch: orbit the camera & gravity center (and pinch to zoom)
     twoFingerActive = true;
     suppressSingleUntilAllUp = true;
+    tapMoved = true;
     dragMode = 'camera';
     angVel.set(0, 0, 0);
     canvas.classList.remove('dragging');
@@ -441,6 +468,10 @@ canvas.addEventListener('pointermove', (e) => {
   lastPointerX = e.clientX;
   lastPointerY = e.clientY;
 
+  if (!tapMoved && Math.hypot(e.clientX - tapStartX, e.clientY - tapStartY) > 10) {
+    tapMoved = true;
+  }
+
   if (dragMode === 'camera') {
     // Cmd + drag orbits the camera around the sphere — moving the viewing angle & gravity pull center!
     targetCamYaw -= dx * 0.0068;
@@ -476,6 +507,16 @@ canvas.addEventListener('pointermove', (e) => {
 
 function endDrag(e: PointerEvent) {
   if (!activePointers.has(e.pointerId)) return;
+  const wasPrimaryTap =
+    e.type === 'pointerup' &&
+    e.pointerId === primaryPointerId &&
+    activePointers.size === 1 &&
+    !twoFingerActive &&
+    !suppressSingleUntilAllUp &&
+    dragMode === 'sphere' &&
+    !tapMoved &&
+    performance.now() - tapStartTime < 340;
+
   activePointers.delete(e.pointerId);
   if (canvas.hasPointerCapture(e.pointerId)) {
     canvas.releasePointerCapture(e.pointerId);
@@ -496,6 +537,10 @@ function endDrag(e: PointerEvent) {
     primaryPointerId = remId;
     lastPointerX = remPos.x;
     lastPointerY = remPos.y;
+  }
+
+  if (wasPrimaryTap) {
+    tryActivatePortal();
   }
 }
 
@@ -533,10 +578,21 @@ window.addEventListener('keydown', (e) => {
   } else if (k === ']') {
     sound.unlock();
     applyLevel(Math.min(grid.levels.length - 1, currentLevelIdx + 1), false, true);
+  } else if (k === ' ' || k === 'enter') {
+    if (transition === null && physics.readyPortal.kind !== 'none') {
+      e.preventDefault();
+      sound.unlock();
+      tryActivatePortal();
+    }
   } else if (k === 'r') {
     resetCurrentLevel();
   } else if (k === 'm') {
     toggleSound();
+  } else if (k === 't') {
+    const next = !telemetry.isEnabled();
+    telemetry.setEnabled(next);
+    const cb = document.getElementById('opt-telemetry') as HTMLInputElement | null;
+    if (cb) cb.checked = next;
   } else if (k === '?' || k === 'h') {
     toggleHelp();
   } else if (k === 'escape') {
@@ -575,9 +631,78 @@ function toggleHelp(force?: boolean) {
   if (open) settingsPanel.hidden = true;
 }
 
+const physicsEvents = {
+  onWallHit: (strength: number) => sound.playWallHit(strength),
+  onDropIntoPipe: (shutterId: number) => {
+    shutterSnap[shutterId] = 1.0;
+    sound.playPortalDrop();
+    updateStatusUI();
+  },
+  onEmergeFromPipe: (shutterId: number) => {
+    shutterSnap[shutterId] = 1.0;
+    sound.playPortalEmerge();
+    updateStatusUI();
+  },
+  onToggle: (toggleId: number, active: boolean) => {
+    sound.playToggle(active);
+    triggerToggleMorph(toggleId);
+    updateStatusUI();
+  },
+  onCheckpoint: (idx: number, allCleared: boolean) => {
+    sound.playCheckpoint(idx, allCleared);
+    if (allCleared) {
+      completedLevels.add(currentLevelIdx + 1);
+      const nextIdx = currentLevelIdx < grid.levels.length - 1 ? currentLevelIdx + 1 : currentLevelIdx;
+      startLevelTransition('complete', nextIdx);
+    }
+    updateStatusUI();
+  },
+};
+
+function tryActivatePortal(): boolean {
+  if (transition !== null) return false;
+  return physics.activateReadyPortal(shutterOpen, physicsEvents);
+}
+
+let lastTapCueText = '';
+let lastTapCueDwell = -1;
+function syncTapCue() {
+  if (transition !== null || physics.readyPortal.kind === 'none') {
+    if (!tapCueBtn.hidden) tapCueBtn.hidden = true;
+    if (lastTapCueDwell !== 0) {
+      tapCueBtn.style.setProperty('--dwell', '0');
+      lastTapCueDwell = 0;
+    }
+    return;
+  }
+  const label =
+    physics.readyPortal.kind === 'shutter-enter'
+      ? 'TAP TO ENTER'
+      : physics.readyPortal.kind === 'shutter-exit'
+        ? 'TAP TO EXIT'
+        : physics.readyPortal.kind === 'toggle'
+          ? 'TAP TO SWITCH'
+          : 'TAP TO FINISH';
+  if (label !== lastTapCueText) {
+    tapCueBtn.textContent = label;
+    lastTapCueText = label;
+  }
+  const dwell = Math.round(physics.readyPortalDwell * 200) / 200;
+  if (dwell !== lastTapCueDwell) {
+    tapCueBtn.style.setProperty('--dwell', String(dwell));
+    lastTapCueDwell = dwell;
+  }
+  if (tapCueBtn.hidden) tapCueBtn.hidden = false;
+}
+
 btnReset.addEventListener('click', resetCurrentLevel);
 btnSound.addEventListener('click', toggleSound);
 btnHelp.addEventListener('click', () => toggleHelp());
+tapCueBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  sound.unlock();
+  tryActivatePortal();
+});
 
 function toggleLevelPicker(force?: boolean) {
   if (!isDevControls) return;
@@ -622,6 +747,7 @@ if (isDevControls) {
   const optGrade = document.getElementById('opt-grade') as HTMLInputElement;
   const optPlastic = document.getElementById('opt-plastic') as HTMLInputElement;
   const optScratches = document.getElementById('opt-scratches') as HTMLInputElement;
+  const optTelemetry = document.getElementById('opt-telemetry') as HTMLInputElement;
 
   optSsao.addEventListener('input', () => {
     post.aoPass.blendIntensity = Number(optSsao.value);
@@ -634,6 +760,9 @@ if (isDevControls) {
   });
   optScratches.addEventListener('input', () => {
     rig.setScratchStrength(Number(optScratches.value));
+  });
+  optTelemetry.addEventListener('change', () => {
+    telemetry.setEnabled(optTelemetry.checked);
   });
 }
 
@@ -648,6 +777,7 @@ function resize() {
   lastCanvasH = h;
   renderer.setSize(w, h, false);
   post.setSize(w, h);
+  telemetry.resize(w, h);
   const aspect = w / h;
   camera.aspect = aspect;
   camera.fov = 32;
@@ -671,6 +801,41 @@ resize();
   enterPipe: (shutterId = 0) => {
     physics.enterPipeAtShutter(shutterId);
     updateStatusUI();
+  },
+  tapPortal: () => tryActivatePortal(),
+  seatOnShutter: (shutterId = 0) => {
+    const sh = grid.shutters[shutterId];
+    if (!sh) return;
+    physics.layer = 'upper';
+    physics.dir.copy(sh.dir);
+    physics.vel.set(0, 0, 0);
+    physics.radius = R_BALL_CENTER;
+    sphereQuat.setFromUnitVectors(sh.dir, WORLD_GRAVITY_DIR);
+    angVel.set(0, 0, 0);
+  },
+  setFinishReady: () => {
+    const total = grid.levels[currentLevelIdx].checkpoints.length;
+    for (let i = 0; i < total - 1; i++) physics.cleared[i] = true;
+    physics.allCleared = false;
+    updateStatusUI();
+  },
+  seatOnSouthPole: () => {
+    physics.layer = 'upper';
+    physics.dir.copy(SOUTH_POLE_DIR);
+    physics.vel.set(0, 0, 0);
+    physics.radius = R_BALL_CENTER;
+    sphereQuat.setFromUnitVectors(SOUTH_POLE_DIR, WORLD_GRAVITY_DIR);
+    angVel.set(0, 0, 0);
+  },
+  seatOnToggle: (toggleId = 0) => {
+    const tg = grid.levels[currentLevelIdx].toggles[toggleId];
+    if (!tg) return;
+    physics.layer = 'upper';
+    physics.dir.copy(tg.dir);
+    physics.vel.set(0, 0, 0);
+    physics.radius = R_BALL_CENTER;
+    sphereQuat.setFromUnitVectors(tg.dir, WORLD_GRAVITY_DIR);
+    angVel.set(0, 0, 0);
   },
   setRotation: (rx: number, ry: number, rz = 0) => {
     sphereQuat.setFromEuler(new THREE.Euler(rx, ry, rz, 'YXZ'));
@@ -698,6 +863,10 @@ resize();
     name: grid.levels[currentLevelIdx].name,
     layer: physics.layer,
     radius: physics.radius,
+    readyPortal: physics.readyPortal,
+    readyPortalDwell: physics.readyPortalDwell,
+    northIrisOpen,
+    southIrisOpen,
     toggleMask: physics.toggleMask,
     cleared: physics.getClearedCount(),
     total: grid.levels[currentLevelIdx].checkpoints.length,
@@ -731,24 +900,37 @@ function frame(now: number) {
     if (togglePulse[i] > 0) togglePulse[i] = Math.max(0, togglePulse[i] - dt * 4.2);
   }
 
-  // Animate radial wall morphing wave + diaphragm shutter iris rotation
+  // Animate radial wall morphing wave + diaphragm shutter iris rotation (+ crisp passage snap)
+  let anyShutterSnap = false;
+  for (let i = 0; i < shutterCount; i++) {
+    if (shutterSnap[i] > 0) {
+      shutterSnap[i] = Math.max(0, shutterSnap[i] - dt / 0.42);
+      anyShutterSnap = true;
+    }
+  }
   const maxMorphTime = activeWaveSpread + activeBladeDuration + 0.2;
-  if (morphElapsed <= maxMorphTime) {
-    morphElapsed += dt;
-    for (let i = 0; i < wallCount; i++) {
-      if (grid.walls[i].locked) {
-        wallExt[i] = 1.0;
-        continue;
+  if (morphElapsed <= maxMorphTime || anyShutterSnap) {
+    if (morphElapsed <= maxMorphTime) {
+      morphElapsed += dt;
+      for (let i = 0; i < wallCount; i++) {
+        if (grid.walls[i].locked) {
+          wallExt[i] = 1.0;
+          continue;
+        }
+        const localT = (morphElapsed - wallDelay[i]) / activeBladeDuration;
+        wallExt[i] = wallStartExt[i] + (wallTargetExt[i] - wallStartExt[i]) * easeMechanical(localT);
       }
-      const localT = (morphElapsed - wallDelay[i]) / activeBladeDuration;
-      wallExt[i] = wallStartExt[i] + (wallTargetExt[i] - wallStartExt[i]) * easeMechanical(localT);
+      for (let i = 0; i < shutterCount; i++) {
+        const localT = (morphElapsed - shutterDelay[i]) / (activeBladeDuration * 0.95);
+        shutterOpen[i] = shutterStartOpen[i] + (shutterTargetOpen[i] - shutterStartOpen[i]) * easeMechanical(localT);
+      }
+      rig.applyWallExtensions(wallExt);
     }
     for (let i = 0; i < shutterCount; i++) {
-      const localT = (morphElapsed - shutterDelay[i]) / (activeBladeDuration * 0.95);
-      shutterOpen[i] = shutterStartOpen[i] + (shutterTargetOpen[i] - shutterStartOpen[i]) * easeMechanical(localT);
+      const snapDip = shutterSnap[i] > 0 ? Math.sin(shutterSnap[i] * Math.PI) * 0.42 : 0;
+      effectiveShutterOpen[i] = Math.max(0, shutterOpen[i] - snapDip);
     }
-    rig.applyWallExtensions(wallExt);
-    rig.applyShutterOpenings(shutterOpen);
+    rig.applyShutterOpenings(effectiveShutterOpen);
   }
 
   keyTilt.set(0, 0, 0);
@@ -870,9 +1052,54 @@ function frame(now: number) {
     aimActive += (0 - aimActive) * Math.min(1, dt * 10);
     aimReticle.setPose(WORLD_GRAVITY_DIR, WORLD_UP, aimActive);
 
+    // Polar diaphragms during transitions: open smoothly for drop/pop-up, then close crisply once used!
+    let northTarget = 0;
+    let southTarget = 0;
+    if (transition !== null) {
+      const ctr = transition;
+      if (ctr.phase === 'drop') {
+        const du = Math.min(1, ctr.t / ctr.dropDuration);
+        if (ctr.dropTargetDir.y > 0.5) northTarget = du < 0.78 ? 1 : 0;
+        if (ctr.dropTargetDir.y < -0.5) southTarget = du < 0.78 ? 1 : 0;
+      } else if (ctr.phase === 'morph') {
+        const mu = Math.min(1, ctr.t / ctr.morphDuration);
+        northTarget = mu > 0.84 ? 1 : 0;
+      } else if (ctr.phase === 'rise') {
+        const ru = Math.min(1, ctr.t / ctr.riseDuration);
+        northTarget = ru < 0.72 ? 1 : 0;
+      }
+    }
+    const irisEase = 1 - Math.exp(-11 * dt);
+    northIrisOpen += (northTarget - northIrisOpen) * irisEase;
+    southIrisOpen += (southTarget - southIrisOpen) * irisEase;
+    rig.applyPoleShutters(northIrisOpen, southIrisOpen);
+    rig.setReadyHole(-1, false);
+    syncTapCue();
+
     rig.root.quaternion.copy(sphereQuat);
     rig.updateLeds(t, physics.cleared, physics.getNextCheckpointIndex(), physics.allCleared, physics.toggleMask, togglePulse);
     post.render(t);
+    telemetry.render({
+      time: t,
+      camera,
+      sphereRoot: rig.root,
+      grid,
+      level: grid.levels[currentLevelIdx],
+      ballDir: physics.dir,
+      ballRadius: physics.radius,
+      ballLayer: physics.layer,
+      gravityWorldDir,
+      clearedMask: physics.cleared,
+      nextCpIdx: physics.getNextCheckpointIndex(),
+      allCleared: physics.allCleared,
+      readyPortal: physics.readyPortal,
+      readyDwell: physics.readyPortalDwell,
+      toggleMask: physics.toggleMask,
+      togglePulse,
+      wallExt,
+      shutterOpen,
+      inTransition: true,
+    });
     return;
   }
 
@@ -901,38 +1128,51 @@ function frame(now: number) {
   aimReticle.setPose(WORLD_GRAVITY_DIR, WORLD_UP, aimActive);
 
   rig.root.quaternion.copy(sphereQuat);
-  physics.step(dt, sphereQuat, gravityWorldDir, wallExt, shutterOpen, {
-    onWallHit: (strength) => sound.playWallHit(strength),
-    onDropIntoPipe: () => {
-      sound.playPortalDrop();
-      updateStatusUI();
-    },
-    onEmergeFromPipe: () => {
-      sound.playPortalEmerge();
-      updateStatusUI();
-    },
-    onToggle: (toggleId, active) => {
-      sound.playToggle(active);
-      triggerToggleMorph(toggleId);
-      updateStatusUI();
-    },
-    onCheckpoint: (idx, allCleared) => {
-      sound.playCheckpoint(idx, allCleared);
-      if (allCleared) {
-        completedLevels.add(currentLevelIdx + 1);
-        const nextIdx = currentLevelIdx < grid.levels.length - 1 ? currentLevelIdx + 1 : currentLevelIdx;
-        startLevelTransition('complete', nextIdx);
-      }
-      updateStatusUI();
-    },
-  });
+  physics.step(dt, sphereQuat, gravityWorldDir, wallExt, shutterOpen, physicsEvents);
   sound.updateRoll(physics.speed);
+  sound.updateAmbience(physics.layer === 'pipe' || physics.layer === 'dropping');
+
+  // Polar diaphragms during play: North stays closed once used; South opens smoothly once 13 END is ready to exit!
+  const curLevel = grid.levels[currentLevelIdx];
+  const nextIdx = physics.getNextCheckpointIndex();
+  const southReady = !physics.allCleared && nextIdx >= 0 && curLevel.checkpoints[nextIdx]?.isFinish === true;
+  const irisEase = 1 - Math.exp(-10 * dt);
+  northIrisOpen += (0 - northIrisOpen) * irisEase;
+  southIrisOpen += ((southReady ? 1 : 0) - southIrisOpen) * irisEase;
+  rig.applyPoleShutters(northIrisOpen, southIrisOpen);
+
+  const rp = physics.readyPortal;
+  const readySid = rp.kind === 'shutter-enter' || rp.kind === 'shutter-exit' ? rp.shutterId : -1;
+  const readyTid = rp.kind === 'toggle' ? rp.toggleId : -1;
+  rig.setReadyHole(readySid, rp.kind === 'finish-drop', physics.readyPortalDwell, readyTid);
+  syncTapCue();
 
   rig.ballMesh.position.copy(physics.dir).multiplyScalar(physics.radius);
   rig.ballMesh.quaternion.copy(physics.ballQuat);
-  rig.updateLeds(t, physics.cleared, physics.getNextCheckpointIndex(), physics.allCleared, physics.toggleMask, togglePulse);
+  rig.updateLeds(t, physics.cleared, nextIdx, physics.allCleared, physics.toggleMask, togglePulse);
 
   post.render(t);
+  telemetry.render({
+    time: t,
+    camera,
+    sphereRoot: rig.root,
+    grid,
+    level: curLevel,
+    ballDir: physics.dir,
+    ballRadius: physics.radius,
+    ballLayer: physics.layer,
+    gravityWorldDir,
+    clearedMask: physics.cleared,
+    nextCpIdx: nextIdx,
+    allCleared: physics.allCleared,
+    readyPortal: physics.readyPortal,
+    readyDwell: physics.readyPortalDwell,
+    toggleMask: physics.toggleMask,
+    togglePulse,
+    wallExt,
+    shutterOpen,
+    inTransition: false,
+  });
 }
 
 requestAnimationFrame(frame);

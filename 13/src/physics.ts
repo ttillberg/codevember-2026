@@ -14,6 +14,13 @@ import {
 
 export type BallLayer = 'upper' | 'dropping' | 'pipe' | 'rising';
 
+export type ReadyPortal =
+  | { kind: 'none' }
+  | { kind: 'shutter-enter'; shutterId: number }
+  | { kind: 'shutter-exit'; shutterId: number }
+  | { kind: 'finish-drop' }
+  | { kind: 'toggle'; toggleId: number; label: string };
+
 export interface PhysicsEvents {
   onWallHit?: (strength: number) => void;
   onCheckpoint?: (index: number, allCleared: boolean) => void;
@@ -67,6 +74,9 @@ export class SphereBallPhysics {
   cleared: boolean[] = [];
   allCleared = false;
   speed = 0;
+  readyPortal: ReadyPortal = { kind: 'none' };
+  /** 0..1 progress while resting calmly on/under a ready hole (reaches 1 after 1.0s and activates like a tap) */
+  readyPortalDwell = 0;
 
   private level: LevelConfig;
   private readonly minWallAngle = WALL_HALF_WIDTH * 1.03 + R_BALL / R_BALL_CENTER;
@@ -75,10 +85,15 @@ export class SphereBallPhysics {
   private readonly linearDamp = 1.85;
   private readonly restitution = 0.24;
   private readonly maxSpeed = 3.35;
+  private readonly restActivateSec = 1.0;
 
   // Portal transition, underneath half-pipe & mechanical toggle switch state
   private activeShutterId = -1;
   private lastEntryShutterId = -1;
+  private suppressDwellShutterId = -1;
+  private suppressDwellToggleId = -1;
+  private readyPortalKey = '';
+  private readyDwellSec = 0;
   private transT = 0;
   private readonly transStartDir = new THREE.Vector3();
   private portalCooldown = 0;
@@ -86,7 +101,6 @@ export class SphereBallPhysics {
   private pipeT = 0;
   private pipeSpeed = 0;
   toggleMask = 0;
-  private toggleInside: boolean[] = [];
   private toggleCooldown = 0;
 
   // Scratch vectors
@@ -112,8 +126,13 @@ export class SphereBallPhysics {
     this.cleared = level.checkpoints.map(() => false);
     this.allCleared = false;
     this.toggleMask = 0;
-    this.toggleInside = level.toggles.map(() => false);
     this.toggleCooldown = 0;
+    this.readyPortal = { kind: 'none' };
+    this.readyPortalDwell = 0;
+    this.readyPortalKey = '';
+    this.readyDwellSec = 0;
+    this.suppressDwellShutterId = -1;
+    this.suppressDwellToggleId = -1;
     if (resetPosition) {
       this.reset();
     }
@@ -127,14 +146,19 @@ export class SphereBallPhysics {
     this.radius = R_BALL_CENTER;
     this.activeShutterId = -1;
     this.lastEntryShutterId = -1;
+    this.suppressDwellShutterId = -1;
+    this.suppressDwellToggleId = -1;
     this.transT = 0;
     this.portalCooldown = 0;
     this.toggleMask = 0;
-    this.toggleInside = this.level.toggles.map(() => false);
     this.toggleCooldown = 0;
     this.cleared = this.level.checkpoints.map(() => false);
     this.allCleared = false;
     this.speed = 0;
+    this.readyPortal = { kind: 'none' };
+    this.readyPortalDwell = 0;
+    this.readyPortalKey = '';
+    this.readyDwellSec = 0;
   }
 
   /** Helper for demo / inspection: drop the ball directly into a specific shutter's half-pipe */
@@ -147,12 +171,123 @@ export class SphereBallPhysics {
     this.layer = 'pipe';
     this.radius = R_BALL_PIPE;
     this.lastEntryShutterId = shutterId;
+    this.suppressDwellShutterId = shutterId;
     this.pipeEdgeId = edgeId;
     this.pipeT = edge.nodeA === node.id ? 0.02 : 0.98;
     this.pipeSpeed = edge.nodeA === node.id ? 0.55 : -0.55;
     this.dir.copy(node.dir);
     this.vel.set(0, 0, 0);
     this.portalCooldown = 0.7;
+    this.readyPortal = { kind: 'none' };
+    this.readyPortalDwell = 0;
+    this.readyPortalKey = '';
+    this.readyDwellSec = 0;
+  }
+
+  private clearReadyDwell() {
+    this.readyPortalDwell = 0;
+    this.readyPortalKey = '';
+    this.readyDwellSec = 0;
+  }
+
+  /** Advance 1-second rest-to-activate dwell timer; triggers the exact same action as tapping once full */
+  private updateReadyPortalDwell(dt: number, shutterOpen: Float32Array, events?: PhysicsEvents) {
+    const rp = this.readyPortal;
+    if (rp.kind === 'none') {
+      this.clearReadyDwell();
+      return;
+    }
+
+    // Prevent accidental yo-yo auto-retrigger on the exact hole or switch we just activated until the ball moves clear
+    if ((rp.kind === 'shutter-enter' || rp.kind === 'shutter-exit') && rp.shutterId === this.suppressDwellShutterId) {
+      this.clearReadyDwell();
+      return;
+    }
+    if (rp.kind === 'toggle' && rp.toggleId === this.suppressDwellToggleId) {
+      this.clearReadyDwell();
+      return;
+    }
+
+    const key =
+      rp.kind === 'finish-drop'
+        ? 'finish'
+        : rp.kind === 'toggle'
+          ? `toggle:${rp.toggleId}`
+          : `${rp.kind}:${rp.shutterId}`;
+    if (key !== this.readyPortalKey) {
+      this.readyPortalKey = key;
+      this.readyDwellSec = 0;
+    }
+
+    const restSpeedLimit = rp.kind === 'shutter-exit' ? 0.48 : 0.44;
+    if (this.speed <= restSpeedLimit) {
+      this.readyDwellSec += dt;
+    } else {
+      this.readyDwellSec = Math.max(0, this.readyDwellSec - dt * 2.5);
+    }
+
+    this.readyPortalDwell = Math.min(1, this.readyDwellSec / this.restActivateSec);
+    if (this.readyDwellSec >= this.restActivateSec) {
+      this.activateReadyPortal(shutterOpen, events);
+    }
+  }
+
+  /** Single-tap (or 1-second rest) trigger when the steel ball is seated on an open hole or floor switch */
+  activateReadyPortal(shutterOpen: Float32Array, events?: PhysicsEvents): boolean {
+    const rp = this.readyPortal;
+    if (rp.kind === 'none') return false;
+
+    if (rp.kind === 'shutter-enter') {
+      if (this.layer !== 'upper' || this.portalCooldown > 0) return false;
+      if (shutterOpen[rp.shutterId] < 0.72) return false;
+      this.layer = 'dropping';
+      this.activeShutterId = rp.shutterId;
+      this.transT = 0;
+      this.transStartDir.copy(this.dir);
+      this.readyPortal = { kind: 'none' };
+      this.clearReadyDwell();
+      events?.onDropIntoPipe?.(rp.shutterId);
+      return true;
+    }
+
+    if (rp.kind === 'shutter-exit') {
+      if (this.layer !== 'pipe' || this.portalCooldown > 0) return false;
+      if (shutterOpen[rp.shutterId] < 0.72) return false;
+      this.layer = 'rising';
+      this.activeShutterId = rp.shutterId;
+      this.transT = 0;
+      this.transStartDir.copy(this.dir);
+      this.readyPortal = { kind: 'none' };
+      this.clearReadyDwell();
+      events?.onEmergeFromPipe?.(rp.shutterId);
+      return true;
+    }
+
+    if (rp.kind === 'finish-drop') {
+      if (this.layer !== 'upper' || this.allCleared) return false;
+      const nextIdx = this.getNextCheckpointIndex();
+      if (nextIdx < 0) return false;
+      const cp = this.level.checkpoints[nextIdx];
+      if (!cp.isFinish) return false;
+      this.cleared[nextIdx] = true;
+      this.allCleared = this.cleared.every(Boolean);
+      this.readyPortal = { kind: 'none' };
+      this.clearReadyDwell();
+      events?.onCheckpoint?.(nextIdx, this.allCleared);
+      return true;
+    }
+
+    if (rp.kind === 'toggle') {
+      if (this.layer !== 'upper' || this.toggleCooldown > 0) return false;
+      this.toggleCooldown = 0.38;
+      this.suppressDwellToggleId = rp.toggleId;
+      this.toggleMask ^= 1 << rp.toggleId;
+      this.clearReadyDwell();
+      events?.onToggle?.(rp.toggleId, (this.toggleMask & (1 << rp.toggleId)) !== 0);
+      return true;
+    }
+
+    return false;
   }
 
   getNextCheckpointIndex(): number {
@@ -228,6 +363,7 @@ export class SphereBallPhysics {
 
     // --- 1. DROPPING THROUGH OPEN DIAPHRAGM SHUTTER (Upper -> Half-Pipe) ---
     if (this.layer === 'dropping') {
+      this.readyPortal = { kind: 'none' };
       const shutter = this.grid.shutters[this.activeShutterId];
       this.transT = Math.min(1, this.transT + clampedDt / 0.19);
       const easeIn = this.transT * this.transT;
@@ -240,38 +376,43 @@ export class SphereBallPhysics {
         const branch = this.pickNextPipeBranch(node.id, node.edgeIds[0], this.vel);
         this.pipeEdgeId = branch.edgeId;
         this.pipeT = branch.atStart ? 0.01 : 0.99;
-        this.pipeSpeed = branch.atStart ? 0.42 : -0.42;
+        this.pipeSpeed = branch.atStart ? 0.34 : -0.34;
         this.lastEntryShutterId = shutter.id;
+        this.suppressDwellShutterId = shutter.id;
         this.layer = 'pipe';
         this.radius = R_BALL_PIPE;
-        this.portalCooldown = 0.7;
+        this.portalCooldown = 0.38;
       }
       return;
     }
 
     // --- 2. RISING BACK UP THROUGH OPEN DIAPHRAGM SHUTTER (Half-Pipe -> Upper) ---
     if (this.layer === 'rising') {
+      this.readyPortal = { kind: 'none' };
+      this.clearReadyDwell();
       const shutter = this.grid.shutters[this.activeShutterId];
       this.transT = Math.min(1, this.transT + clampedDt / 0.21);
       const easeOut = 1 - Math.pow(1 - this.transT, 2);
-      this.dir.copy(shutter.dir);
+      this.dir.copy(this.transStartDir).lerp(shutter.dir, Math.min(1, this.transT * 1.5)).normalize();
       this.radius = R_BALL_PIPE + (R_BALL_CENTER - R_BALL_PIPE) * easeOut;
       this.speed = 1.1;
 
       if (this.transT >= 1) {
-        // Eject gently along tangential gravity onto the upper surface so it clears the iris rim cleanly!
+        // Pop cleanly onto the upper surface centered on the open shutter so the player can glide smoothly away
         const gDot = this.localGravity.dot(shutter.dir);
         this.gTan.copy(this.localGravity).addScaledVector(shutter.dir, -gDot);
-        if (this.gTan.lengthSq() < 1e-4) {
-          this.gTan.set(1, 0, 0).cross(shutter.dir);
+        this.dir.copy(shutter.dir);
+        if (this.gTan.lengthSq() > 1e-4) {
+          this.gTan.normalize();
+          this.vel.copy(this.gTan).multiplyScalar(0.18);
+        } else {
+          this.vel.set(0, 0, 0);
         }
-        this.gTan.normalize();
-        this.dir.copy(shutter.dir).addScaledVector(this.gTan, R_IRIS_HOLE * 1.05).normalize();
-        this.vel.copy(this.gTan).multiplyScalar(0.85);
         this.layer = 'upper';
         this.radius = R_BALL_CENTER;
         this.lastEntryShutterId = -1;
-        this.portalCooldown = 1.05;
+        this.suppressDwellShutterId = shutter.id;
+        this.portalCooldown = 0.42;
       }
       return;
     }
@@ -283,14 +424,40 @@ export class SphereBallPhysics {
 
       for (let s = 0; s < substeps; s++) {
         const edge = this.grid.pipeEdges[this.pipeEdgeId];
-        const dA = this.grid.pipeNodes[edge.nodeA].dir;
-        const dB = this.grid.pipeNodes[edge.nodeB].dir;
+        const nodeA = this.grid.pipeNodes[edge.nodeA];
+        const nodeB = this.grid.pipeNodes[edge.nodeB];
+        const dA = nodeA.dir;
+        const dB = nodeB.dir;
         slerpVec(dA, dB, this.pipeT, this.dir);
         this.edgeTangentAt(edge, this.pipeT, this.tmpTan);
 
         // Gravity projected along the curved half-pipe axis
         const accel = this.localGravity.dot(this.tmpTan) * 1.12;
         this.pipeSpeed += accel * subDt;
+
+        // Subtle magnetic detent beneath open shutters along the rail: easy to glide past, effortless to rest under & tap!
+        if (this.portalCooldown <= 0) {
+          const detentRange = 0.115;
+          const absSpd = Math.abs(this.pipeSpeed);
+          const speedFactor = Math.max(0.14, 1 - absSpd / 1.75);
+          const distA = this.pipeT * edge.arcLen;
+          const distB = (1 - this.pipeT) * edge.arcLen;
+
+          if (nodeA.shutterId >= 0 && shutterOpen[nodeA.shutterId] > 0.72 && distA < detentRange) {
+            const prof = Math.sin(Math.min(1, distA / detentRange) * Math.PI);
+            this.pipeSpeed -= 2.65 * speedFactor * prof * subDt;
+            if (distA < 0.072 && absSpd < 0.92) {
+              this.pipeSpeed *= Math.exp(-3.8 * subDt);
+            }
+          } else if (nodeB.shutterId >= 0 && shutterOpen[nodeB.shutterId] > 0.72 && distB < detentRange) {
+            const prof = Math.sin(Math.min(1, distB / detentRange) * Math.PI);
+            this.pipeSpeed += 2.65 * speedFactor * prof * subDt;
+            if (distB < 0.072 && absSpd < 0.92) {
+              this.pipeSpeed *= Math.exp(-3.8 * subDt);
+            }
+          }
+        }
+
         this.pipeSpeed *= Math.exp(-0.92 * subDt);
         this.pipeSpeed = Math.max(-3.6, Math.min(3.6, this.pipeSpeed));
 
@@ -304,45 +471,40 @@ export class SphereBallPhysics {
           this.pipeT = atA ? 0 : 1;
           this.dir.copy(node.dir);
 
-          // Clear lastEntryShutterId once we visit any other node so returning later can re-emerge!
           if (node.shutterId !== this.lastEntryShutterId) {
             this.lastEntryShutterId = -1;
           }
 
-          // Check if we can emerge back UP through an open diaphragm shutter at this node!
-          // With overhead (+Z) gravity, centering an open shutter near 50%/50% screen pulls the ball right back OUT!
-          if (
-            node.shutterId >= 0 &&
-            node.shutterId !== this.lastEntryShutterId &&
-            shutterOpen[node.shutterId] > 0.72 &&
-            this.portalCooldown <= 0
-          ) {
-            const outwardGravity = this.localGravity.dot(node.dir);
-            const isEndPort = node.edgeIds.length === 1;
-            // End ports emerge easily whenever facing the viewer; pass-through ports emerge when deliberately centered!
-            const emergeThreshold = isEndPort ? this.gravityMag * 0.45 : this.gravityMag * 0.78;
-            if (outwardGravity > emergeThreshold) {
-              this.layer = 'rising';
-              this.activeShutterId = node.shutterId;
-              this.transT = 0;
-              events?.onEmergeFromPipe?.(node.shutterId);
-              return;
-            }
-          }
+          const isOpenShutterNode = node.shutterId >= 0 && shutterOpen[node.shutterId] > 0.72;
 
-          // Otherwise route smoothly onto the best aligned outgoing half-pipe branch!
+          // Route smoothly onto the best aligned outgoing half-pipe branch, or settle calmly at a dead-end shutter port
           const inDir = this.tmpTan.clone().multiplyScalar(this.pipeSpeed >= 0 ? 1 : -1);
           const next = this.pickNextPipeBranch(nodeId, this.pipeEdgeId, inDir);
           if (next.edgeId !== this.pipeEdgeId) {
-            const preserved = Math.max(0.18, Math.abs(this.pipeSpeed) * Math.max(0.35, next.alignment));
-            this.pipeEdgeId = next.edgeId;
-            this.pipeT = next.atStart ? 0.008 : 0.992;
-            this.pipeSpeed = next.atStart ? preserved : -preserved;
-          } else {
-            if (Math.abs(this.pipeSpeed) > 0.45 && events?.onWallHit) {
-              events.onWallHit(Math.min(0.65, Math.abs(this.pipeSpeed) / 3.2));
+            const gDot = this.localGravity.dot(node.dir);
+            this.gTan.copy(this.localGravity).addScaledVector(node.dir, -gDot);
+            // If gently pausing right beneath a pass-through open shutter with small tilt, seat calmly instead of drifting past
+            if (isOpenShutterNode && this.portalCooldown <= 0 && Math.abs(this.pipeSpeed) < 0.32 && this.gTan.length() < 2.2) {
+              this.pipeSpeed *= 0.25;
+            } else {
+              const preserved = Math.max(0.18, Math.abs(this.pipeSpeed) * Math.max(0.35, next.alignment));
+              this.pipeEdgeId = next.edgeId;
+              this.pipeT = next.atStart ? 0.008 : 0.992;
+              this.pipeSpeed = next.atStart ? preserved : -preserved;
             }
-            this.pipeSpeed = -this.pipeSpeed * 0.28;
+          } else {
+            if (isOpenShutterNode) {
+              // Calmly cradle the steel ball under a dead-end open shutter so one tap exits cleanly
+              if (Math.abs(this.pipeSpeed) > 0.65 && events?.onWallHit) {
+                events.onWallHit(Math.min(0.45, Math.abs(this.pipeSpeed) / 3.8));
+              }
+              this.pipeSpeed = -this.pipeSpeed * 0.08;
+            } else {
+              if (Math.abs(this.pipeSpeed) > 0.45 && events?.onWallHit) {
+                events.onWallHit(Math.min(0.65, Math.abs(this.pipeSpeed) / 3.2));
+              }
+              this.pipeSpeed = -this.pipeSpeed * 0.28;
+            }
           }
         }
       }
@@ -368,7 +530,36 @@ export class SphereBallPhysics {
         }
       }
 
+      // Clear dwell suppression once the ball moves away from the shutter it just entered through
+      if (this.suppressDwellShutterId >= 0) {
+        const supSh = this.grid.shutters[this.suppressDwellShutterId];
+        if (supSh && Math.acos(Math.max(-1, Math.min(1, this.dir.dot(supSh.dir)))) > 0.145) {
+          this.suppressDwellShutterId = -1;
+        }
+      }
+
+      // Detect if the steel ball is seated beneath an open diaphragm shutter ready for tap or 1s rest-to-exit
+      this.readyPortal = { kind: 'none' };
+      if (this.portalCooldown <= 0) {
+        let bestAng = 0.112;
+        let bestSid = -1;
+        for (let i = 0; i < this.grid.shutters.length; i++) {
+          if (shutterOpen[i] < 0.72) continue;
+          const sh = this.grid.shutters[i];
+          const dot = Math.max(-1, Math.min(1, this.dir.dot(sh.dir)));
+          const ang = Math.acos(dot);
+          if (ang < bestAng) {
+            bestAng = ang;
+            bestSid = sh.id;
+          }
+        }
+        if (bestSid >= 0) {
+          this.readyPortal = { kind: 'shutter-exit', shutterId: bestSid };
+        }
+      }
+
       this.checkCheckpoints('pipe', events);
+      this.updateReadyPortalDwell(clampedDt, shutterOpen, events);
       return;
     }
 
@@ -379,6 +570,9 @@ export class SphereBallPhysics {
     const walls = this.grid.walls;
     const posts = this.grid.posts;
     const shutters = this.grid.shutters;
+    const nextCpIdx = this.allCleared ? -1 : this.getNextCheckpointIndex();
+    const finishCp =
+      nextCpIdx >= 0 && this.level.checkpoints[nextCpIdx]?.isFinish ? this.level.checkpoints[nextCpIdx] : null;
 
     for (let s = 0; s < substeps; s++) {
       const gDotD = this.localGravity.dot(this.dir);
@@ -388,27 +582,71 @@ export class SphereBallPhysics {
       this.vel.multiplyScalar(Math.exp(-this.linearDamp * subDt));
       this.vel.addScaledVector(this.dir, -this.vel.dot(this.dir));
 
-      // Centering an open diaphragm shutter lets the steel ball roll smoothly into the circular aperture & drop below!
+      // Subtle bevel detent over open diaphragm shutters (and the open South Pole finish hole):
+      // Small enough to glide straight over when rolling, tactile enough to gently seat & tap once to enter!
       if (this.portalCooldown <= 0) {
+        const spdNow = this.vel.length();
+        const speedFactor = Math.max(0.14, 1 - spdNow / 1.65);
+        const detentOuter = R_IRIS_HOLE + 0.022;
+
         for (let i = 0; i < shutters.length; i++) {
           if (shutterOpen[i] < 0.72) continue;
           const sh = shutters[i];
           const dot = Math.max(-1, Math.min(1, this.dir.dot(sh.dir)));
           const ang = Math.acos(dot);
-          if (ang < R_IRIS_HOLE + 0.015) {
+          if (ang < detentOuter) {
             this.tmpA.copy(sh.dir).addScaledVector(this.dir, -dot);
             if (this.tmpA.lengthSq() > 1e-8) {
               this.tmpA.normalize();
-              this.vel.addScaledVector(this.tmpA, 4.4 * subDt);
+              const prof = Math.sin(Math.min(1, ang / detentOuter) * Math.PI);
+              this.vel.addScaledVector(this.tmpA, 2.55 * speedFactor * prof * subDt);
             }
-            if (ang < R_IRIS_HOLE - 0.032) {
-              this.layer = 'dropping';
-              this.activeShutterId = sh.id;
-              this.transT = 0;
-              this.transStartDir.copy(this.dir);
-              events?.onDropIntoPipe?.(sh.id);
-              return;
+            if (ang < R_IRIS_HOLE * 0.92 && spdNow < 0.95) {
+              this.vel.multiplyScalar(Math.exp(-3.6 * subDt));
             }
+            break;
+          }
+        }
+
+        if (finishCp) {
+          const fOuter = 0.105;
+          const dot = Math.max(-1, Math.min(1, this.dir.dot(finishCp.dir)));
+          const ang = Math.acos(dot);
+          if (ang < fOuter) {
+            this.tmpA.copy(finishCp.dir).addScaledVector(this.dir, -dot);
+            if (this.tmpA.lengthSq() > 1e-8) {
+              this.tmpA.normalize();
+              const prof = Math.sin(Math.min(1, ang / fOuter) * Math.PI);
+              this.vel.addScaledVector(this.tmpA, 2.6 * speedFactor * prof * subDt);
+            }
+            if (ang < 0.082 && spdNow < 0.95) {
+              this.vel.multiplyScalar(Math.exp(-3.6 * subDt));
+            }
+          }
+        }
+      }
+
+      // Same gentle detent on floor switches (SW A / SW B): easy to roll past, effortless to rest 1s or tap!
+      const toggles = this.level.toggles;
+      if (toggles.length > 0 && this.toggleCooldown <= 0) {
+        const spdNow = this.vel.length();
+        const speedFactor = Math.max(0.14, 1 - spdNow / 1.65);
+        const tOuter = 0.095;
+        for (let i = 0; i < toggles.length; i++) {
+          const tg = toggles[i];
+          const dot = Math.max(-1, Math.min(1, this.dir.dot(tg.dir)));
+          const ang = Math.acos(dot);
+          if (ang < tOuter) {
+            this.tmpA.copy(tg.dir).addScaledVector(this.dir, -dot);
+            if (this.tmpA.lengthSq() > 1e-8) {
+              this.tmpA.normalize();
+              const prof = Math.sin(Math.min(1, ang / tOuter) * Math.PI);
+              this.vel.addScaledVector(this.tmpA, 2.45 * speedFactor * prof * subDt);
+            }
+            if (ang < 0.072 && spdNow < 0.95) {
+              this.vel.multiplyScalar(Math.exp(-3.6 * subDt));
+            }
+            break;
           }
         }
       }
@@ -500,32 +738,63 @@ export class SphereBallPhysics {
       events.onWallHit(Math.min(1, (maxImpact - 0.28) / 2.2));
     }
 
-    this.checkTogglePads(events);
     this.checkCheckpoints('upper', events);
-  }
 
-  private checkTogglePads(events?: PhysicsEvents) {
-    const toggles = this.level.toggles;
-    if (toggles.length === 0) return;
-    const enterAngle = 0.072;
-    const exitAngle = 0.11;
-
-    for (let i = 0; i < toggles.length; i++) {
-      const tg = toggles[i];
-      const dot = Math.max(-1, Math.min(1, this.dir.dot(tg.dir)));
-      const ang = Math.acos(dot);
-
-      if (!this.toggleInside[i]) {
-        if (ang < enterAngle && this.toggleCooldown <= 0) {
-          this.toggleInside[i] = true;
-          this.toggleCooldown = 0.45;
-          this.toggleMask ^= 1 << tg.id;
-          events?.onToggle?.(tg.id, (this.toggleMask & (1 << tg.id)) !== 0);
-        }
-      } else if (ang > exitAngle) {
-        this.toggleInside[i] = false;
+    // Clear dwell suppression once the ball rolls clear of the shutter or switch it just activated
+    if (this.suppressDwellShutterId >= 0) {
+      const supSh = this.grid.shutters[this.suppressDwellShutterId];
+      if (supSh && Math.acos(Math.max(-1, Math.min(1, this.dir.dot(supSh.dir)))) > R_IRIS_HOLE + 0.042) {
+        this.suppressDwellShutterId = -1;
       }
     }
+    if (this.suppressDwellToggleId >= 0) {
+      const supTg = this.level.toggles[this.suppressDwellToggleId];
+      if (!supTg || Math.acos(Math.max(-1, Math.min(1, this.dir.dot(supTg.dir)))) > 0.125) {
+        this.suppressDwellToggleId = -1;
+      }
+    }
+
+    // Detect if the ball is seated on an open upper-deck hole or floor switch (SW A / SW B)
+    this.readyPortal = { kind: 'none' };
+    if (this.portalCooldown <= 0) {
+      let bestAng = R_IRIS_HOLE * 1.02;
+      let bestSid = -1;
+      for (let i = 0; i < shutters.length; i++) {
+        if (shutterOpen[i] < 0.72) continue;
+        const sh = shutters[i];
+        const dot = Math.max(-1, Math.min(1, this.dir.dot(sh.dir)));
+        const ang = Math.acos(dot);
+        if (ang < bestAng) {
+          bestAng = ang;
+          bestSid = sh.id;
+        }
+      }
+      if (bestSid >= 0) {
+        this.readyPortal = { kind: 'shutter-enter', shutterId: bestSid };
+      } else if (!this.allCleared) {
+        const curNext = this.getNextCheckpointIndex();
+        const curCp = curNext >= 0 ? this.level.checkpoints[curNext] : null;
+        if (curCp && curCp.isFinish) {
+          const dot = Math.max(-1, Math.min(1, this.dir.dot(curCp.dir)));
+          if (Math.acos(dot) < 0.112) {
+            this.readyPortal = { kind: 'finish-drop' };
+          }
+        }
+      }
+    }
+
+    if (this.readyPortal.kind === 'none' && this.toggleCooldown <= 0) {
+      for (let i = 0; i < this.level.toggles.length; i++) {
+        const tg = this.level.toggles[i];
+        const dot = Math.max(-1, Math.min(1, this.dir.dot(tg.dir)));
+        if (Math.acos(dot) < 0.095) {
+          this.readyPortal = { kind: 'toggle', toggleId: tg.id, label: tg.label };
+          break;
+        }
+      }
+    }
+
+    this.updateReadyPortalDwell(clampedDt, shutterOpen, events);
   }
 
   /**
@@ -539,6 +808,8 @@ export class SphereBallPhysics {
 
     const cp = this.level.checkpoints[nextIdx];
     if (cp.layer !== activeLayer) return;
+    // South Pole 13 END uses the same gentle detent + single-tap to drop mechanism as all other holes!
+    if (cp.isFinish) return;
 
     const triggerAngle = activeLayer === 'pipe' ? 0.145 : 0.115;
     const dot = Math.max(-1, Math.min(1, this.dir.dot(cp.dir)));

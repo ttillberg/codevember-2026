@@ -32,6 +32,15 @@ canvas.dragging {
 canvas.aiming {
   cursor: crosshair;
 }
+.telemetry-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  cursor: default;
+}
 
 /* Title plate, top left */
 .plate {
@@ -90,11 +99,11 @@ canvas.aiming {
 .level-top {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 .reset-btn {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   pointer-events: auto;
 }
 .level-num {
@@ -104,13 +113,13 @@ canvas.aiming {
   padding: 0;
   margin: 0;
   color: inherit;
-  font: 600 11px/1.15 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  letter-spacing: 0.14em;
+  font: 700 24px/1 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.015em;
   text-transform: uppercase;
-  opacity: 0.72;
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   pointer-events: none;
 }
 .level-num.dev-select {
@@ -120,21 +129,22 @@ canvas.aiming {
 }
 .level-num.dev-select::after {
   content: "▾";
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
-  opacity: 0.65;
+  opacity: 0.55;
   transition: transform 0.15s ease;
 }
 .level-num.dev-select[aria-expanded="true"]::after {
   transform: rotate(180deg);
 }
 .level-num.dev-select:hover {
-  opacity: 1;
+  opacity: 0.72;
 }
 .level-title {
-  font: 700 24px/1 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  letter-spacing: -0.015em;
+  font: 600 11px/1.2 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+  opacity: 0.72;
   white-space: nowrap;
 }
 
@@ -200,13 +210,11 @@ canvas.aiming {
   border-radius: 50%;
   border: 1.5px solid rgba(28, 28, 28, 0.26);
   background: rgba(28, 28, 28, 0.05);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45);
-  transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+  transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
 }
 .dot.next {
   border-color: #d66816;
   background: #ff8e2b;
-  box-shadow: 0 0 9px rgba(255, 134, 38, 0.65), inset 0 1px 2px rgba(255, 244, 224, 0.85);
 }
 .dot.pipe-dot {
   border-color: rgba(25, 158, 144, 0.55);
@@ -214,12 +222,10 @@ canvas.aiming {
 .dot.pipe-dot.next {
   border-color: #14a394;
   background: #2ad9c6;
-  box-shadow: 0 0 9px rgba(42, 217, 198, 0.65), inset 0 1px 2px rgba(224, 255, 250, 0.85);
 }
 .dot.cleared {
   border-color: #1ba35f;
   background: #2ce391;
-  box-shadow: 0 0 9px rgba(44, 227, 145, 0.55), inset 0 1px 2px rgba(225, 255, 240, 0.85);
 }
 .sw-dot {
   width: 9px;
@@ -228,7 +234,7 @@ canvas.aiming {
   border: 1.5px solid currentColor;
   background: transparent;
   opacity: 0.48;
-  transition: background 0.22s ease, box-shadow 0.22s ease, opacity 0.22s ease;
+  transition: background 0.22s ease, opacity 0.22s ease;
 }
 .sw-dot.red {
   color: #dc1212;
@@ -239,7 +245,6 @@ canvas.aiming {
 .sw-dot.on {
   opacity: 1;
   background: currentColor;
-  box-shadow: 0 0 9px currentColor, inset 0 1px 2px rgba(255, 255, 255, 0.65);
 }
 
 /* Top-right frosted round buttons */
@@ -362,17 +367,14 @@ canvas.aiming {
   letter-spacing: 0.08em;
 }
 
-/* Dev / ?settings workbench, tucked cleanly under top-right controls */
-.settings-btn {
-  position: fixed;
-  z-index: 3;
-  top: calc(max(24px, env(safe-area-inset-top)) + 40px);
-  right: max(24px, env(safe-area-inset-right));
+/* Dev / ?settings workbench, aligned horizontally inside .actions */
+.settings-btn[hidden] {
+  display: none;
 }
 .settings-panel {
   position: fixed;
   z-index: 4;
-  top: calc(max(24px, env(safe-area-inset-top)) + 80px);
+  top: calc(max(24px, env(safe-area-inset-top)) + 42px);
   right: max(24px, env(safe-area-inset-right));
   width: 224px;
   padding: 12px 14px;
@@ -429,10 +431,15 @@ canvas.aiming {
     left: max(16px, env(safe-area-inset-left));
   }
   .level-num {
-    font-size: 10px;
+    font-size: 19px;
   }
   .level-title {
-    font-size: 19px;
+    font-size: 10px;
+  }
+  .tap-cue {
+    bottom: calc(max(18px, env(safe-area-inset-bottom)) + 52px);
+    padding: 7px 14px;
+    font-size: 10px;
   }
   .lights-hud {
     right: max(14px, env(safe-area-inset-right));
@@ -448,21 +455,61 @@ canvas.aiming {
     width: 8px;
     height: 8px;
   }
-  .settings-btn {
-    top: calc(max(14px, env(safe-area-inset-top)) + 38px);
-    right: max(14px, env(safe-area-inset-right));
-  }
   .settings-panel {
-    top: calc(max(14px, env(safe-area-inset-top)) + 76px);
+    top: calc(max(14px, env(safe-area-inset-top)) + 42px);
     right: max(14px, env(safe-area-inset-right));
   }
 }
 
+/* Subtle bottom-center tap prompt shown only while ball is seated on/under an open hole */
+.tap-cue {
+  position: fixed;
+  z-index: 3;
+  left: 50%;
+  bottom: max(26px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  overflow: hidden;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(28, 28, 28, 0.16);
+  background: rgba(246, 244, 239, 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #1c1c1c;
+  font: 600 10.5px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(32, 29, 24, 0.08);
+  transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+.tap-cue::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(28, 28, 28, 0.1);
+  transform-origin: left center;
+  transform: scaleX(var(--dwell, 0));
+  pointer-events: none;
+}
+.tap-cue:hover {
+  background: rgba(255, 254, 250, 0.94);
+  border-color: rgba(28, 28, 28, 0.3);
+}
+.tap-cue:active {
+  transform: translateX(-50%) scale(0.96);
+}
+.tap-cue[hidden] {
+  display: none;
+}
+
 /* ?clean: the scene alone */
 .clean .plate,
+.clean .telemetry-canvas,
 .clean .actions,
 .clean .level-hud,
 .clean .lights-hud,
+.clean .tap-cue,
 .clean .help-card,
 .clean .settings-btn,
 .clean .settings-panel {
