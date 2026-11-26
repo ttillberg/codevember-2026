@@ -7,8 +7,10 @@ import {
 import {
   buildOrigamiHouseRig,
   createOrigamiMaterials,
+  createWashiFiberTextures,
   type OrigamiHouseRig,
   type OrigamiMaterials,
+  type WashiFiberTextures,
 } from './origamiPaperMesh';
 import {
   CITY_CHUNK_SIZE,
@@ -32,16 +34,18 @@ const SUN_DIR_WHITE = new THREE.Vector3(24, 42, 19).normalize();
 const SUN_DIR_COLOR = new THREE.Vector3(16, 46, 14).normalize();
 
 const MAX_LOD_PLOTS_PER_CHUNK = 28;
-const TIER0_ENTER = 112;
-const TIER0_EXIT = 124;
-const TIER1_ENTER = 198;
+const TIER0_ENTER = 106;
+const TIER0_EXIT = 118;
+const TIER1_ENTER = 196;
 const TIER1_EXIT = 212;
-const CHUNK_LOAD_RADIUS = 325;
-const CHUNK_UNLOAD_RADIUS = 360;
-const LOD0_ENTER_DIST = 92;
-const LOD0_EXIT_DIST = 102;
-const WAVE_NEAR = 14.0;
-const WAVE_FAR = 92.0;
+const CHUNK_LOAD_RADIUS = 320;
+const CHUNK_UNLOAD_RADIUS = 355;
+const LOD0_ENTER_DIST = 78;
+const LOD0_EXIT_DIST = 88;
+const WAVE_NEAR = 8.0;
+const WAVE_FAR = 76.0;
+const MAX_SMOKE_PUFFS = 420;
+const CITY_FOG_DENSITY = 0.0052;
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
@@ -179,7 +183,11 @@ function buildChunkTerrainGeometry(
   return geo;
 }
 
-/** Merge low-poly architectural massing + roof prisms + retaining plinths for ALL buildings in a chunk into ONE draw call! */
+/**
+ * Merge low-poly architectural massing + roof prisms + flat floor nets + retaining plinths for ALL buildings
+ * in a chunk into ONE draw call, baking exact 2-bone ground/eave origami hinge kinematics per face so
+ * EVERY LOD1 & LOD2 building genuinely folds UP from a flat cross-shaped paper sheet on the ground!
+ */
 function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2): THREE.BufferGeometry | null {
   if (plots.length === 0) return null;
 
@@ -188,10 +196,26 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
   const col: number[] = [];
   const origins: number[] = [];
   const metas: number[] = [];
+  const hingePos: number[] = [];
+  const hingeAxis: number[] = [];
+  const foldSpec: number[] = [];
 
   const tmpColor = new THREE.Color();
   const plinthColor = new THREE.Color('#ece9e1');
+  const floorColor = new THREE.Color('#faf9f5');
   const paletteLen = ARCHITECTURAL_PAPER_PALETTE.length;
+
+  interface FaceHinge {
+    px: number;
+    py: number;
+    pz: number;
+    ax: number;
+    az: number;
+    /** `-1` = plinth, `0` = flat floor on ground, `>0` = wall height `H` (for walls & attached roof flaps) */
+    wallH: number;
+    /** Extra roof fold angle in radians (`0` for walls & vertical gables; `>0` for roof slopes/caps) */
+    roofAng: number;
+  }
 
   const pushTri = (
     a: [number, number, number],
@@ -203,6 +227,7 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
     oz: number,
     bIdx: number,
     jitter: number,
+    h: FaceHinge,
   ) => {
     const ux = b[0] - a[0];
     const uy = b[1] - a[1];
@@ -224,6 +249,9 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
     col.push(rgb.r, rgb.g, rgb.b, rgb.r, rgb.g, rgb.b, rgb.r, rgb.g, rgb.b);
     origins.push(ox, oy, oz, ox, oy, oz, ox, oy, oz);
     metas.push(bIdx, jitter, bIdx, jitter, bIdx, jitter);
+    hingePos.push(h.px, h.py, h.pz, h.px, h.py, h.pz, h.px, h.py, h.pz);
+    hingeAxis.push(h.ax, 0, h.az, h.ax, 0, h.az, h.ax, 0, h.az);
+    foldSpec.push(h.wallH, h.roofAng, h.wallH, h.roofAng, h.wallH, h.roofAng);
   };
 
   const pushQuad = (
@@ -237,9 +265,10 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
     oz: number,
     bIdx: number,
     jitter: number,
+    h: FaceHinge,
   ) => {
-    pushTri(a, b, c, rgb, ox, oy, oz, bIdx, jitter);
-    pushTri(a, c, d, rgb, ox, oy, oz, bIdx, jitter);
+    pushTri(a, b, c, rgb, ox, oy, oz, bIdx, jitter, h);
+    pushTri(a, c, d, rgb, ox, oy, oz, bIdx, jitter, h);
   };
 
   const emitWing = (
@@ -255,6 +284,10 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
       p.baseY + ly,
       p.z - (w.cx + lx) * sinY + (w.cz + lz) * cosY,
     ];
+    const axisWorld = (ax: number, az: number): [number, number] => [
+      ax * cosY + az * sinY,
+      -ax * sinY + az * cosY,
+    ];
     const hw = w.W * 0.5;
     const hd = w.D * 0.5;
     const H = w.H;
@@ -264,90 +297,127 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
     const idx = p.index;
     const jit = p.foldJitter;
 
-    const b00 = toWorld(-hw, 0, -hd);
-    const b10 = toWorld(hw, 0, -hd);
-    const b11 = toWorld(hw, 0, hd);
-    const b01 = toWorld(-hw, 0, hd);
+    // 4 ground-edge wall hinges with exact outward-unfolding right-hand axes!
+    const makeWallHinge = (lx: number, lz: number, ax: number, az: number, roofAng = 0, wallH = H): FaceHinge => {
+      const [px, py, pz] = toWorld(lx, 0, lz);
+      const [wax, waz] = axisWorld(ax, az);
+      return { px, py, pz, ax: wax, az: waz, wallH, roofAng };
+    };
 
+    const hFloor: FaceHinge = { px: ox, py: oy, pz: oz, ax: 1, az: 0, wallH: 0, roofAng: 0 };
+    const hFront = makeWallHinge(0, hd, 1, 0);
+    const hBack = makeWallHinge(0, -hd, -1, 0);
+    const hRight = makeWallHinge(hw, 0, 0, -1);
+    const hLeft = makeWallHinge(-hw, 0, 0, 1);
+
+    const b00 = toWorld(-hw, 0.02, -hd);
+    const b10 = toWorld(hw, 0.02, -hd);
+    const b11 = toWorld(hw, 0.02, hd);
+    const b01 = toWorld(-hw, 0.02, hd);
+
+    // Flat paper floor quad anchored on the ground (`wallH = 0`) — visible as a crisp flat base sheet at fold=0!
+    pushQuad(b01, b11, b10, b00, floorColor, ox, oy, oz, idx, jit, hFloor);
+
+    const f00 = toWorld(-hw, 0, -hd);
+    const f10 = toWorld(hw, 0, -hd);
+    const f11 = toWorld(hw, 0, hd);
+    const f01 = toWorld(-hw, 0, hd);
     const t00 = toWorld(-hw, H, -hd);
     const t10 = toWorld(hw, H, -hd);
     const t11 = toWorld(hw, H, hd);
     const t01 = toWorld(-hw, H, hd);
 
-    // 4 exterior walls (CCW outward)
-    pushQuad(b01, b11, t11, t01, rgb, ox, oy, oz, idx, jit); // front (+Z)
-    pushQuad(b11, b10, t10, t11, rgb, ox, oy, oz, idx, jit); // right (+X)
-    pushQuad(b10, b00, t00, t10, rgb, ox, oy, oz, idx, jit); // back (-Z)
-    pushQuad(b00, b01, t01, t00, rgb, ox, oy, oz, idx, jit); // left (-X)
+    // 4 exterior walls hinging 90° straight up off the flat ground!
+    pushQuad(f01, f11, t11, t01, rgb, ox, oy, oz, idx, jit, hFront); // front (+Z)
+    pushQuad(f11, f10, t10, t11, rgb, ox, oy, oz, idx, jit, hRight); // right (+X)
+    pushQuad(f10, f00, t00, t10, rgb, ox, oy, oz, idx, jit, hBack); // back (-Z)
+    pushQuad(f00, f01, t01, t00, rgb, ox, oy, oz, idx, jit, hLeft); // left (-X)
 
     const rise = Math.max(0.45, Math.min(hw * Math.tan(Math.max(0.35, w.pitch)), H * 1.45));
 
     if (!includeRoofDetail && (w.roofType === 'flat' || w.roofType === 'butterfly')) {
-      pushQuad(t01, t11, t10, t00, rgb, ox, oy, oz, idx, jit);
+      const hFlat = makeWallHinge(-hw, 0, 0, 1, Math.PI * 0.5);
+      pushQuad(t01, t11, t10, t00, rgb, ox, oy, oz, idx, jit, hFlat);
       return;
     }
 
     if (w.roofType === 'flat') {
-      pushQuad(t01, t11, t10, t00, rgb, ox, oy, oz, idx, jit);
+      const hFlat = makeWallHinge(-hw, 0, 0, 1, Math.PI * 0.5);
+      pushQuad(t01, t11, t10, t00, rgb, ox, oy, oz, idx, jit, hFlat);
     } else if (w.roofType === 'spire') {
-      const spireH = H + Math.max(rise * 1.35, hw * 1.9);
-      const apex = toWorld(0, spireH, 0);
-      pushTri(t01, t11, apex, rgb, ox, oy, oz, idx, jit);
-      pushTri(t11, t10, apex, rgb, ox, oy, oz, idx, jit);
-      pushTri(t10, t00, apex, rgb, ox, oy, oz, idx, jit);
-      pushTri(t00, t01, apex, rgb, ox, oy, oz, idx, jit);
+      const spireRise = Math.max(rise * 1.35, hw * 1.9);
+      const apex = toWorld(0, H + spireRise, 0);
+      const angX = Math.atan2(hw, spireRise);
+      const angZ = Math.atan2(hd, spireRise);
+      pushTri(t01, t11, apex, rgb, ox, oy, oz, idx, jit, makeWallHinge(0, hd, 1, 0, angZ));
+      pushTri(t11, t10, apex, rgb, ox, oy, oz, idx, jit, makeWallHinge(hw, 0, 0, -1, angX));
+      pushTri(t10, t00, apex, rgb, ox, oy, oz, idx, jit, makeWallHinge(0, -hd, -1, 0, angZ));
+      pushTri(t00, t01, apex, rgb, ox, oy, oz, idx, jit, makeWallHinge(-hw, 0, 0, 1, angX));
     } else if (w.roofType === 'mansard') {
       const r = Math.max(0.24, Math.min(0.6, w.mansardRatio || 0.36));
       const mw = hw * r;
       const md = hd * r;
-      const mh = H + rise * 0.78;
+      const mRise = rise * 0.78;
+      const mh = H + mRise;
       const m00 = toWorld(-mw, mh, -md);
       const m10 = toWorld(mw, mh, -md);
       const m11 = toWorld(mw, mh, md);
       const m01 = toWorld(-mw, mh, md);
-      pushQuad(t01, t11, m11, m01, rgb, ox, oy, oz, idx, jit);
-      pushQuad(t11, t10, m10, m11, rgb, ox, oy, oz, idx, jit);
-      pushQuad(t10, t00, m00, m10, rgb, ox, oy, oz, idx, jit);
-      pushQuad(t00, t01, m01, m00, rgb, ox, oy, oz, idx, jit);
-      pushQuad(m01, m11, m10, m00, rgb, ox, oy, oz, idx, jit);
+      const angX = Math.atan2(hw - mw, mRise);
+      const angZ = Math.atan2(hd - md, mRise);
+      pushQuad(t01, t11, m11, m01, rgb, ox, oy, oz, idx, jit, makeWallHinge(0, hd, 1, 0, angZ));
+      pushQuad(t11, t10, m10, m11, rgb, ox, oy, oz, idx, jit, makeWallHinge(hw, 0, 0, -1, angX));
+      pushQuad(t10, t00, m00, m10, rgb, ox, oy, oz, idx, jit, makeWallHinge(0, -hd, -1, 0, angZ));
+      pushQuad(t00, t01, m01, m00, rgb, ox, oy, oz, idx, jit, makeWallHinge(-hw, 0, 0, 1, angX));
+      pushQuad(m01, m11, m10, m00, rgb, ox, oy, oz, idx, jit, makeWallHinge(-hw, 0, 0, 1, Math.PI * 0.5, mh));
     } else if (w.roofType === 'hip') {
       const ridgeHalf = Math.max(0.15, hd - hw * 0.7);
-      const rF = toWorld(0, H + rise * 0.92, ridgeHalf);
-      const rB = toWorld(0, H + rise * 0.92, -ridgeHalf);
-      pushTri(t01, t11, rF, rgb, ox, oy, oz, idx, jit);
-      pushTri(t10, t00, rB, rgb, ox, oy, oz, idx, jit);
-      pushQuad(t11, t10, rB, rF, rgb, ox, oy, oz, idx, jit);
-      pushQuad(t00, t01, rF, rB, rgb, ox, oy, oz, idx, jit);
+      const hRise = rise * 0.92;
+      const rF = toWorld(0, H + hRise, ridgeHalf);
+      const rB = toWorld(0, H + hRise, -ridgeHalf);
+      const angX = Math.atan2(hw, hRise);
+      const angZ = Math.atan2(Math.max(0.15, hd - ridgeHalf), hRise);
+      pushTri(t01, t11, rF, rgb, ox, oy, oz, idx, jit, makeWallHinge(0, hd, 1, 0, angZ));
+      pushTri(t10, t00, rB, rgb, ox, oy, oz, idx, jit, makeWallHinge(0, -hd, -1, 0, angZ));
+      pushQuad(t11, t10, rB, rF, rgb, ox, oy, oz, idx, jit, makeWallHinge(hw, 0, 0, -1, angX));
+      pushQuad(t00, t01, rF, rB, rgb, ox, oy, oz, idx, jit, makeWallHinge(-hw, 0, 0, 1, angX));
     } else if (w.roofType === 'shed') {
-      const sh = H + rise * 0.82;
+      const sRise = rise * 0.82;
+      const sh = H + sRise;
       const s00 = toWorld(-hw, sh, -hd);
       const s01 = toWorld(-hw, sh, hd);
-      pushTri(t01, t11, s01, rgb, ox, oy, oz, idx, jit);
-      pushTri(t10, t00, s00, rgb, ox, oy, oz, idx, jit);
-      pushQuad(t00, t01, s01, s00, rgb, ox, oy, oz, idx, jit);
-      pushQuad(s01, t11, t10, s00, rgb, ox, oy, oz, idx, jit);
+      const angShed = Math.atan2(w.W, sRise);
+      pushTri(t01, t11, s01, rgb, ox, oy, oz, idx, jit, hFront);
+      pushTri(t10, t00, s00, rgb, ox, oy, oz, idx, jit, hBack);
+      pushQuad(t00, t01, s01, s00, rgb, ox, oy, oz, idx, jit, hLeft);
+      pushQuad(s01, t11, t10, s00, rgb, ox, oy, oz, idx, jit, makeWallHinge(hw, 0, 0, -1, angShed));
     } else if (w.roofType === 'butterfly') {
-      const bh = H + rise * 0.6;
+      const bRise = rise * 0.6;
+      const bh = H + bRise;
       const bL0 = toWorld(-hw, bh, -hd);
       const bL1 = toWorld(-hw, bh, hd);
       const bR0 = toWorld(hw, bh, -hd);
       const bR1 = toWorld(hw, bh, hd);
       const vF = toWorld(0, H, hd);
       const vB = toWorld(0, H, -hd);
-      pushQuad(bL1, vF, vB, bL0, rgb, ox, oy, oz, idx, jit);
-      pushQuad(vF, bR1, bR0, vB, rgb, ox, oy, oz, idx, jit);
-      pushTri(t01, vF, bL1, rgb, ox, oy, oz, idx, jit);
-      pushTri(vF, t11, bR1, rgb, ox, oy, oz, idx, jit);
-      pushTri(t10, vB, bR0, rgb, ox, oy, oz, idx, jit);
-      pushTri(vB, t00, bL0, rgb, ox, oy, oz, idx, jit);
+      const angButt = Math.PI * 0.5 + Math.atan2(bRise, hw);
+      pushQuad(bL1, vF, vB, bL0, rgb, ox, oy, oz, idx, jit, makeWallHinge(-hw, 0, 0, 1, angButt, bh));
+      pushQuad(vF, bR1, bR0, vB, rgb, ox, oy, oz, idx, jit, makeWallHinge(hw, 0, 0, -1, angButt, bh));
+      pushTri(t01, vF, bL1, rgb, ox, oy, oz, idx, jit, hFront);
+      pushTri(vF, t11, bR1, rgb, ox, oy, oz, idx, jit, hFront);
+      pushTri(t10, vB, bR0, rgb, ox, oy, oz, idx, jit, hBack);
+      pushTri(vB, t00, bL0, rgb, ox, oy, oz, idx, jit, hBack);
     } else {
-      // Classic gable / stepped / gambrel / sawtooth pitched ridge
+      // Classic gable / stepped / gambrel / sawtooth pitched ridge:
+      // Triangular gable peaks stay coplanar with front/back walls (`roofAng = 0`), while the two
+      // pitched roof flaps hinge smoothly off the left & right wall eaves!
       const rF = toWorld(0, H + rise, hd);
       const rB = toWorld(0, H + rise, -hd);
-      pushTri(t01, t11, rF, rgb, ox, oy, oz, idx, jit);
-      pushTri(t10, t00, rB, rgb, ox, oy, oz, idx, jit);
-      pushQuad(t11, t10, rB, rF, rgb, ox, oy, oz, idx, jit);
-      pushQuad(t00, t01, rF, rB, rgb, ox, oy, oz, idx, jit);
+      const angGable = Math.atan2(hw, rise);
+      pushTri(t01, t11, rF, rgb, ox, oy, oz, idx, jit, hFront);
+      pushTri(t10, t00, rB, rgb, ox, oy, oz, idx, jit, hBack);
+      pushQuad(t11, t10, rB, rF, rgb, ox, oy, oz, idx, jit, makeWallHinge(hw, 0, 0, -1, angGable));
+      pushQuad(t00, t01, rF, rB, rgb, ox, oy, oz, idx, jit, makeWallHinge(-hw, 0, 0, 1, angGable));
     }
   };
 
@@ -355,7 +425,7 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
     const cosY = Math.cos(p.yaw);
     const sinY = Math.sin(p.yaw);
 
-    // 1. Retaining plinth extending below lowest hillside corner
+    // 1. Retaining plinth extending below lowest hillside corner (`wallH = -1`)
     const plinthH = Math.max(0.32, p.baseY - p.groundMinY + 0.9);
     const phw = p.footprintW * 0.5 + 0.08;
     const phd = p.footprintD * 0.5 + 0.08;
@@ -372,11 +442,12 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
     const pt10 = pw(phw, -0.005, -phd);
     const pt11 = pw(phw, -0.005, phd);
     const pt01 = pw(-phw, -0.005, phd);
+    const hPlinth: FaceHinge = { px: p.x, py: p.baseY, pz: p.z, ax: 1, az: 0, wallH: -1, roofAng: 0 };
 
-    pushQuad(pb01, pb11, pt11, pt01, plinthColor, p.x, p.baseY, p.z, p.index, p.foldJitter);
-    pushQuad(pb11, pb10, pt10, pt11, plinthColor, p.x, p.baseY, p.z, p.index, p.foldJitter);
-    pushQuad(pb10, pb00, pt00, pt10, plinthColor, p.x, p.baseY, p.z, p.index, p.foldJitter);
-    pushQuad(pb00, pb01, pt01, pt00, plinthColor, p.x, p.baseY, p.z, p.index, p.foldJitter);
+    pushQuad(pb01, pb11, pt11, pt01, plinthColor, p.x, p.baseY, p.z, p.index, p.foldJitter, hPlinth);
+    pushQuad(pb11, pb10, pt10, pt11, plinthColor, p.x, p.baseY, p.z, p.index, p.foldJitter, hPlinth);
+    pushQuad(pb10, pb00, pt00, pt10, plinthColor, p.x, p.baseY, p.z, p.index, p.foldJitter, hPlinth);
+    pushQuad(pb00, pb01, pt01, pt00, plinthColor, p.x, p.baseY, p.z, p.index, p.foldJitter, hPlinth);
 
     // 2. Building wings (Tier 1 builds every wing with exact roof silhouette; Tier 2 builds compact silhouette!)
     if (tier === 2 && p.wings.length > 1) {
@@ -412,7 +483,11 @@ function buildChunkLodBuildingsGeometry(plots: CityBuildingPlot[], tier: 1 | 2):
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   geo.setAttribute('aBuildOrigin', new THREE.Float32BufferAttribute(origins, 3));
   geo.setAttribute('aBuildMeta', new THREE.Float32BufferAttribute(metas, 2));
+  geo.setAttribute('aHingePos', new THREE.Float32BufferAttribute(hingePos, 3));
+  geo.setAttribute('aHingeAxis', new THREE.Float32BufferAttribute(hingeAxis, 3));
+  geo.setAttribute('aFoldSpec', new THREE.Float32BufferAttribute(foldSpec, 2));
   geo.computeBoundingSphere();
+  if (geo.boundingSphere) geo.boundingSphere.radius += 14;
   return geo;
 }
 
@@ -622,6 +697,25 @@ interface MountedChunk {
   boatMeshes: Array<{ mesh: THREE.Mesh; boat: CityBoat }>;
 }
 
+interface SmokePuff {
+  active: boolean;
+  isFog: boolean;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  age: number;
+  maxAge: number;
+  startScale: number;
+  endScale: number;
+  rot: number;
+  vRot: number;
+  seed: number;
+  peakAlpha: number;
+}
+
 export interface CityViewStats {
   active: boolean;
   seed: number;
@@ -637,6 +731,7 @@ export interface CityViewStats {
   lod2Buildings: number;
   totalPlots: number;
   rooftopCount: number;
+  activeSmokePuffs: number;
 }
 
 export interface CityViewCallbacks {
@@ -661,8 +756,10 @@ export class CityView {
   private readonly cityRoot = new THREE.Group();
   private readonly hoverOutline: THREE.LineLoop;
 
-  // Shared LOD0 OrigamiMaterials pool (8 architectural paper tones, zero redundant texture churn!)
+  // Shared LOD0 OrigamiMaterials pool (8 architectural paper tones sharing 1 washi texture pair, zero projection overhead!)
   private readonly matPool: OrigamiMaterials[] = [];
+  private readonly ownedWashiTex: WashiFiberTextures | null;
+  private readonly smokeNoiseTex: THREE.DataTexture;
   private readonly terrainMat: THREE.MeshStandardMaterial;
   private readonly streetMat: THREE.MeshStandardMaterial;
   private readonly promenadeMat: THREE.MeshStandardMaterial;
@@ -679,6 +776,37 @@ export class CityView {
   // Infinite camera-following folded paper sea
   private readonly seaMesh: THREE.Mesh;
   private readonly seaMat: THREE.MeshStandardMaterial;
+
+  // Single-draw-call volumetric camera-facing fBm real smoke & drifting coastal sea-fog banks!
+  private readonly smokeMesh: THREE.Mesh;
+  private readonly smokeGeo: THREE.InstancedBufferGeometry;
+  private readonly smokeMat: THREE.ShaderMaterial;
+  private readonly smokePosBuf: Float32Array;
+  private readonly smokeDataBuf: Float32Array;
+  private readonly smokeStyleBuf: Float32Array;
+  private readonly smokePosAttr: THREE.InstancedBufferAttribute;
+  private readonly smokeDataAttr: THREE.InstancedBufferAttribute;
+  private readonly smokeStyleAttr: THREE.InstancedBufferAttribute;
+  private readonly smokeUniforms: {
+    uNoiseTex: { value: THREE.DataTexture | null };
+    uColorMix: { value: number };
+    uFogColor: { value: THREE.Color };
+    uFogDensity: { value: number };
+  } = {
+    uNoiseTex: { value: null },
+    uColorMix: { value: 0 },
+    uFogColor: { value: new THREE.Color(BACKDROP) },
+    uFogDensity: { value: CITY_FOG_DENSITY },
+  };
+  private readonly tmpV1 = new THREE.Vector3();
+  private readonly tmpV2 = new THREE.Vector3();
+  private readonly smokePuffs: SmokePuff[] = [];
+  private readonly smokeOrder: number[] = [];
+  private readonly smokeDepths = new Float32Array(MAX_SMOKE_PUFFS);
+  private smokeCursor = 0;
+  private smokeActiveCount = 0;
+  private smokeRandState = 1337;
+  private fogEmitAccum = 0;
   private readonly seaUniforms = {
     uTime: { value: 0 },
     uColorMix: { value: 0 },
@@ -747,11 +875,16 @@ export class CityView {
   private lastPy = 0;
   private movedDist = 0;
 
-  constructor(maxAnisotropy: number, envTexture: THREE.Texture | null, callbacks: CityViewCallbacks = {}) {
+  constructor(
+    maxAnisotropy: number,
+    envTexture: THREE.Texture | null,
+    callbacks: CityViewCallbacks = {},
+    sharedWashiTextures?: WashiFiberTextures,
+  ) {
     this.callbacks = callbacks;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(BACKDROP);
-    this.scene.fog = new THREE.Fog(BACKDROP, 165, 375);
+    this.scene.fog = new THREE.FogExp2(BACKDROP, CITY_FOG_DENSITY);
     if (envTexture) {
       this.scene.environment = envTexture;
       this.scene.environmentIntensity = 0.08;
@@ -785,10 +918,18 @@ export class CityView {
 
     this.scene.add(this.cityRoot);
 
-    // Build shared OrigamiMaterials pool across ALL 8 architectural paper tones
+    // Build shared OrigamiMaterials pool across ALL 8 architectural paper tones sharing ONE washi texture pair
+    // with projection shaders disabled (native fast MeshStandardMaterial!)
+    this.ownedWashiTex = sharedWashiTextures ? null : createWashiFiberTextures(maxAnisotropy);
+    const washiTex = sharedWashiTextures ?? this.ownedWashiTex!;
     const poolSize = ARCHITECTURAL_PAPER_PALETTE.length;
     for (let i = 0; i < poolSize; i++) {
-      this.matPool.push(createOrigamiMaterials(maxAnisotropy));
+      this.matPool.push(
+        createOrigamiMaterials(maxAnisotropy, {
+          enableProjection: false,
+          sharedTextures: washiTex,
+        }),
+      );
     }
 
     this.terrainMat = new THREE.MeshStandardMaterial({
@@ -887,7 +1028,410 @@ export class CityView {
     this.hoverOutline.visible = false;
     this.scene.add(this.hoverOutline);
 
+    // Volumetric camera-facing fBm real smoke plumes (where houses fold up) + drifting coastal sea-fog banks!
+    const baseQuad = new THREE.PlaneGeometry(1, 1);
+    this.smokeGeo = new THREE.InstancedBufferGeometry();
+    this.smokeGeo.index = baseQuad.index;
+    this.smokeGeo.attributes.position = baseQuad.attributes.position;
+    this.smokeGeo.attributes.uv = baseQuad.attributes.uv;
+    this.smokePosBuf = new Float32Array(MAX_SMOKE_PUFFS * 3);
+    this.smokeDataBuf = new Float32Array(MAX_SMOKE_PUFFS * 4);
+    this.smokeStyleBuf = new Float32Array(MAX_SMOKE_PUFFS * 2);
+    this.smokePosAttr = new THREE.InstancedBufferAttribute(this.smokePosBuf, 3);
+    this.smokeDataAttr = new THREE.InstancedBufferAttribute(this.smokeDataBuf, 4);
+    this.smokeStyleAttr = new THREE.InstancedBufferAttribute(this.smokeStyleBuf, 2);
+    this.smokePosAttr.setUsage(THREE.DynamicDrawUsage);
+    this.smokeDataAttr.setUsage(THREE.DynamicDrawUsage);
+    this.smokeStyleAttr.setUsage(THREE.DynamicDrawUsage);
+    this.smokeGeo.setAttribute('aInstPos', this.smokePosAttr);
+    this.smokeGeo.setAttribute('aInstData', this.smokeDataAttr);
+    this.smokeGeo.setAttribute('aInstStyle', this.smokeStyleAttr);
+    this.smokeGeo.instanceCount = 0;
+
+    this.smokeNoiseTex = this.createSeamlessSmokeNoiseTexture();
+    this.smokeUniforms.uNoiseTex.value = this.smokeNoiseTex;
+    this.smokeMat = this.createRealSmokeMaterial();
+    this.smokeMesh = new THREE.Mesh(this.smokeGeo, this.smokeMat);
+    this.smokeMesh.frustumCulled = false;
+    this.smokeMesh.renderOrder = 4;
+    for (let i = 0; i < MAX_SMOKE_PUFFS; i++) {
+      this.smokePuffs.push({
+        active: false,
+        isFog: false,
+        x: 0,
+        y: -999,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        age: 0,
+        maxAge: 1,
+        startScale: 2,
+        endScale: 6,
+        rot: 0,
+        vRot: 0,
+        seed: 0,
+        peakAlpha: 0.5,
+      });
+    }
+    this.scene.add(this.smokeMesh);
+
     this.applyLightingAndColors();
+  }
+
+  /**
+   * Pre-bake a seamless tileable `256×256` RGBA multi-octave fBm texture ONCE at startup
+   * so the volumetric smoke fragment shader uses 3 fast hardware bilinear taps instead of 16 ALU octaves!
+   */
+  private createSeamlessSmokeNoiseTexture(): THREE.DataTexture {
+    const N = 256;
+    const data = new Uint8Array(N * N * 4);
+    const hashP = (ix: number, iy: number, period: number, seed: number): number => {
+      const wx = ((ix % period) + period) % period;
+      const wy = ((iy % period) + period) % period;
+      let h = (Math.imul(wx, 374761393) + Math.imul(wy, 668265263) + Math.imul(seed, 1442695041)) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    };
+    const tileNoise = (u: number, v: number, period: number, seed: number): number => {
+      const x = u * period;
+      const y = v * period;
+      const ix = Math.floor(x);
+      const iy = Math.floor(y);
+      const fx = x - ix;
+      const fy = y - iy;
+      const ux = fx * fx * (3 - 2 * fx);
+      const uy = fy * fy * (3 - 2 * fy);
+      const a = hashP(ix, iy, period, seed);
+      const b = hashP(ix + 1, iy, period, seed);
+      const c = hashP(ix, iy + 1, period, seed);
+      const d = hashP(ix + 1, iy + 1, period, seed);
+      return (a * (1 - ux) + b * ux) * (1 - uy) + (c * (1 - ux) + d * ux) * uy;
+    };
+    const tileFbm = (u: number, v: number, basePeriod: number, seed: number): number => {
+      let sum = 0;
+      let amp = 0.5;
+      let p = basePeriod;
+      let norm = 0;
+      for (let o = 0; o < 4; o++) {
+        sum += amp * tileNoise(u, v, p, seed + o * 31);
+        norm += amp;
+        amp *= 0.5;
+        p *= 2;
+      }
+      return sum / norm;
+    };
+
+    for (let y = 0; y < N; y++) {
+      const v = y / N;
+      for (let x = 0; x < N; x++) {
+        const u = x / N;
+        const o = (y * N + x) * 4;
+        data[o] = Math.round(tileFbm(u, v, 4, 17) * 255);
+        data[o + 1] = Math.round(tileFbm(u, v, 4, 97) * 255);
+        data[o + 2] = Math.round(tileFbm(u, v, 8, 211) * 255);
+        data[o + 3] = 255;
+      }
+    }
+    const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  /**
+   * Real procedural volumetric smoke & sea-mist billboard shader backed by a pre-baked seamless fBm texture:
+   *  - 3 fast bilinear texture lookups (domain warp + cloud + directional sun-tap self-shadowing!)
+   *  - Exponential coastal distance fog matching `FogExp2` + near-lens fade so mist never pops!
+   */
+  private createRealSmokeMaterial(): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      uniforms: this.smokeUniforms,
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      vertexShader: /* glsl */ `
+        attribute vec3 aInstPos;
+        attribute vec4 aInstData;  // (size, rot, alpha, age01)
+        attribute vec2 aInstStyle; // (seed, isFog)
+        varying vec2 vUv;
+        varying float vAlpha;
+        varying float vAge01;
+        varying float vSeed;
+        varying float vIsFog;
+        varying float vFogDepth;
+
+        void main() {
+          vUv = uv;
+          vAlpha = aInstData.z;
+          vAge01 = aInstData.w;
+          vSeed = aInstStyle.x;
+          vIsFog = aInstStyle.y;
+
+          vec4 mvCenter = modelViewMatrix * vec4(aInstPos, 1.0);
+          float c = cos(aInstData.y);
+          float s = sin(aInstData.y);
+          vec2 aspect = mix(vec2(1.08, 1.04), vec2(2.65, 0.72), vIsFog);
+          vec2 corner = vec2(position.x * c - position.y * s, position.x * s + position.y * c) * aspect * aInstData.x;
+          vec4 mvPos = mvCenter + vec4(corner, 0.0, 0.0);
+          vFogDepth = max(0.0, -mvPos.z);
+          gl_Position = projectionMatrix * mvPos;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D uNoiseTex;
+        uniform float uColorMix;
+        uniform float uFogDensity;
+        varying vec2 vUv;
+        varying float vAlpha;
+        varying float vAge01;
+        varying float vSeed;
+        varying float vIsFog;
+        varying float vFogDepth;
+
+        void main() {
+          if (vAlpha < 0.004) discard;
+          vec2 p = vUv * 2.0 - 1.0;
+          float r = length(p);
+          if (r > 1.0) discard;
+
+          vec2 seedOff = vec2(fract(vSeed * 0.173), fract(vSeed * 0.291));
+          float scale = mix(0.42, 0.30, vIsFog);
+          vec2 baseUv = p * scale + seedOff;
+          vec2 drift = vec2(vAge01 * 0.04, -vAge01 * 0.11);
+
+          // 3 ultra-fast hardware bilinear fBm lookups (domain warp + cloud + directional sun self-shadow!)
+          vec3 warpTap = texture2D(uNoiseTex, baseUv * 0.85).rgb;
+          vec2 warpedUv = baseUv + (warpTap.rg - 0.5) * 0.28 + drift;
+          vec3 cloudTap = texture2D(uNoiseTex, warpedUv).rgb;
+          float cloud = cloudTap.r * 0.72 + cloudTap.b * 0.28;
+
+          // Soft feathery radial falloff shaped organically by the fBm turbulence
+          float radial = smoothstep(0.98, 0.14, r + (0.48 - cloud) * 0.62);
+          float wispy = smoothstep(0.22, 0.78, cloud);
+          float nearFade = smoothstep(4.5, 15.0, vFogDepth);
+          float alpha = radial * wispy * vAlpha * nearFade;
+          if (alpha < 0.005) discard;
+
+          // Soft directional sunlit highlight on pure white dust (zero dark/soot/fire tones!)
+          vec3 sunTap = texture2D(uNoiseTex, warpedUv + vec2(0.065, 0.085)).rgb;
+          float sunCloud = sunTap.r * 0.72 + sunTap.b * 0.28;
+          float lit = clamp(0.58 + (cloud - sunCloud) * 1.45 + p.y * 0.24, 0.0, 1.0);
+
+          // Pure white chalk/plaster dust smoke: luminous bright white crest, whisper-soft warm-white belly
+          vec3 dustShadow = vec3(0.915, 0.910, 0.896);
+          vec3 dustLight = vec3(1.000, 0.998, 0.994);
+          vec3 smokeCol = mix(dustShadow, dustLight, lit);
+
+          vec3 fogBankCol = mix(vec3(0.968, 0.965, 0.954), vec3(0.955, 0.968, 0.970), uColorMix);
+          vec3 col = mix(smokeCol, fogBankCol, vIsFog);
+
+          // Match exact #f5f4f0 sRGB coastal studio backdrop so distant smoke dissolves seamlessly into FogExp2!
+          vec3 studioFogRgb = vec3(0.960784, 0.956863, 0.941176);
+          float fogFactor = 1.0 - exp(-uFogDensity * uFogDensity * vFogDepth * vFogDepth);
+          col = mix(col, studioFogRgb, clamp(fogFactor * 0.88, 0.0, 1.0));
+          alpha *= (1.0 - clamp(fogFactor * 0.72, 0.0, 0.92));
+
+          gl_FragColor = vec4(col, alpha);
+        }
+      `,
+    });
+  }
+
+  private nextSmokeRand(): number {
+    this.smokeRandState = (Math.imul(this.smokeRandState, 1664525) + 1013904223) >>> 0;
+    return this.smokeRandState / 4294967296;
+  }
+
+  private clearSmoke(): void {
+    this.smokeActiveCount = 0;
+    for (let i = 0; i < MAX_SMOKE_PUFFS; i++) {
+      this.smokePuffs[i].active = false;
+    }
+    this.smokeGeo.instanceCount = 0;
+  }
+
+  private spawnSmokePuff(
+    isFog: boolean,
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    startScale: number,
+    endScale: number,
+    maxAge: number,
+    peakAlpha: number,
+  ): void {
+    const p = this.smokePuffs[this.smokeCursor];
+    this.smokeCursor = (this.smokeCursor + 1) % MAX_SMOKE_PUFFS;
+    p.active = true;
+    p.isFog = isFog;
+    p.x = x;
+    p.y = y;
+    p.z = z;
+    p.vx = vx;
+    p.vy = vy;
+    p.vz = vz;
+    p.age = 0;
+    p.maxAge = maxAge;
+    p.startScale = startScale;
+    p.endScale = endScale;
+    p.rot = this.nextSmokeRand() * Math.PI * 2;
+    p.vRot = (this.nextSmokeRand() - 0.5) * (isFog ? 0.08 : 0.65);
+    p.seed = this.nextSmokeRand() * 100.0;
+    p.peakAlpha = peakAlpha;
+  }
+
+  private updateSmoke(dt: number): void {
+    const fx = this.waveFocus.x;
+    const fz = this.waveFocus.y;
+    const camX = this.curCamPos.x;
+    const camY = this.curCamPos.y;
+    const camZ = this.curCamPos.z;
+
+    // 1. Emit billowing REAL volumetric smoke wisps right where houses are folding up off the ground!
+    if (this.waveMode === 'wave') {
+      for (const ch of this.chunks.values()) {
+        if (ch.tier > 1) continue;
+        if (Math.hypot(ch.data.centerX - camX, ch.data.centerZ - camZ) > 165) continue;
+        for (const plot of ch.data.plots) {
+          const f = evaluateFoldWave(plot.x, plot.z, plot.foldJitter, fx, fz, this.waveMode);
+          if (f <= 0.03 || f >= 0.95) continue;
+          const activity = Math.sin(f * Math.PI);
+          // Fine white ground dust rolling outward along base creases & rising softly as walls hinge up!
+          const prob = activity * 7.2 * dt;
+          if (this.nextSmokeRand() < prob) {
+            const ang = this.nextSmokeRand() * Math.PI * 2;
+            const fpRad = Math.max(plot.footprintW, plot.footprintD) * (0.32 + this.nextSmokeRand() * 0.44);
+            const sx = plot.x + Math.cos(ang) * fpRad;
+            const sz = plot.z + Math.sin(ang) * fpRad;
+            const sy = plot.baseY + 0.18 + f * 1.25 + this.nextSmokeRand() * 0.45;
+            const outSpeed = 1.05 + this.nextSmokeRand() * 1.55;
+            const vx = Math.cos(ang) * outSpeed + 0.65; // gentle onshore sea breeze!
+            const vz = Math.sin(ang) * outSpeed - 0.25;
+            const vy = 0.85 + this.nextSmokeRand() * 1.15;
+            const s0 = 1.9 + this.nextSmokeRand() * 1.4;
+            const s1 = s0 * (2.5 + this.nextSmokeRand() * 1.15);
+            const maxAge = 1.8 + this.nextSmokeRand() * 1.3;
+            const peak = (0.56 + this.nextSmokeRand() * 0.26) * (0.68 + 0.32 * activity);
+            this.spawnSmokePuff(false, sx, sy, sz, vx, vy, vz, s0, s1, maxAge, peak);
+          }
+        }
+      }
+    }
+
+    // 2. Emit soft, wide drifting coastal sea-fog banks lazily skimming the shoreline & hillsides!
+    if (this.world) {
+      this.fogEmitAccum += dt * 7.5;
+      while (this.fogEmitAccum >= 1) {
+        this.fogEmitAccum -= 1;
+        const zAhead = camZ - (35 + this.nextSmokeRand() * 175);
+        const cX = this.world.terrain.coastX(zAhead);
+        const xOff = (this.nextSmokeRand() - 0.38) * 115; // straddles coves, shoreline & rolling hills!
+        const fxPos = cX + xOff;
+        const groundY = Math.max(0, this.world.terrain.heightAt(fxPos, zAhead));
+        const fyPos = groundY + 1.8 + this.nextSmokeRand() * 6.5;
+        const s0 = 15 + this.nextSmokeRand() * 11;
+        const s1 = s0 * 1.45;
+        this.spawnSmokePuff(
+          true,
+          fxPos,
+          fyPos,
+          zAhead,
+          0.95 + this.nextSmokeRand() * 0.75,
+          0.08 + this.nextSmokeRand() * 0.14,
+          (this.nextSmokeRand() - 0.5) * 0.5,
+          s0,
+          s1,
+          5.5 + this.nextSmokeRand() * 3.5,
+          0.22 + this.nextSmokeRand() * 0.14,
+        );
+      }
+    }
+
+    // 3. Advance smoke & fog physics + collect active indices for back-to-front depth sorting
+    const drag = Math.exp(-0.95 * dt);
+    this.smokeOrder.length = 0;
+
+    for (let i = 0; i < MAX_SMOKE_PUFFS; i++) {
+      const p = this.smokePuffs[i];
+      if (!p.active) continue;
+      p.age += dt;
+      if (p.age >= p.maxAge) {
+        p.active = false;
+        continue;
+      }
+      if (!p.isFog) {
+        p.vx *= drag;
+        p.vz *= drag;
+        p.vy = p.vy * Math.exp(-0.42 * dt) + 0.16 * dt;
+        // Subtle curling swirl turbulence as real smoke rises
+        const swirl = Math.sin(p.age * 2.2 + p.seed) * 0.55;
+        p.x += (p.vx + swirl) * dt;
+        p.y += p.vy * dt;
+        p.z += p.vz * dt;
+      } else {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.z += p.vz * dt;
+      }
+      p.rot += p.vRot * dt;
+
+      const dx = p.x - camX;
+      const dy = p.y - camY;
+      const dz = p.z - camZ;
+      this.smokeDepths[i] = dx * dx + dy * dy + dz * dz;
+      this.smokeOrder.push(i);
+    }
+
+    // Sort back-to-front so layered volumetric plumes & coastal fog composite silkily with zero popping!
+    const depths = this.smokeDepths;
+    this.smokeOrder.sort((a, b) => depths[b] - depths[a]);
+
+    const count = this.smokeOrder.length;
+    for (let k = 0; k < count; k++) {
+      const p = this.smokePuffs[this.smokeOrder[k]];
+      const u = p.age / p.maxAge;
+      const scaleEase = 1 - Math.pow(1 - u, 2.0);
+      const sc = p.startScale + (p.endScale - p.startScale) * scaleEase;
+      const fadeIn = smoothstep(0.0, p.isFog ? 0.25 : 0.12, u);
+      const fadeOut = Math.pow(1 - smoothstep(p.isFog ? 0.55 : 0.28, 1.0, u), 1.4);
+      const alpha = p.peakAlpha * fadeIn * fadeOut;
+
+      const p3 = k * 3;
+      this.smokePosBuf[p3] = p.x;
+      this.smokePosBuf[p3 + 1] = p.y;
+      this.smokePosBuf[p3 + 2] = p.z;
+
+      const d4 = k * 4;
+      this.smokeDataBuf[d4] = sc;
+      this.smokeDataBuf[d4 + 1] = p.rot;
+      this.smokeDataBuf[d4 + 2] = alpha;
+      this.smokeDataBuf[d4 + 3] = u;
+
+      const s2 = k * 2;
+      this.smokeStyleBuf[s2] = p.seed;
+      this.smokeStyleBuf[s2 + 1] = p.isFog ? 1.0 : 0.0;
+    }
+
+    this.smokeActiveCount = count;
+    this.smokeGeo.instanceCount = count;
+    this.smokePosAttr.needsUpdate = true;
+    this.smokeDataAttr.needsUpdate = true;
+    this.smokeStyleAttr.needsUpdate = true;
+  }
+
+  private prewarmWaveSmoke(): void {
+    this.clearSmoke();
+    for (let step = 0; step < 12; step++) {
+      this.updateSmoke(0.22);
+    }
   }
 
   private createPaperSeaMaterial(): THREE.MeshStandardMaterial {
@@ -982,8 +1526,9 @@ export class CityView {
       vertexColors: true,
       roughness: tier === 1 ? 0.93 : 0.96,
       metalness: 0.0,
+      side: THREE.DoubleSide,
     });
-    mat.customProgramCacheKey = () => 'coastal-city-lod-building-v1';
+    mat.customProgramCacheKey = () => 'coastal-city-lod-origami-v2';
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uWaveFocus = this.sharedLodUniforms.uWaveFocus;
       shader.uniforms.uWaveMode = this.sharedLodUniforms.uWaveMode;
@@ -997,10 +1542,42 @@ export class CityView {
           `#include <common>
           attribute vec3 aBuildOrigin;
           attribute vec2 aBuildMeta;
+          attribute vec3 aHingePos;
+          attribute vec3 aHingeAxis;
+          attribute vec2 aFoldSpec;
           uniform vec2 uWaveFocus;
           uniform float uWaveMode;
           uniform float uLod0Active[${MAX_LOD_PLOTS_PER_CHUNK}];
-          varying float vLodCull;`,
+          varying float vLodCull;
+          varying float vIsFloorOrPlinth;
+
+          vec3 rotAxisOrigami(vec3 v, vec3 k, float theta) {
+            float c = cos(theta);
+            float s = sin(theta);
+            return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c);
+          }
+
+          float evalCityFoldWave(vec3 origin, float jitter) {
+            if (uWaveMode > 1.5) return 0.0;
+            if (uWaveMode > 0.5) return 1.0;
+            float dFwd = uWaveFocus.y - origin.z;
+            float dLat = abs(origin.x - uWaveFocus.x);
+            float wMetric = dFwd + 0.24 * dLat + jitter;
+            return 1.0 - smoothstep(${WAVE_NEAR.toFixed(1)}, ${WAVE_FAR.toFixed(1)}, wMetric);
+          }`,
+        )
+        .replace(
+          '#include <beginnormal_vertex>',
+          `#include <beginnormal_vertex>
+          float nFoldVal = evalCityFoldWave(aBuildOrigin, aBuildMeta.y);
+          float nWallFold = smoothstep(0.0, 0.72, nFoldVal);
+          float nRoofFold = smoothstep(0.28, 1.0, nFoldVal);
+          if (aFoldSpec.x > 0.0) {
+            if (aFoldSpec.y > 0.001) {
+              objectNormal = rotAxisOrigami(objectNormal, aHingeAxis, (1.0 - nRoofFold) * aFoldSpec.y);
+            }
+            objectNormal = rotAxisOrigami(objectNormal, aHingeAxis, (1.0 - nWallFold) * 1.5707963);
+          }`,
         )
         .replace(
           '#include <begin_vertex>',
@@ -1011,31 +1588,33 @@ export class CityView {
             lod0Flag = uLod0Active[bIdx];
           }
           vLodCull = lod0Flag;
+          vIsFloorOrPlinth = aFoldSpec.x <= 0.0 ? 1.0 : 0.0;
 
-          float fVal = 1.0;
-          if (uWaveMode > 1.5) {
-            fVal = 0.0;
-          } else if (uWaveMode < 0.5) {
-            float dFwd = uWaveFocus.y - aBuildOrigin.z;
-            float dLat = abs(aBuildOrigin.x - uWaveFocus.x);
-            float wMetric = dFwd + 0.24 * dLat + aBuildMeta.y;
-            fVal = 1.0 - smoothstep(${WAVE_NEAR.toFixed(1)}, ${WAVE_FAR.toFixed(1)}, wMetric);
-          }
+          float fVal = evalCityFoldWave(aBuildOrigin, aBuildMeta.y);
+          float wallFold = smoothstep(0.0, 0.72, fVal);
+          float roofFold = smoothstep(0.28, 1.0, fVal);
 
-          vec3 rel = transformed - aBuildOrigin;
           if (lod0Flag > 0.5) {
-            rel = vec3(0.0);
-          } else if (rel.y >= 0.0) {
-            float rise = fVal * fVal * (3.0 - 2.0 * fVal);
-            float flare = 1.0 + (1.0 - rise) * 0.22;
-            rel.xz *= flare;
-            rel.y = rel.y * max(0.015, rise) + (1.0 - rise) * 0.04;
-          } else {
-            float pRise = smoothstep(0.02, 0.42, fVal);
+            transformed = aBuildOrigin;
+          } else if (aFoldSpec.x > 0.0) {
+            // Real 2-bone origami hinge fold: roof flap hinges off moving eave, wall hinges 90° off flat ground!
+            vec3 pt = transformed;
+            if (aFoldSpec.y > 0.001) {
+              vec3 eavePivot = aHingePos + vec3(0.0, aFoldSpec.x, 0.0);
+              pt = eavePivot + rotAxisOrigami(pt - eavePivot, aHingeAxis, (1.0 - roofFold) * aFoldSpec.y);
+            }
+            pt = aHingePos + rotAxisOrigami(pt - aHingePos, aHingeAxis, (1.0 - wallFold) * 1.5707963);
+            // Tiny 0.015 ground-lift epsilon when flat so laid-out paper nets never z-fight the hillside!
+            pt.y += (1.0 - wallFold) * 0.025;
+            transformed = pt;
+          } else if (aFoldSpec.x < -0.5) {
+            // Retaining plinth stays tucked flush beneath flat paper until walls start lifting
+            float pRise = smoothstep(0.06, 0.48, wallFold);
+            vec3 rel = transformed - aBuildOrigin;
             rel.y *= pRise;
             if (pRise < 0.01) rel.xz *= 0.0;
-          }
-          transformed = aBuildOrigin + rel;`,
+            transformed = aBuildOrigin + rel;
+          }`,
         )
         .replace(
           '#include <project_vertex>',
@@ -1050,14 +1629,20 @@ export class CityView {
           '#include <common>',
           `#include <common>
           uniform float uColorMix;
-          uniform vec3 uWhitePaperColor;`,
+          uniform vec3 uWhitePaperColor;
+          varying float vIsFloorOrPlinth;`,
         )
         .replace(
           '#include <color_fragment>',
           `#if defined( USE_COLOR_ALPHA )
             diffuseColor *= vColor;
           #elif defined( USE_COLOR )
-            diffuseColor.rgb *= mix(uWhitePaperColor, vColor.rgb, uColorMix);
+            // Authentic duplex origami paper: flat unfolded inside faces (!gl_FrontFacing) show crisp
+            // warm cotton white, flipping to the pastel/architectural exterior color as walls hinge up!
+            vec3 paperRgb = (gl_FrontFacing || vIsFloorOrPlinth > 0.5)
+              ? mix(uWhitePaperColor, vColor.rgb, uColorMix)
+              : uWhitePaperColor;
+            diffuseColor.rgb *= paperRgb;
           #endif`,
         );
     };
@@ -1114,6 +1699,8 @@ export class CityView {
     this.waveMode = mode;
     this.sharedLodUniforms.uWaveMode.value = mode === 'wave' ? 0 : mode === 'folded' ? 1 : 2;
     this.updateActiveLod0Folds(true);
+    if (mode === 'flat') this.clearSmoke();
+    else if (mode === 'wave') this.prewarmWaveSmoke();
     this.emitStats();
   }
 
@@ -1152,6 +1739,7 @@ export class CityView {
       this.syncCameraFromFlight();
       this.streamChunks(true);
       this.updateActiveLod0Folds(true);
+      this.prewarmWaveSmoke();
       this.emitStats();
     }
   }
@@ -1172,6 +1760,7 @@ export class CityView {
   private applyLightingAndColors(): void {
     this.sharedLodUniforms.uColorMix.value = this.colorEnabled ? 1 : 0;
     this.seaUniforms.uColorMix.value = this.colorEnabled ? 1 : 0;
+    this.smokeUniforms.uColorMix.value = this.colorEnabled ? 1 : 0;
 
     if (this.colorEnabled) {
       this.hemi.color.set('#fffdf8');
@@ -1290,6 +1879,7 @@ export class CityView {
     // Initial synchronous burst fills the immediate coastal vista on frame 0 with zero blank sky!
     this.streamChunks(true);
     this.updateActiveLod0Folds(true);
+    this.prewarmWaveSmoke();
     this.emitStats();
     return world;
   }
@@ -1523,7 +2113,9 @@ export class CityView {
     if (lodGeo) {
       const lodMat = this.createChunkLodBuildingMaterial(ch.lodActiveMask, wantLodTier);
       const lodMesh = new THREE.Mesh(lodGeo, lodMat);
-      lodMesh.castShadow = tier === 0;
+      // Near buildings (<116u) cast real per-panel animated shadows via LOD0 OrigamiHouseRig;
+      // keeping `lodMesh.castShadow = false` avoids ghost shadows from untransformed LOD vertex positions!
+      lodMesh.castShadow = false;
       lodMesh.receiveShadow = tier <= 1;
       ch.lodGeo = lodGeo;
       ch.lodMat = lodMat;
@@ -1538,7 +2130,7 @@ export class CityView {
     if (ch.lod0Map.has(plot.index)) return;
     const matSet = this.matPool[plot.colorIndex % this.matPool.length];
     const net = buildHouseNet(plot.spec);
-    const rig = buildOrigamiHouseRig(net, matSet, false);
+    const rig = buildOrigamiHouseRig(net, matSet, false, 'city');
     rig.setWindowOpen(this.winOpenMode, this.winOpenRatio);
     rig.setPaperRelief(1);
 
@@ -1608,13 +2200,21 @@ export class CityView {
 
   private applyLod0FoldState(b: MountedLod0Building, fold: number): void {
     b.curFold = fold;
-    for (const id of b.rig.panelIds) {
-      b.rig.updatePanelVisual(id, fold, 0, false);
-    }
-    b.rig.setFoldLinesVisible(fold < 0.48);
+    // Match the exact 2-stage origami choreography of the GPU LOD1 shader:
+    // walls hinge 90° up off the flat ground FIRST, then roof slopes & skylight caps sweep shut!
+    const wallFold = smoothstep(0.0, 0.72, fold);
+    const roofFold = smoothstep(0.28, 1.0, fold);
+    const capFold = smoothstep(0.54, 1.0, fold);
 
-    // Smoothly emerge the retaining plinth with the early fold so no bare pedestals stick out ahead of the wave
-    const pRise = smoothstep(0.02, 0.42, fold);
+    for (const id of b.rig.panelIds) {
+      const stage = b.rig.net.panelMap.get(id)?.stage;
+      const pFold = stage === 'cap' ? capFold : stage === 'roof' ? roofFold : wallFold;
+      b.rig.updatePanelVisual(id, pFold, 0, false);
+    }
+    b.rig.setFoldLinesVisible(fold < 0.52);
+
+    // Smoothly emerge the retaining plinth only as walls start hinging up off the flat ground
+    const pRise = smoothstep(0.06, 0.48, wallFold);
     b.plinth.visible = pRise > 0.01;
     if (b.plinth.visible) {
       b.plinth.scale.y = Math.max(0.01, pRise);
@@ -1735,27 +2335,30 @@ export class CityView {
       builtCount++;
     }
 
-    // 3. Incremental LOD0 OrigamiHouseRig upgrades (closest hero houses first, capped per frame for 60fps!)
+    // 3. Incremental LOD0 OrigamiHouseRig upgrades focused ahead of the lens (never wastes LOD0 rigs behind the camera!)
+    const lodAnchorX = this.flying ? camX * 0.45 + this.curLookAt.x * 0.55 : this.curTarget.x;
+    const lodAnchorZ = this.flying ? camZ * 0.45 + this.curLookAt.z * 0.55 : this.curTarget.z;
     const lod0Candidates: Array<{ ch: MountedChunk; plot: CityBuildingPlot; dist: number }> = [];
     for (const ch of this.chunks.values()) {
       if (ch.tier !== 0) continue;
       for (const plot of ch.data.plots) {
-        const d = Math.hypot(plot.x - camX, plot.z - camZ);
+        const d = Math.hypot(plot.x - lodAnchorX, plot.z - lodAnchorZ);
+        const behindCam = this.flying && plot.z > camZ + 12;
         const mounted = ch.lod0Map.has(plot.index);
-        if (mounted && d > LOD0_EXIT_DIST) {
+        if (mounted && (d > LOD0_EXIT_DIST || behindCam)) {
           this.unmountLod0Building(ch, plot.index);
-        } else if (!mounted && d < LOD0_ENTER_DIST) {
+        } else if (!mounted && !behindCam && d < LOD0_ENTER_DIST) {
           lod0Candidates.push({ ch, plot, dist: d });
         }
       }
     }
 
     lod0Candidates.sort((a, b) => a.dist - b.dist);
-    const maxRigBuilds = syncBurst ? 36 : 2;
+    const maxRigBuilds = syncBurst ? 48 : 4;
     let rigsBuilt = 0;
     for (const item of lod0Candidates) {
       if (rigsBuilt >= maxRigBuilds) break;
-      if (!syncBurst && rigsBuilt >= 1 && performance.now() - tStart > 5.5) break;
+      if (!syncBurst && rigsBuilt >= 2 && performance.now() - tStart > 6.5) break;
       this.mountLod0Building(item.ch, item.plot);
       rigsBuilt++;
     }
@@ -1783,18 +2386,18 @@ export class CityView {
 
     // Apply optional subtle user look-around offset while gliding along the curved path!
     if (Math.abs(this.flyYawOff) > 1e-4 || Math.abs(this.flyPitchOff) > 1e-4) {
-      const dir = new THREE.Vector3().subVectors(this.curLookAt, this.curCamPos);
+      const dir = this.tmpV1.subVectors(this.curLookAt, this.curCamPos);
       const len = dir.length();
       const baseYaw = Math.atan2(dir.x, dir.z);
       const basePitch = Math.atan2(dir.y, Math.hypot(dir.x, dir.z));
       const y = baseYaw + this.flyYawOff;
       const p = Math.max(-0.95, Math.min(0.45, basePitch + this.flyPitchOff));
-      const adjustedLook = new THREE.Vector3(
+      this.tmpV2.set(
         this.curCamPos.x + Math.cos(p) * Math.sin(y) * len,
         this.curCamPos.y + Math.sin(p) * len,
         this.curCamPos.z + Math.cos(p) * Math.cos(y) * len,
       );
-      this.camera.lookAt(adjustedLook);
+      this.camera.lookAt(this.tmpV2);
     } else {
       this.camera.lookAt(this.curLookAt);
     }
@@ -1840,10 +2443,10 @@ export class CityView {
       this.flyPitchOff += (this.targetFlyPitchOff - this.flyPitchOff) * k;
       this.flyAltOff += (this.targetFlyAltOff - this.flyAltOff) * k;
 
-      const desiredPos = new THREE.Vector3(sample.pos[0], Math.max(10, sample.pos[1] + this.flyAltOff), sample.pos[2]);
-      const desiredLook = new THREE.Vector3(sample.lookAt[0], sample.lookAt[1], sample.lookAt[2]);
-      this.curCamPos.lerp(desiredPos, 1 - Math.exp(-8.0 * dt));
-      this.curLookAt.lerp(desiredLook, 1 - Math.exp(-6.0 * dt));
+      this.tmpV1.set(sample.pos[0], Math.max(10, sample.pos[1] + this.flyAltOff), sample.pos[2]);
+      this.tmpV2.set(sample.lookAt[0], sample.lookAt[1], sample.lookAt[2]);
+      this.curCamPos.lerp(this.tmpV1, 1 - Math.exp(-8.0 * dt));
+      this.curLookAt.lerp(this.tmpV2, 1 - Math.exp(-6.0 * dt));
       this.curBankRoll += (sample.bankRoll - this.curBankRoll) * (1 - Math.exp(-4.5 * dt));
 
       this.waveFocus.set(sample.focusX, sample.focusZ);
@@ -1862,6 +2465,9 @@ export class CityView {
 
     // Sync active LOD0 origami building folds with the sweeping wave
     this.updateActiveLod0Folds(false);
+
+    // Emit & animate billowing paper smoke puffs right where houses are folding up!
+    this.updateSmoke(dt);
 
     // Gently bob coastal origami sailboats on the paper waves
     const t = this.elapsedTime;
@@ -1917,6 +2523,7 @@ export class CityView {
       lod2Buildings: lod2,
       totalPlots,
       rooftopCount,
+      activeSmokePuffs: this.smokeActiveCount,
     };
   }
 
@@ -2065,6 +2672,11 @@ export class CityView {
   public dispose(): void {
     this.clearAllChunks();
     for (const m of this.matPool) m.dispose();
+    if (this.ownedWashiTex) {
+      this.ownedWashiTex.map.dispose();
+      this.ownedWashiTex.bumpMap.dispose();
+    }
+    this.smokeNoiseTex.dispose();
     this.terrainMat.dispose();
     this.streetMat.dispose();
     this.promenadeMat.dispose();
@@ -2079,6 +2691,8 @@ export class CityView {
     this.sailboatGeo.dispose();
     this.seaMesh.geometry.dispose();
     this.seaMat.dispose();
+    this.smokeGeo.dispose();
+    this.smokeMat.dispose();
     this.hoverOutline.geometry.dispose();
     (this.hoverOutline.material as THREE.Material).dispose();
   }

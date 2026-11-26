@@ -28,6 +28,7 @@ import {
 import {
   buildOrigamiHouseRig,
   createOrigamiMaterials,
+  createWashiFiberTextures,
   type OrigamiHouseRig,
   type OrigamiMaterials,
 } from './origamiPaperMesh';
@@ -521,6 +522,7 @@ scene.fog = studioFog;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 const sharedEnvTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+pmrem.dispose();
 scene.environment = sharedEnvTexture;
 scene.environmentIntensity = 0.08;
 
@@ -559,14 +561,15 @@ const underFill = new THREE.DirectionalLight('#fbfaf6', 0.44);
 underFill.position.set(12, -22, 14);
 scene.add(underFill);
 
-// Build TWO ping-pong duplex paper material sets so an outgoing house (finishing 77% -> 100% live into an FBO)
-// and the incoming house (folding 0% -> 25% sampling that live FBO) NEVER collide on shared uniforms or textures!
+// Build TWO ping-pong duplex paper material sets sharing ONE single procedural washi fiber texture pair!
+const sharedWashiTextures = createWashiFiberTextures(renderer.capabilities.getMaxAnisotropy());
 const materialsPool: [OrigamiMaterials, OrigamiMaterials] = [
-  createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy()),
-  createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy()),
+  createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy(), { sharedTextures: sharedWashiTextures }),
+  createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy(), { sharedTextures: sharedWashiTextures }),
 ];
 let activeMatIdx: 0 | 1 = 0;
 let materials: OrigamiMaterials = materialsPool[0];
+const tmpDrawSize = new THREE.Vector2();
 
 let curShadowExtent = 14;
 let swapShadowExtent = 14;
@@ -1076,10 +1079,9 @@ let activeRTIndex = 0;
 const snapVP = new THREE.Matrix4();
 
 function ensureProjTargetsSized(): { tw: number; th: number } {
-  const drawSize = new THREE.Vector2();
-  renderer.getDrawingBufferSize(drawSize);
-  const tw = Math.max(2, Math.round(drawSize.x));
-  const th = Math.max(2, Math.round(drawSize.y));
+  renderer.getDrawingBufferSize(tmpDrawSize);
+  const tw = Math.max(2, Math.round(tmpDrawSize.x));
+  const th = Math.max(2, Math.round(tmpDrawSize.y));
   let resized = false;
   for (let i = 0; i < rtPool.length; i++) {
     if (rtPool[i].width !== tw || rtPool[i].height !== th) {
@@ -1155,10 +1157,9 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
   // Dispose any older outgoing house before starting a new overlap handoff
   clearOutgoing();
 
-  const drawSize = new THREE.Vector2();
-  renderer.getDrawingBufferSize(drawSize);
-  const tw = Math.max(2, Math.round(drawSize.x));
-  const th = Math.max(2, Math.round(drawSize.y));
+  renderer.getDrawingBufferSize(tmpDrawSize);
+  const tw = Math.max(2, Math.round(tmpDrawSize.x));
+  const th = Math.max(2, Math.round(tmpDrawSize.y));
   const nextIdx = (activeRTIndex + 1) % rtPool.length;
   if (rtPool[nextIdx].width !== tw || rtPool[nextIdx].height !== th) {
     rtPool[nextIdx].dispose();
@@ -2495,31 +2496,36 @@ function updateCityHud(stats?: CityViewStats | null): void {
 
 function ensureCityView(): CityView {
   if (cityView) return cityView;
-  cityView = new CityView(renderer.capabilities.getMaxAnisotropy(), sharedEnvTexture, {
-    onWorldStats: (stats) => {
-      if (cityActive) updateCityHud(stats);
+  cityView = new CityView(
+    renderer.capabilities.getMaxAnisotropy(),
+    sharedEnvTexture,
+    {
+      onWorldStats: (stats) => {
+        if (cityActive) updateCityHud(stats);
+      },
+      onFlyChange: () => {
+        if (cityActive) {
+          cityStatus.textContent = getCityDefaultStatus();
+          updateCityHud();
+        }
+      },
+      onHoverPlot: (plot: CityBuildingPlot | null) => {
+        if (!plot) {
+          cityStatus.textContent = getCityDefaultStatus();
+          return;
+        }
+        const s = plot.spec;
+        const wingSuffix =
+          s.topology === 'village' && s.village ? ` · ${s.village.count} houses` : ` · ${s.roofType}`;
+        cityStatus.textContent = `${s.label}${wingSuffix} · Click to fold`;
+      },
+      onSelectPlot: (plot: CityBuildingPlot) => {
+        setCityOpen(false);
+        selectCatalogSpecimen(`city_${plot.id}`, plot.generation, plot.mixOpts);
+      },
     },
-    onFlyChange: () => {
-      if (cityActive) {
-        cityStatus.textContent = getCityDefaultStatus();
-        updateCityHud();
-      }
-    },
-    onHoverPlot: (plot: CityBuildingPlot | null) => {
-      if (!plot) {
-        cityStatus.textContent = getCityDefaultStatus();
-        return;
-      }
-      const s = plot.spec;
-      const wingSuffix =
-        s.topology === 'village' && s.village ? ` · ${s.village.count} houses` : ` · ${s.roofType}`;
-      cityStatus.textContent = `${s.label}${wingSuffix} · Click to fold`;
-    },
-    onSelectPlot: (plot: CityBuildingPlot) => {
-      setCityOpen(false);
-      selectCatalogSpecimen(`city_${plot.id}`, plot.generation, plot.mixOpts);
-    },
-  });
+    sharedWashiTextures,
+  );
   const rect = canvas.getBoundingClientRect();
   cityView.resize(Math.max(1, rect.width), Math.max(1, rect.height));
   cityView.setColorEnabled(debugColorEnabled);
@@ -3275,6 +3281,11 @@ function animate(now: number): void {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, (now - lastTime) * 0.001);
   lastTime = now;
+
+  // Pause background 3D stage rendering while the fullscreen opaque Generations Catalog modal is open!
+  if (!catalogModal.hidden) {
+    return;
+  }
 
   if (cityActive && cityView) {
     cityView.update(dt);

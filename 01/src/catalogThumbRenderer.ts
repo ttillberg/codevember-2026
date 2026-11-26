@@ -41,6 +41,7 @@ export class CatalogThumbRenderer {
   private fill: THREE.DirectionalLight | null = null;
   private flatMatPlane: THREE.Mesh | null = null;
   private materials: OrigamiMaterials | null = null;
+  private readonly bgColor = new THREE.Color(BACKDROP_3D);
   private cache = new Map<string, HTMLCanvasElement>();
 
   private ensureInit(): void {
@@ -66,7 +67,7 @@ export class CatalogThumbRenderer {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(BACKDROP_3D);
+    scene.background = this.bgColor;
 
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -100,7 +101,9 @@ export class CatalogThumbRenderer {
     flatMatPlane.visible = false;
     scene.add(flatMatPlane);
 
-    const materials = createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy());
+    const materials = createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy(), {
+      enableProjection: false,
+    });
 
     this.renderer = renderer;
     this.scene = scene;
@@ -135,7 +138,8 @@ export class CatalogThumbRenderer {
           : SUN_DIR_WHITE;
 
     if (colorEnabled) {
-      scene.background = new THREE.Color(viewMode === 'flat' ? BACKDROP_FLAT_COLOR : BACKDROP_3D);
+      this.bgColor.set(viewMode === 'flat' ? BACKDROP_FLAT_COLOR : BACKDROP_3D);
+      scene.background = this.bgColor;
       if (spec.topology === 'village') {
         const baseIdx = Math.max(0, ARCHITECTURAL_PAPER_PALETTE.indexOf(spec.outsideColor));
         const len = ARCHITECTURAL_PAPER_PALETTE.length;
@@ -161,7 +165,8 @@ export class CatalogThumbRenderer {
     } else {
       // In white-on-white Flat mode, set a warm stone-ivory mat (#e6e4dc) beneath bright cotton paper
       // so every single-cutout perimeter, punched window opening, and crease pattern reads crisply!
-      scene.background = new THREE.Color(viewMode === 'flat' ? BACKDROP_FLAT_WHITE : BACKDROP_3D);
+      this.bgColor.set(viewMode === 'flat' ? BACKDROP_FLAT_WHITE : BACKDROP_3D);
+      scene.background = this.bgColor;
       materials.setOutsideColor(viewMode === 'flat' ? '#fdfcf8' : '#f5f4f0');
       materials.inside.color.set(viewMode === 'flat' ? '#fdfcf8' : '#fbfaf7');
       materials.edge.color.set('#f8f7f3');
@@ -270,7 +275,7 @@ export class CatalogThumbRenderer {
       rig.updatePanelVisual(id, foldVal, 0, false);
     }
     rig.setFoldLinesVisible(viewMode === 'flat');
-    rig.setPaperRelief(1);
+    rig.setPaperRelief(1, viewMode === 'flat');
     materials.setProjection(null);
 
     const shadowExtent = this.frameCamera(net, viewMode);
@@ -308,5 +313,24 @@ export class CatalogThumbRenderer {
       ctx.clearRect(0, 0, target.width, target.height);
       ctx.drawImage(source, 0, 0, target.width, target.height);
     }
+  }
+
+  public dispose(): void {
+    this.cache.clear();
+    if (this.flatMatPlane) {
+      this.flatMatPlane.geometry.dispose();
+      (this.flatMatPlane.material as THREE.Material).dispose();
+      this.flatMatPlane = null;
+    }
+    this.materials?.dispose();
+    this.materials = null;
+    if (this.scene?.environment) {
+      this.scene.environment.dispose();
+      this.scene.environment = null;
+    }
+    this.renderer?.dispose();
+    this.renderer = null;
+    this.scene = null;
+    this.camera = null;
   }
 }

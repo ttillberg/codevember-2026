@@ -1521,9 +1521,9 @@ export function createCoastalWorld(opts: CoastalWorldOptions): CoastalWorld {
     const d2x = (xNext - 2 * camX + xPrev) / (ds * ds);
     const bankRoll = Math.max(-0.105, Math.min(0.105, -d2x * 16.0));
 
-    // Focus point for the origami fold wave — sits right in the hero mid-ground ahead of the lens!
-    const focusX = camX * 0.42 + lookX * 0.58;
-    const focusZ = z - 44;
+    // Focus point for the origami fold wave — sits directly ahead in the hero foreground/midground!
+    const focusX = camX * 0.45 + lookX * 0.55;
+    const focusZ = z - 34;
 
     return {
       pos: [camX, camY, z],

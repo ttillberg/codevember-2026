@@ -69,7 +69,19 @@ export interface OrigamiMaterials {
   dispose(): void;
 }
 
-function createWashiFiberTextures(maxAniso: number): { map: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } {
+export interface WashiFiberTextures {
+  map: THREE.CanvasTexture;
+  bumpMap: THREE.CanvasTexture;
+}
+
+export interface CreateOrigamiMaterialsOptions {
+  /** Attach live projective-camera shader (only needed in Fold View; disable in City & Catalog for faster native shaders!) */
+  enableProjection?: boolean;
+  /** Reuse a shared washi fiber texture pair instead of allocating duplicate 512×512 procedural canvases */
+  sharedTextures?: WashiFiberTextures;
+}
+
+export function createWashiFiberTextures(maxAniso: number): WashiFiberTextures {
   const size = 512;
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -235,8 +247,13 @@ if (uHasProj > 0.5 && projSideMatch > 0.5 && projIsBlank > 0.001 && uPaperReveal
   };
 }
 
-export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
-  const tex = createWashiFiberTextures(maxAniso);
+export function createOrigamiMaterials(
+  maxAniso = 8,
+  opts: CreateOrigamiMaterialsOptions = {},
+): OrigamiMaterials {
+  const enableProjection = opts.enableProjection ?? true;
+  const ownsTextures = !opts.sharedTextures;
+  const tex = opts.sharedTextures ?? createWashiFiberTextures(maxAniso);
   const paperColor = new THREE.Color('#ffffff');
 
   const projUniforms: ProjectionUniforms = {
@@ -293,17 +310,19 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
   const chadOutside = outside.clone();
   const chadEdge = edge.clone();
 
-  attachProjectiveShader(inside, projUniforms, { face: 1 });
-  for (const m of outsideSlots) {
-    attachProjectiveShader(m, projUniforms, { face: -1 });
+  if (enableProjection) {
+    attachProjectiveShader(inside, projUniforms, { face: 1 });
+    for (const m of outsideSlots) {
+      attachProjectiveShader(m, projUniforms, { face: -1 });
+    }
+    attachProjectiveShader(edge, projUniforms, { face: 0 });
+    attachProjectiveShader(cutoutInside, projUniforms, { clipToSilhouette: true, face: 1 });
+    attachProjectiveShader(cutoutEdge, projUniforms, { clipToSilhouette: true, face: 0 });
+    attachProjectiveShader(cutoutOutside, projUniforms, { clipToSilhouette: true, face: -1 });
+    attachProjectiveShader(chadInside, projUniforms, { face: 1 });
+    attachProjectiveShader(chadEdge, projUniforms, { face: 0 });
+    attachProjectiveShader(chadOutside, projUniforms, { face: -1 });
   }
-  attachProjectiveShader(edge, projUniforms, { face: 0 });
-  attachProjectiveShader(cutoutInside, projUniforms, { clipToSilhouette: true, face: 1 });
-  attachProjectiveShader(cutoutEdge, projUniforms, { clipToSilhouette: true, face: 0 });
-  attachProjectiveShader(cutoutOutside, projUniforms, { clipToSilhouette: true, face: -1 });
-  attachProjectiveShader(chadInside, projUniforms, { face: 1 });
-  attachProjectiveShader(chadEdge, projUniforms, { face: 0 });
-  attachProjectiveShader(chadOutside, projUniforms, { face: -1 });
 
   const foldLine = new THREE.LineDashedMaterial({
     color: 0x8f8c86,
@@ -392,8 +411,10 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
       chadOutside.color.set(primary);
     },
     dispose() {
-      tex.map.dispose();
-      tex.bumpMap.dispose();
+      if (ownsTextures) {
+        tex.map.dispose();
+        tex.bumpMap.dispose();
+      }
       inside.dispose();
       for (const m of outsideSlots) m.dispose();
       edge.dispose();
@@ -416,11 +437,12 @@ function buildDualSidedPaperGeometry(
   yawOffset: number,
   flatOriginY = PAPER_THICK,
   thick = PAPER_THICK,
+  curveSegments = 14,
 ): THREE.BufferGeometry {
   const raw = new THREE.ExtrudeGeometry(shape, {
     depth: thick,
     bevelEnabled: false,
-    curveSegments: 14,
+    curveSegments,
   });
   raw.translate(0, 0, -thick);
   raw.rotateX(-Math.PI * 0.5);
@@ -1148,15 +1170,20 @@ export interface OrigamiHouseRig {
   setWindowOpen(mode: WindowOpenMode, ratio?: number): void;
   updateCutoutDrop(elapsedSec: number): boolean;
   setFoldLinesVisible(visible: boolean): void;
-  setPaperRelief(relief01: number): void;
+  setPaperRelief(relief01: number, forceFlatShadow?: boolean): void;
   dispose(): void;
 }
+
+export type RigDetailLevel = 'full' | 'city';
 
 export function buildOrigamiHouseRig(
   net: BuiltHouseNet,
   mats: OrigamiMaterials,
   includeCutout = false,
+  detailLevel: RigDetailLevel = 'full',
 ): OrigamiHouseRig {
+  const isCityDetail = detailLevel === 'city';
+  const curveSegs = isCityDetail ? 5 : 14;
   const { spec, roofRise } = net;
   const root = new THREE.Group();
   root.position.y = PAPER_THICK;
@@ -1322,7 +1349,7 @@ export function buildOrigamiHouseRig(
       }
     }
 
-    const geo = buildDualSidedPaperGeometry(shape, flatOriginX, flatOriginZ, spec.yawOffset);
+    const geo = buildDualSidedPaperGeometry(shape, flatOriginX, flatOriginZ, spec.yawOffset, PAPER_THICK, PAPER_THICK, curveSegs);
     const mesh = new THREE.Mesh(geo, triMatsForSlot(def.colorSlot ?? 0));
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -1780,7 +1807,9 @@ export function buildOrigamiHouseRig(
   const windowDetailGroups: KirigamiDetailRig[][] = [];
   const doorDetailGroups: KirigamiDetailRig[][] = [];
 
-  for (const [panelId, feats] of wallHingedByPanel) {
+  // Skip per-window micro shutter/louver sub-meshes in `'city'` LOD0 mode (punched wall openings +
+  // roof dormers/chimneys remain crisp while cutting draw calls per city house ~6.5×!)
+  if (!isCityDetail) for (const [panelId, feats] of wallHingedByPanel) {
     const def = net.panelMap.get(panelId);
     const pv = panels.get(panelId);
     if (!def || !pv || !def.wallFrame) continue;
@@ -2152,6 +2181,7 @@ export function buildOrigamiHouseRig(
 
   let linesAllowed = true;
   let curRelief = 1;
+  let forceFlatShadows = false;
   let windowOpenMode: WindowOpenMode = 'random';
   let windowOpenRatio = 0.35;
   const lastPanelFold = new Map<FoldablePanelId, number>();
@@ -2160,19 +2190,19 @@ export function buildOrigamiHouseRig(
     let anyRaised = false;
     panels.forEach((pv, pid) => {
       const f = lastPanelFold.get(pid) ?? 0;
-      const raised = f > 0.065;
+      const raised = forceFlatShadows || f > 0.065;
       if (raised) anyRaised = true;
       pv.mesh.castShadow = raised;
     });
     for (const det of details) {
       const f = lastPanelFold.get(det.driverPanel) ?? 0;
-      const raised = f > 0.065;
+      const raised = forceFlatShadows || f > 0.065;
       det.pivot.traverse((obj) => {
         if (obj instanceof THREE.Mesh) obj.castShadow = raised;
       });
     }
     if (baseMesh) {
-      baseMesh.castShadow = anyRaised && curRelief > 0.45;
+      baseMesh.castShadow = forceFlatShadows || (anyRaised && curRelief > 0.45);
     }
   };
 
@@ -2250,9 +2280,10 @@ export function buildOrigamiHouseRig(
   // Controls flat-sheet blank-paper reveal, fold-line fade, & shadow gating:
   // 0 on the exact projection swap frame -> 100% invisible flat sheet, edges, & shadows while keeping
   // true 3D height (`scale.y = 1`) so raising walls emerge organically from white space as they lift!
-  const setPaperRelief = (relief01: number) => {
+  const setPaperRelief = (relief01: number, forceFlatShadow = false) => {
     const r = Math.max(0, Math.min(1, relief01));
     curRelief = r;
+    forceFlatShadows = forceFlatShadow;
     mats.projUniforms.uPaperReveal.value = r;
     mats.foldLine.opacity = 0.14 * r;
     mats.foldLineMountain.opacity = 0.22 * r;
