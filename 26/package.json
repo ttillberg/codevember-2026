@@ -1,0 +1,27 @@
+{
+  "name": "day-26",
+  "private": true,
+  "description": "Recursive camera-projected origami architecture",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^5.1.0"
+  },
+  "codevember": {
+    "day": 26,
+    "word": "Anamorph",
+    "date": "2026-11-26"
+  }
+}
