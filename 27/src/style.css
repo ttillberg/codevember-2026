@@ -1,0 +1,41 @@
+/* a dark day: backdrop #0b0b0d, ink #f4f4f2. A light one: a light backdrop, ink #1c1c1c (docs/DESIGN.md) */
+html, body { margin: 0; height: 100%; background: #060403; overflow: hidden; }
+/* Nothing to select or long-press: a drag on the scene or on its furniture must not start a text selection,
+   a callout or a tap flash. A day with real text to copy turns it back on for that text (user-select: text). */
+html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+canvas { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: grab; }
+canvas:active { cursor: grabbing; }
+
+/* the title plate, top left: the day in Plex capitals, the way home under it */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+  color: #f4f4f2;
+  font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.plate b {
+  display: block; white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em; text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px; font-style: normal;
+  font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+  .plate .head > i.how { font-size: 9px; margin-top: 10px; }
+}
+/* what to do, under the plate: fades once you are in */
+.plate .head > i.how { margin-top: 14px; font-size: 11px; opacity: 0.85; transition: opacity 1.6s; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); }
+.plate .how .touch { display: none; }
+@media (hover: none) { .plate .how .mouse { display: none; } .plate .how .touch { display: inline; } }
+.inside .plate .how { opacity: 0; }
+.plate b, .plate .head > i { text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35); }
+/* ?clean: the scene alone */
+.clean .plate { display: none; }

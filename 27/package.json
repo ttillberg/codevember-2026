@@ -1,0 +1,25 @@
+{
+  "name": "day-27",
+  "private": true,
+  "description": "Into a burrow with a torch: earth, roots and a hand-held beam in a narrow place",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "codevember": {
+    "day": 27,
+    "word": "Burrow",
+    "date": "2026-11-27"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}
