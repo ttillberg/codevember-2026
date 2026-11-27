@@ -240,7 +240,7 @@ body.loading .plate .head > .loading-label {
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  min-width: 64px;
+  min-width: 76px;
   text-align: center;
   padding: 7px 14px;
   cursor: pointer;

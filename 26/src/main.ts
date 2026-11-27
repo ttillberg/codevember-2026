@@ -920,7 +920,8 @@ function syncDebugControls(): void {
   btnAction.classList.toggle('active', playMode === 'manual');
   btnAction.setAttribute('aria-pressed', playMode === 'manual' ? 'true' : 'false');
   for (const btn of modeBtns) {
-    const active = btn.dataset.mode === playMode;
+    const m = btn.dataset.mode;
+    const active = m === 'reverse' ? debugReverseFoldEnabled : m === playMode;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
@@ -1298,8 +1299,9 @@ function computeIdealFraming(net: BuiltHouseNet): {
   const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
   const rawAspect = camera.aspect > 0.1 ? camera.aspect : 1.6;
 
-  // Smoothly transition from desktop gallery framing (`aspect >= 1.05`) to full width-matched portrait
-  // framing (`aspect <= 0.72`) so vertical/mobile screens zoom in ~2x to match viewport width minus padding!
+  // Smoothly transition from desktop gallery framing (`aspect >= 1.05`) to a centered safe square
+  // on portrait/mobile (`aspect <= 0.72`) so compact & tall houses stay well-proportioned with
+  // generous vertical margins clear of the title plate and bottom toolbar!
   const portraitT = clamp01((1.05 - rawAspect) / 0.33);
   const portraitEase = portraitT * portraitT * (3 - 2 * portraitT);
 
@@ -1308,19 +1310,29 @@ function computeIdealFraming(net: BuiltHouseNet): {
       ? Math.max(0.36, rawAspect)
       : Math.min(rawAspect, 1.38);
   const tanH = tanV * effAspect;
+  const safeSquareTan = Math.min(tanV, tanH);
 
-  const baseWidthFill = net.spec.topology === 'village' ? 0.42 : 0.33;
-  const portraitWidthFill = net.spec.topology === 'village' ? 0.80 : 0.74;
+  const isVillage = net.spec.topology === 'village';
+  const baseWidthFill = isVillage ? 0.42 : 0.33;
+  const portraitWidthFill = isVillage ? 0.76 : 0.66;
   const widthFill = baseWidthFill + (portraitWidthFill - baseWidthFill) * portraitEase;
-  const heightFill = 0.34 + (0.54 - 0.34) * portraitEase;
-  const minFloorDist = defaultDist + (16 - defaultDist) * portraitEase;
+  const heightFill = 0.34 + (0.44 - 0.34) * portraitEase;
+  const minFloorDist = defaultDist + (28 - defaultDist) * portraitEase;
 
   const distForHeight = hWorld / (heightFill * 2 * tanV);
   const distForWidth = rWorld / (widthFill * tanH);
-  const dist = Math.max(minFloorDist, distForHeight, distForWidth);
+  // Safe-square vertical constraint on portrait: keep full projected height inside a centered square
+  // sized from viewport width (`safeSquareTan = tanH`), preserving generous top/bottom margins!
+  const portraitSquareFill = isVillage ? 0.76 : 0.70;
+  const projectedHeightSpan = hWorld * 0.95 + rWorld * 0.50;
+  const distForSafeSquare =
+    portraitEase > 0.001
+      ? (projectedHeightSpan / (2 * portraitSquareFill * safeSquareTan)) * portraitEase
+      : 0;
+  const dist = Math.max(minFloorDist, distForHeight, distForWidth, distForSafeSquare);
 
-  // Initial flat-sheet distance: keep `defaultDist` on desktop, match flat net width minus ~12% padding on portrait!
-  const portraitFlatDist = Math.max(dist, (sheetHalfW * 0.90) / (0.86 * tanH));
+  // Initial flat-sheet distance: keep `defaultDist` on desktop, fit flat net cleanly inside the portrait safe square!
+  const portraitFlatDist = Math.max(dist, (sheetHalfW * 0.90) / (0.76 * tanH));
   const flatDist = defaultDist + (portraitFlatDist - defaultDist) * portraitEase;
 
   const lookY = Math.max(BASE_LOOK_Y, (hWorld - 0.6) * 0.30);
@@ -1858,10 +1870,11 @@ function frameIntroHintPose(): void {
   const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
   const aspect = camera.aspect > 0.1 ? camera.aspect : 1.6;
   const tanH = tanV * aspect;
+  const horizFill = aspect < 1 ? 0.68 : 0.72;
   const fitDist = Math.max(
     computeIdealFraming(rig.net).flatDist * 0.85,
     sphereR / (0.68 * tanV),
-    sphereR / (0.72 * tanH),
+    sphereR / (horizFill * tanH),
   );
   // Solve swapDist so `computeAutoZoom(fp)` lands right on `fitDist` at the intro pose,
   // and glides smoothly into `(0, finalLookY, 0, finalDist)` as the paper folds to 1.0!
@@ -3128,16 +3141,17 @@ function setReverseMode(enabled: boolean, persist = true): void {
 
 function setPlayMode(
   nextMode: PlayMode,
-  opts: { persist?: boolean; startImmediately?: boolean } = {},
+  opts: { persist?: boolean; startImmediately?: boolean; keepReverse?: boolean } = {},
 ): void {
   revealIntroMenu();
-  const { persist = true, startImmediately = true } = opts;
-  const changed = playMode !== nextMode;
+  const { persist = true, startImmediately = true, keepReverse = false } = opts;
+  const wantReverse =
+    nextMode === 'reverse' || (nextMode === 'manual' && keepReverse && debugReverseFoldEnabled);
+  const changed = playMode !== nextMode || debugReverseFoldEnabled !== wantReverse;
   playMode = nextMode;
   autoFoldEnabled = nextMode !== 'manual';
   if (autoFoldEnabled) activeFoldIsManual = false;
 
-  const wantReverse = nextMode === 'reverse';
   if (debugReverseFoldEnabled !== wantReverse) {
     setReverseMode(wantReverse, false);
   } else if (changed) {
@@ -3155,6 +3169,22 @@ function setPlayMode(
     } else if (!allPanelsFoldedTarget() || allPanelsSettledFolded()) {
       triggerStepAction(true);
     }
+  }
+}
+
+function togglePlayModeButton(mode: 'slow' | 'fast' | 'reverse'): void {
+  if (mode === 'reverse') {
+    if (debugReverseFoldEnabled) {
+      setPlayMode('manual', { startImmediately: false, keepReverse: false });
+    } else {
+      setPlayMode('reverse');
+    }
+    return;
+  }
+  if (playMode === mode) {
+    setPlayMode('manual', { startImmediately: false });
+  } else {
+    setPlayMode(mode);
   }
 }
 
@@ -3196,6 +3226,13 @@ function activateManualFold(): void {
     return;
   }
   revealIntroMenu();
+  if (debugReverseFoldEnabled) {
+    if (playMode !== 'manual') {
+      setPlayMode('manual', { persist: true, startImmediately: false, keepReverse: true });
+    }
+    triggerStepAction(false);
+    return;
+  }
   if (playMode !== 'manual') {
     setPlayMode('manual', { persist: true, startImmediately: false });
   }
@@ -3353,15 +3390,16 @@ function syncUI(): void {
         ? `${seedTag}${houseName} · `
         : '';
 
-  btnAction.textContent = 'Fold';
   if (debugReverseFoldEnabled) {
+    btnAction.textContent = 'Unfold';
     if (reverseUnfold) {
       statusEl.textContent = `${prefix}Unfolding`;
     } else {
-      statusEl.textContent = `${prefix}Reverse`;
+      statusEl.textContent = `${prefix}Click anywhere to unfold`;
     }
     return;
   }
+  btnAction.textContent = 'Fold';
   if (!allTargetFolded) {
     statusEl.textContent = `${prefix}Click anywhere to fold`;
   } else if (!settledFolded) {
@@ -3527,9 +3565,9 @@ btnReset.addEventListener('click', (e) => {
 for (const btn of modeBtns) {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const mode = btn.dataset.mode as PlayMode | undefined;
-    if (mode && VALID_PLAY_MODES.includes(mode)) {
-      setPlayMode(mode);
+    const mode = btn.dataset.mode;
+    if (mode === 'slow' || mode === 'fast' || mode === 'reverse') {
+      togglePlayModeButton(mode);
     }
   });
 }
@@ -4592,13 +4630,13 @@ window.addEventListener('keydown', (e) => {
     else setPlayMode('manual', { startImmediately: false });
   } else if (e.key === '2') {
     if (introAwaiting) startFromIntro('slow');
-    else setPlayMode('slow');
+    else togglePlayModeButton('slow');
   } else if (e.key === '3') {
     if (introAwaiting) startFromIntro('fast');
-    else setPlayMode('fast');
+    else togglePlayModeButton('fast');
   } else if (e.key === '4') {
     if (introAwaiting) startFromIntro('reverse');
-    else setPlayMode('reverse');
+    else togglePlayModeButton('reverse');
   } else if (e.key === 'f' || e.key === 'F') {
     if (introAwaiting) startFromIntro('slow');
     else toggleFoldAll();
