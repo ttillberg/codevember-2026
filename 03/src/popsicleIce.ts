@@ -37,6 +37,7 @@ export interface IceUniforms {
   uIsDual: { value: number };
   uKiwiA: { value: number };
   uKiwiB: { value: number };
+  uTajinCoat: { value: number };
   uSigmaA: { value: THREE.Vector3 };
   uCoreA: { value: THREE.Vector3 };
   uMidA: { value: THREE.Vector3 };
@@ -77,7 +78,11 @@ function createCameraDepthMaterial(tag: number, side: THREE.Side): THREE.ShaderM
     vertexShader: /* glsl */ `
       varying float vCamDepth;
       void main() {
-        vec4 mvPos = viewMatrix * modelMatrix * vec4(position, 1.0);
+        vec4 localPos = vec4(position, 1.0);
+        #ifdef USE_INSTANCING
+          localPos = instanceMatrix * localPos;
+        #endif
+        vec4 mvPos = viewMatrix * modelMatrix * localPos;
         // Signed depth relative to world origin (centered at 0 -> ~32-64x finer fp16 precision, zero contour banding!)
         vCamDepth = viewMatrix[3].z - mvPos.z;
         gl_Position = projectionMatrix * mvPos;
@@ -123,6 +128,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
     uIsDual: { value: pal.isDual ? 1.0 : 0.0 },
     uKiwiA: { value: pal.kiwiMaskA },
     uKiwiB: { value: pal.kiwiMaskB },
+    uTajinCoat: { value: initialRecipe.toppings.includes('tajin') ? 1.0 : 0.0 },
     uSigmaA: { value: new THREE.Vector3(...pal.sigmaA) },
     uCoreA: { value: new THREE.Vector3(...pal.coreA) },
     uMidA: { value: new THREE.Vector3(...pal.midA) },
@@ -190,6 +196,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
       uniform float uIsDual;
       uniform float uKiwiA;
       uniform float uKiwiB;
+      uniform float uTajinCoat;
       uniform vec3 uSigmaA;
       uniform vec3 uCoreA;
       uniform vec3 uMidA;
@@ -1296,6 +1303,30 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           color += vec3(1.75, 1.70, 1.66) * (frostTuft * rimeMask * 0.62 + snowFlakeSpeck * 0.85 + frostSparkle * 0.58) * milkRimeCalm;
         }
 
+        // === SUPERFICIAL TAJÍN CHILI-PAPRIKA POWDER DUSTING TINT (washes away in organic vertical streaks as it melts!) ===
+        if (uTajinCoat > 0.5) {
+          float tajinUpper = smoothstep(0.05, 0.44, vUv.y);
+          vec3 tCoord = vWorldPos * vec3(2.8, 2.0, 2.8) + vec3(uSeedOffset * 0.7, -uSeedOffset * 0.35, 1.4);
+          float tClump = texture(uNoise3D, tCoord * INV_P8).r;
+          float tFine = texture(uNoise3D, (vWorldPos * 38.0 + vec3(uSeedOffset * 1.3, 4.1, -2.3)) * INV_P8).a;
+          float tMicro = texture(uNoise3D, (vWorldPos * 88.0 + vec3(-2.1, uSeedOffset * 0.9, 5.7)) * INV_P8).b;
+          // Coherent vertical melt streaks + wet liquid film wash the chili-powder dusting away organically!
+          float tStreak = texture(uNoise3D, (vWorldPos * vec3(5.6, 1.25, 5.6) + vec3(uSeedOffset * 1.1, 0.0, 2.2)) * INV_P8).g;
+          float meltWash = 1.0 - smoothstep(0.08 + tStreak * 0.24, 0.36 + tStreak * 0.36, uMelt);
+          float filmWash = 1.0 - smoothstep(0.06, 0.42, filmH) * 0.70;
+          float powderMask = tajinUpper * smoothstep(0.16, 0.70, tClump * 0.70 + tFine * 0.30) * meltWash * filmWash;
+
+          // Rich powdery guajillo-paprika chili dust with fine granular contrast & tiny warm salt-lime sparkle
+          vec3 chiliDust = mix(
+            vec3(0.72, 0.19, 0.018),
+            vec3(0.95, 0.40, 0.045),
+            clamp(tFine * 0.52 + tMicro * 0.48, 0.0, 1.0)
+          );
+          float dustGrain = 0.76 + 0.46 * smoothstep(0.24, 0.84, tMicro);
+          float coatAlpha = clamp(powderMask * (0.36 + 0.38 * smoothstep(0.28, 0.82, tFine * 0.5 + tMicro * 0.5)), 0.0, 0.68);
+          color = mix(color, chiliDust * dustGrain, coatAlpha);
+        }
+
         // Tag postIceRT.a so Pass 6b can apply a continuous capillary surface-tension blur & contact shadow
         // strictly where uncovered berries/strawberries physically emerge from melting ice (zero effect on
         // mid-air falling fruits or studio silhouettes!):
@@ -1495,6 +1526,7 @@ export function createPopsicleIceSystem(
     uniforms.uIsDual.value = pal.isDual ? 1.0 : 0.0;
     uniforms.uKiwiA.value = pal.kiwiMaskA;
     uniforms.uKiwiB.value = pal.kiwiMaskB;
+    uniforms.uTajinCoat.value = nextRecipe.toppings.includes('tajin') ? 1.0 : 0.0;
     uniforms.uSigmaA.value.set(...pal.sigmaA);
     uniforms.uCoreA.value.set(...pal.coreA);
     uniforms.uMidA.value.set(...pal.midA);

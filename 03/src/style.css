@@ -16,7 +16,6 @@ html, body {
   overflow: hidden;
   color: var(--ink);
   font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  /* Nothing to select or long-press on the canvas or furniture */
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -74,7 +73,6 @@ canvas {
   font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
   letter-spacing: 0.06em;
 }
-/* loading: a quiet line under the title while the popsicle is a wireframe drawing, breathing on the compositor */
 .plate .head > .loading-label {
   display: none;
   opacity: 0.65;
@@ -94,200 +92,7 @@ body.loading .plate .head > .loading-label {
   body.loading .plate .head > .loading-label { animation: none; }
 }
 
-/* Pure organic floating Customize constellation: zero headers, zero boxes — 3D ice cubes & toppings floating in mid-air */
-.customize-studio {
-  position: fixed;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-}
-
-.customize-studio[hidden] {
-  display: none;
-}
-
-.cust-wing {
-  position: fixed;
-  top: 52%;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  pointer-events: none;
-  animation: cust-wing-in 340ms cubic-bezier(0.22, 1.08, 0.36, 1) both;
-}
-
-.cust-wing-left {
-  left: max(22px, 3.6vw);
-  width: 318px;
-}
-
-.cust-wing-right {
-  right: max(26px, 4.5vw);
-  width: 264px;
-  animation-delay: 55ms;
-}
-
-.cust-mobile-tabs {
-  display: none;
-}
-
-@keyframes cust-wing-in {
-  from {
-    opacity: 0;
-    transform: translateY(calc(-50% + 14px)) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(-50%) scale(1);
-  }
-}
-
-@keyframes float-air {
-  0%, 100% { transform: translateY(0px) rotate(var(--rot, 0deg)); }
-  50% { transform: translateY(-6px) rotate(calc(var(--rot, 0deg) + 2deg)); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .float-obj .obj-stage { animation: none !important; }
-}
-
-/* Organized organic floating coordinate fields */
-.base-float-field {
-  position: relative;
-  width: 318px;
-  height: 94px;
-  pointer-events: none;
-}
-
-.taste-float-field {
-  position: relative;
-  width: 318px;
-  height: 256px;
-  pointer-events: none;
-}
-
-.topping-float-field {
-  position: relative;
-  width: 264px;
-  height: 350px;
-  pointer-events: none;
-}
-
-/* Shared floating 3D object button */
-.float-obj {
-  appearance: none;
-  pointer-events: auto;
-  position: absolute;
-  left: var(--fx, 0px);
-  top: var(--fy, 0px);
-  width: var(--size, 74px);
-  height: var(--size, 74px);
-  border: none;
-  background: transparent;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  overflow: visible;
-}
-
-.float-obj .obj-stage {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: float-air var(--float-dur, 5.4s) ease-in-out var(--float-delay, 0s) infinite;
-}
-
-.float-obj img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  pointer-events: none;
-  filter: drop-shadow(0 14px 16px rgba(28, 18, 14, 0.20));
-  transition: transform 240ms cubic-bezier(0.22, 1.28, 0.36, 1), filter 200ms ease;
-}
-
-.float-obj:hover {
-  z-index: 4;
-}
-
-.float-obj:hover img {
-  transform: translateY(-4px) scale(1.14);
-  filter: drop-shadow(0 20px 24px rgba(28, 18, 14, 0.28));
-}
-
-.float-obj:active img {
-  transform: scale(0.93);
-}
-
-.float-obj[aria-pressed="true"] img {
-  transform: scale(1.07);
-  filter: drop-shadow(0 16px 20px rgba(28, 18, 14, 0.25));
-}
-
-/* Whisper-quiet label that fades in ONLY on hover/focus (zero visual clutter at rest!) */
-.float-obj::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 4px);
-  transform: translateX(-50%) translateY(-3px);
-  font: 600 10px/1 Inter, system-ui, sans-serif;
-  letter-spacing: 0.04em;
-  color: rgba(28, 28, 28, 0.78);
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 160ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.float-obj:hover::after,
-.float-obj:focus-visible::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-/* Hand-drawn organic fine-liner ink pen circle around selected floating items */
-.pen-ring {
-  position: absolute;
-  z-index: 2;
-  inset: -10px -12px;
-  width: calc(100% + 24px);
-  height: calc(100% + 20px);
-  pointer-events: none;
-  overflow: visible;
-}
-
-.pen-ring path {
-  stroke: rgba(28, 28, 28, 0.80);
-  stroke-width: 1.85;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  opacity: 0;
-  transition:
-    stroke-dashoffset 400ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 200ms ease;
-}
-
-.float-obj:hover:not([aria-pressed="true"]) .pen-ring path {
-  stroke-dashoffset: 0.14;
-  opacity: 0.24;
-}
-
-.float-obj[aria-pressed="true"] .pen-ring path {
-  stroke-dashoffset: 0;
-  opacity: 1;
-}
-
-/* Bottom-center prerendered popsicle preset switcher (auto-hides to just the selected popsicle sticking up!) */
+/* === UNIFIED BOTTOM DOCK: PRESETS | Ingredient · Tastes · Toppings === */
 .preset-dock {
   --peek-shift: 0px;
   position: fixed;
@@ -299,10 +104,10 @@ body.loading .plate .head > .loading-label {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 7px;
+  padding: 5px 8px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.48);
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.24);
   backdrop-filter: blur(20px) saturate(145%);
   -webkit-backdrop-filter: blur(20px) saturate(145%);
   box-shadow:
@@ -319,7 +124,7 @@ body.loading .plate .head > .loading-label {
     box-shadow 260ms ease;
 }
 
-/* Invisible hover apron covers all 9 peeking popsicles & prevents flicker while sliding up */
+/* Invisible hover apron covers peeking popsicles & prevents flicker while sliding up */
 .preset-dock::before {
   content: '';
   position: absolute;
@@ -340,7 +145,7 @@ body.loading .preset-dock {
   transform: translateX(-50%) translateY(14px) scale(0.97);
 }
 
-/* Auto-hidden state: frosted panel tucks down to a quiet bottom lip with ALL 9 popsicles sticking cleanly up */
+/* Auto-hidden state: frosted panel tucks down to a quiet bottom lip with items peeking cleanly up */
 .preset-dock.is-peeking {
   transform: translateX(-50%) translateY(56px) scale(0.96);
   background: rgba(255, 255, 255, 0.20);
@@ -350,13 +155,15 @@ body.loading .preset-dock {
     inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
-.preset-dock.is-peeking .preset-btn {
+.preset-dock.is-peeking .preset-btn,
+.preset-dock.is-peeking .recipe-slot-btn {
   pointer-events: auto;
 }
 
 .preset-dock.is-peeking .preset-btn img,
-.preset-dock.is-peeking .preset-btn[aria-pressed="true"] img {
-  transform: translateY(-22px) scale(1.08);
+.preset-dock.is-peeking .preset-btn[aria-pressed="true"] img,
+.preset-dock.is-peeking .recipe-slot-btn .slot-visual {
+  transform: translateY(-22px) scale(1.06);
   filter: drop-shadow(0 5px 9px rgba(28, 16, 12, 0.20));
 }
 
@@ -364,14 +171,15 @@ body.loading .preset-dock {
   opacity: 0.35;
 }
 
-.preset-dock.is-peeking .preset-btn::after {
+.preset-dock.is-peeking .preset-btn::after,
+.preset-dock.is-peeking .recipe-slot-btn::after {
   opacity: 0 !important;
 }
 
 .preset-sep {
   width: 1px;
   height: 28px;
-  margin: 0 4px;
+  margin: 0 5px;
   flex: 0 0 1px;
   border-radius: 999px;
   background: linear-gradient(
@@ -385,44 +193,11 @@ body.loading .preset-dock {
   transition: opacity 220ms ease;
 }
 
-.preset-customize-btn img {
-  width: 34px;
-  height: 34px;
-  transform-origin: center 74%;
-}
-
-.preset-customize-btn[aria-expanded="true"] img {
-  transform: translateY(0) scale(1.16);
-  filter: drop-shadow(0 5px 9px rgba(28, 16, 12, 0.24));
-}
-
-.preset-customize-btn[aria-expanded="true"]::before,
-.preset-customize-btn[data-custom-active="true"]::before {
-  opacity: 1;
-  transform: translateX(-50%) scale(1);
-}
-
-.preset-dock.is-peeking .preset-customize-btn[aria-expanded="true"]::before,
-.preset-dock.is-peeking .preset-customize-btn[data-custom-active="true"]::before {
-  opacity: 0;
-  transform: translateX(-50%) scale(0);
-}
-
+/* Keep dock completely steady when a popover is open so toggling items never shifts under the pointer! */
 @media (hover: hover) {
-  .preset-dock:not(.is-peeking):hover .preset-customize-btn[aria-expanded="true"] img {
-    transform: translateY(0) scale(1);
-  }
-
-  .preset-dock:not(.is-peeking):hover .preset-customize-btn[aria-expanded="true"]:hover img {
-    transform: translateY(-7px) scale(1.36);
-    filter: drop-shadow(0 10px 15px rgba(28, 16, 12, 0.28));
-  }
-}
-
-@media (hover: hover) {
-  .preset-dock:not(.is-peeking):hover {
-    transform: translateX(-50%) translateY(0) scale(1.12);
-    background: rgba(255, 255, 255, 0.28);
+  .preset-dock:not(.is-peeking):not(.has-popover):hover {
+    transform: translateX(-50%) translateY(0) scale(1.08);
+    background: rgba(255, 255, 255, 0.30);
     box-shadow:
       0 14px 36px rgba(28, 20, 18, 0.11),
       inset 0 1px 0 rgba(255, 255, 255, 0.78),
@@ -430,11 +205,19 @@ body.loading .preset-dock {
   }
 }
 
+.preset-dock.has-popover {
+  background: rgba(255, 255, 255, 0.32);
+  box-shadow:
+    0 12px 34px rgba(28, 20, 18, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 0 0 1px rgba(28, 28, 28, 0.07);
+}
+
 .preset-btn {
   appearance: none;
   position: relative;
   z-index: 1;
-  width: 40px;
+  width: 38px;
   height: 48px;
   padding: 3px 2px 2px;
   border-radius: 12px;
@@ -485,8 +268,9 @@ body.loading .preset-dock {
   box-shadow: none;
 }
 
-/* Subtle dot indicator right underneath the selected popsicle (macOS dock style — no background box!) */
-.preset-btn::before {
+/* Subtle dot indicator right underneath the selected preset or open recipe slot */
+.preset-btn::before,
+.recipe-slot-btn::before {
   content: '';
   position: absolute;
   left: 50%;
@@ -501,24 +285,24 @@ body.loading .preset-dock {
   transition: opacity 180ms ease, transform 220ms cubic-bezier(0.22, 1.3, 0.36, 1);
 }
 
-.preset-btn[aria-pressed="true"]::before {
+.preset-btn[aria-pressed="true"]::before,
+.recipe-slot-btn[aria-expanded="true"]::before {
   opacity: 1;
   transform: translateX(-50%) scale(1);
 }
 
-.preset-dock.is-peeking .preset-btn[aria-pressed="true"]::before {
+.preset-dock.is-peeking .preset-btn[aria-pressed="true"]::before,
+.preset-dock.is-peeking .recipe-slot-btn[aria-expanded="true"]::before {
   opacity: 0;
   transform: translateX(-50%) scale(0);
 }
 
-/* Selected popsicle stays level with the row (slightly fuller in place, no upward lift, dot below!) */
 .preset-btn[aria-pressed="true"] img {
-  transform: translateY(0) scale(1.14);
+  transform: translateY(0) scale(1.16);
   filter: drop-shadow(0 4px 8px rgba(28, 16, 12, 0.22));
 }
 
 @media (hover: hover) {
-  /* Reset selected popsicle back to normal size while hovering the panel so only the hovered one pops up big! */
   .preset-dock:not(.is-peeking):hover .preset-btn[aria-pressed="true"] img {
     transform: translateY(0) scale(1);
     filter: drop-shadow(0 2px 4px rgba(28, 16, 12, 0.18));
@@ -534,18 +318,26 @@ body.loading .preset-dock {
   }
 }
 
-.preset-btn::after {
+.preset-btn::after,
+.recipe-slot-btn::after {
   content: attr(data-label);
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 26px);
+  bottom: calc(100% + 20px);
   transform: translateX(-50%) translateY(4px);
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(28, 28, 28, 0.88);
-  color: #f8f4f1;
-  font: 600 9.5px/1 Inter, system-ui, sans-serif;
-  letter-spacing: 0.03em;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 252, 249, 0.72);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  box-shadow:
+    0 8px 22px rgba(28, 18, 14, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 0 0 1px rgba(28, 28, 28, 0.05);
+  color: rgba(28, 28, 28, 0.88);
+  font: 500 11px/1.1 Inter, system-ui, sans-serif;
+  letter-spacing: 0.015em;
   white-space: nowrap;
   pointer-events: none;
   opacity: 0;
@@ -553,160 +345,460 @@ body.loading .preset-dock {
 }
 
 .preset-btn:hover::after,
-.preset-btn:focus-visible::after {
+.preset-btn:focus-visible::after,
+.recipe-slot-btn:not([aria-expanded="true"]):hover::after,
+.recipe-slot-btn:not([aria-expanded="true"]):focus-visible::after {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
 
-.preset-customize-btn[aria-expanded="true"]::after {
-  opacity: 0;
+.preset-dock.has-popover .preset-btn::after,
+.preset-dock.has-popover .recipe-slot-btn::after {
+  opacity: 0 !important;
 }
 
+/* === RIGHT HALF OF BOTTOM BAR: 3 LIVE RECIPE SLOTS (Ingredient · Tastes · Toppings) === */
+.recipe-slots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.recipe-slot-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.recipe-slot-btn {
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  width: 46px;
+  height: 48px;
+  padding: 3px;
+  border-radius: 13px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    transform 220ms cubic-bezier(0.22, 1.12, 0.36, 1),
+    box-shadow 180ms ease;
+}
+
+.recipe-slot-btn:hover {
+  z-index: 3;
+}
+
+.recipe-slot-btn[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.42);
+  border-color: rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.recipe-slot-btn:active {
+  transform: scale(0.94);
+}
+
+.slot-visual {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  transform-origin: center 75%;
+  transition: transform 240ms cubic-bezier(0.22, 1.24, 0.36, 1), filter 180ms ease;
+}
+
+.recipe-slot-btn:hover .slot-visual {
+  transform: translateY(-5px) scale(1.18);
+}
+
+.recipe-slot-btn[aria-expanded="true"] .slot-visual {
+  transform: translateY(-1px) scale(1.08);
+}
+
+/* Empty slot indicator (e.g. pure milk with 0 tastes, or 0 toppings) */
+.slot-empty-ring {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1.5px dashed rgba(28, 28, 28, 0.28);
+  background: rgba(255, 252, 248, 0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 13px/1 Inter, system-ui, sans-serif;
+  color: rgba(28, 28, 28, 0.44);
+}
+
+.slot-empty-milk {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 34% 30%, #fffaf2 0%, #f1e3ce 65%, #d9c5a8 100%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 2px 6px rgba(28, 16, 12, 0.16), inset 0 1px 2px rgba(255, 255, 255, 0.85);
+}
+
+/* Multi-item layouts inside bottom-bar slots: clean, generous, overlapping studio compositions! */
+.slot-visual img.slot-thumb {
+  position: absolute;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 5px rgba(28, 16, 12, 0.22));
+  transition: transform 220ms cubic-bezier(0.22, 1.2, 0.36, 1), opacity 180ms ease;
+}
+
+/* 1 item: bold centered hero */
+.slot-visual[data-count="1"] img.slot-thumb {
+  width: 34px;
+  height: 34px;
+  left: 3px;
+  top: 3px;
+}
+
+.slot-visual.slot-tastes[data-count="1"] img.slot-thumb {
+  width: 32px;
+  height: 32px;
+  left: 4px;
+  top: 4px;
+}
+
+/* 2 items: artful overlapping diagonal pair */
+.slot-visual[data-count="2"] img.slot-thumb {
+  width: 25px;
+  height: 25px;
+}
+.slot-visual[data-count="2"] img.slot-thumb:nth-child(1) {
+  left: 2px;
+  top: 2px;
+  z-index: 1;
+}
+.slot-visual[data-count="2"] img.slot-thumb:nth-child(2) {
+  right: 2px;
+  bottom: 2px;
+  z-index: 2;
+  filter: drop-shadow(0 3px 6px rgba(28, 16, 12, 0.28));
+}
+
+/* 3 items: tight triangular trio cluster */
+.slot-visual[data-count="3"] img.slot-thumb {
+  width: 22px;
+  height: 22px;
+}
+.slot-visual[data-count="3"] img.slot-thumb:nth-child(1) {
+  left: 9px;
+  top: 0px;
+  z-index: 1;
+}
+.slot-visual[data-count="3"] img.slot-thumb:nth-child(2) {
+  left: 1px;
+  bottom: 1px;
+  z-index: 2;
+}
+.slot-visual[data-count="3"] img.slot-thumb:nth-child(3) {
+  right: 1px;
+  bottom: 1px;
+  z-index: 3;
+}
+
+/* 4+ items: tidy 2×2 mini cluster + subtle +N counter badge when 5+ */
+.slot-visual[data-count="4"] img.slot-thumb {
+  width: 20px;
+  height: 20px;
+}
+.slot-visual[data-count="4"] img.slot-thumb:nth-child(1) { left: 1px; top: 1px; z-index: 1; }
+.slot-visual[data-count="4"] img.slot-thumb:nth-child(2) { right: 1px; top: 1px; z-index: 2; }
+.slot-visual[data-count="4"] img.slot-thumb:nth-child(3) { left: 1px; bottom: 1px; z-index: 3; }
+.slot-visual[data-count="4"] img.slot-thumb:nth-child(4) { right: 1px; bottom: 1px; z-index: 4; }
+
+.slot-more-badge {
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  z-index: 6;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3.5px;
+  border-radius: 999px;
+  background: rgba(28, 28, 28, 0.86);
+  color: #faf6f2;
+  font: 700 8.5px/15px Inter, system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 2px 5px rgba(28, 16, 12, 0.25);
+  pointer-events: none;
+}
+
+/* === FRAMELESS STACKED 3D OBJECT POPOVERS (NO BACKGROUND BOX!) === */
+.dock-popover {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  z-index: 5;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.dock-popover[hidden] {
+  display: none;
+}
+
+.pop-grid {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+/* Ingredient: 2 big stacked 3D cubes */
+.pop-grid-base {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+/* Tastes: 2 crisp vertical columns of 5 big textured circles */
+.pop-grid-taste {
+  grid-template-columns: repeat(2, clamp(52px, 7.2vh, 66px));
+  gap: 6px 10px;
+}
+
+/* Toppings: tall playful vertical stack of big berries & toppings! */
+.pop-grid-toppings {
+  grid-template-columns: 1fr;
+  gap: 0px;
+}
+
+/* Individual big floating 3D object in the stack */
+.pop-item {
+  appearance: none;
+  position: relative;
+  width: clamp(54px, 7.4vh, 68px);
+  height: clamp(54px, 7.4vh, 68px);
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(0, var(--rise-from, 90px), 0) scale(0.28) rotate(var(--rise-rot, 0deg));
+  will-change: transform, opacity;
+}
+
+.pop-grid-base .pop-item {
+  width: clamp(66px, 9vh, 84px);
+  height: clamp(66px, 9vh, 84px);
+}
+
+.pop-grid-toppings .pop-item {
+  width: clamp(62px, 8.6vh, 84px);
+  height: clamp(58px, 8vh, 76px);
+  margin-top: -6px;
+}
+
+.pop-grid-toppings .pop-item:first-child {
+  margin-top: 0;
+}
+
+/* Opening: spring straight up from the bottom-bar slot into its playful stacked position! */
+.dock-popover.is-open .pop-item {
+  pointer-events: auto;
+  animation: stack-pop-in 440ms cubic-bezier(0.2, 1.34, 0.36, 1) var(--stagger-in, 0ms) both;
+}
+
+/* Closing: release & tumble straight down under gravity! */
+.dock-popover.is-closing .pop-item {
+  pointer-events: none;
+  animation: stack-fall-out 420ms cubic-bezier(0.42, 0.0, 0.88, 0.36) var(--stagger-out, 0ms) both;
+}
+
+@keyframes stack-pop-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, var(--rise-from, 90px), 0) scale(0.26) rotate(var(--rise-rot, 0deg));
+  }
+  58% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(var(--stack-x, 0px), 0, 0) scale(1) rotate(var(--stack-rot, 0deg));
+  }
+}
+
+@keyframes stack-fall-out {
+  0% {
+    opacity: 1;
+    transform: translate3d(var(--stack-x, 0px), 0, 0) scale(1) rotate(var(--stack-rot, 0deg));
+  }
+  78% {
+    opacity: 0.96;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(
+        calc(var(--stack-x, 0px) + var(--fall-drift, 0px)),
+        var(--fall-dist, 260px),
+        0
+      )
+      scale(0.72)
+      rotate(calc(var(--stack-rot, 0deg) + var(--fall-rot, 24deg)));
+  }
+}
+
+/* Inner wrapper handles gentle in-place ambient levitation without fighting outer enter/fall transforms */
+.pop-item-float {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.dock-popover.is-open .pop-item-float {
+  animation: stack-float var(--float-dur, 3.4s) ease-in-out var(--float-delay, 0s) infinite alternate;
+}
+
+.dock-popover.is-open .pop-item:hover .pop-item-float {
+  animation-play-state: paused;
+}
+
+@keyframes stack-float {
+  from { transform: translateY(2.5px); }
+  to   { transform: translateY(-2.5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-popover.is-open .pop-item-float { animation: none; }
+}
+
+.pop-item img {
+  width: 96%;
+  height: 96%;
+  object-fit: contain;
+  pointer-events: none;
+  transform: scale(0.86);
+  opacity: 0.78;
+  filter: saturate(0.84) drop-shadow(0 8px 12px rgba(28, 16, 12, 0.18));
+  transition:
+    transform 240ms cubic-bezier(0.22, 1.3, 0.36, 1),
+    opacity 180ms ease,
+    filter 200ms ease;
+}
+
+.pop-item:hover {
+  z-index: 4;
+}
+
+.pop-item:hover img {
+  transform: translateY(-3px) scale(1.06);
+  opacity: 0.98;
+  filter: saturate(1.02) drop-shadow(0 14px 20px rgba(28, 16, 12, 0.26));
+}
+
+.pop-item:active img {
+  transform: scale(0.82);
+}
+
+/* Selected items stand out purely through generous scale, full saturation & lifted studio shadow (no circle!) */
+.pop-item[aria-pressed="true"] {
+  z-index: 3;
+}
+
+.pop-item[aria-pressed="true"] img {
+  transform: scale(1.22);
+  opacity: 1;
+  filter: saturate(1.06) drop-shadow(0 16px 24px rgba(28, 16, 12, 0.34));
+}
+
+.pop-item[aria-pressed="true"]:hover img {
+  transform: translateY(-3px) scale(1.29);
+  filter: saturate(1.08) drop-shadow(0 20px 28px rgba(28, 16, 12, 0.38));
+}
+
+/* Frosted-glass full-pill hover label to the SIDE of stacked items (counter-rotated level!) */
+.pop-item::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: calc(100% + 14px);
+  top: 50%;
+  transform: translateY(-50%) translateX(5px) rotate(calc(var(--stack-rot, 0deg) * -1));
+  padding: 6px 13px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 252, 249, 0.72);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  box-shadow:
+    0 8px 22px rgba(28, 18, 14, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 0 0 1px rgba(28, 28, 28, 0.05);
+  color: rgba(28, 28, 28, 0.88);
+  font: 500 11px/1.1 Inter, system-ui, sans-serif;
+  letter-spacing: 0.015em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 8;
+  transition: opacity 150ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* For the right column of the 2-col Tastes stack, float the label to the right so it never overlaps column 1! */
+.pop-grid-taste .pop-item[data-col="1"]::after {
+  right: auto;
+  left: calc(100% + 14px);
+  transform: translateY(-50%) translateX(-5px) rotate(calc(var(--stack-rot, 0deg) * -1));
+}
+
+.dock-popover.is-open .pop-item:hover::after,
+.dock-popover.is-open .pop-item:focus-visible::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0) rotate(calc(var(--stack-rot, 0deg) * -1));
+}
+
+/* === RESPONSIVE MOBILE & TABLET === */
 @media (max-width: 860px) {
-  .customize-studio {
-    z-index: 5;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    align-items: center;
-    padding: 0 0 max(74px, calc(env(safe-area-inset-bottom) + 68px));
-    gap: 6px;
-    background: linear-gradient(
-      to top,
-      rgba(213, 197, 188, 0.90) 0%,
-      rgba(213, 197, 188, 0.62) 150px,
-      rgba(213, 197, 188, 0.0) 240px
-    );
-  }
-
-  .cust-wing {
-    position: static;
-    transform: none;
-    width: 100%;
-    gap: 0;
-    align-items: center;
-    animation: none;
-  }
-
-  /* Show ONLY the active category row so the center popsicle stays large and unobstructed */
-  .customize-studio [data-cust-group] {
-    display: none;
-  }
-
-  .customize-studio[data-mobile-tab="base"] [data-cust-group="base"],
-  .customize-studio[data-mobile-tab="taste"] [data-cust-group="taste"],
-  .customize-studio[data-mobile-tab="toppings"] [data-cust-group="toppings"] {
-    display: flex;
-  }
-
-  .base-float-field,
-  .taste-float-field,
-  .topping-float-field {
-    width: 100%;
-    height: auto;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: nowrap;
-    padding: 16px 16px 12px;
-    box-sizing: border-box;
-    pointer-events: auto;
-  }
-
-  .base-float-field {
-    gap: 28px;
-  }
-
-  /* Single crisp swipeable row for all 9 uniform juice droplets */
-  .taste-float-field {
-    justify-content: safe center;
-    gap: 10px;
+  .preset-dock {
+    gap: 2px;
+    padding: 5px 6px;
+    max-width: calc(100vw - 16px);
     overflow-x: auto;
-    overflow-y: visible;
+    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    touch-action: pan-x;
   }
 
-  .taste-float-field::-webkit-scrollbar {
+  .preset-dock::-webkit-scrollbar {
     display: none;
   }
 
-  .topping-float-field {
-    gap: 8px;
-  }
-
-  .float-obj {
-    position: relative;
-    left: auto;
-    top: auto;
-    flex: 0 0 auto;
-    width: 48px;
-    height: 48px;
-  }
-
-  .base-cube-btn {
-    width: 58px;
-    height: 58px;
-  }
-
-  .topping-card {
-    width: 50px;
-    height: 50px;
-  }
-
-  .pen-ring {
-    inset: -7px -8px;
-    width: calc(100% + 16px);
-    height: calc(100% + 14px);
-  }
-
-  .pen-ring path {
-    stroke-width: 2.05;
-  }
-
-  .float-obj::after {
+  .preset-btn::after,
+  .recipe-slot-btn::after,
+  .pop-item::after {
     display: none;
-  }
-
-  /* Whisper-light frosted studio glass switcher pill right above the preset dock */
-  .cust-mobile-tabs {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 3px;
-    border-radius: 999px;
-    pointer-events: auto;
-    border: 1px solid rgba(255, 255, 255, 0.50);
-    background: rgba(255, 255, 255, 0.28);
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
-    box-shadow:
-      0 6px 20px rgba(28, 20, 18, 0.08),
-      inset 0 1px 0 rgba(255, 255, 255, 0.72),
-      0 0 0 1px rgba(28, 28, 28, 0.06);
-  }
-
-  .cust-tab-btn {
-    appearance: none;
-    border: none;
-    background: transparent;
-    color: rgba(28, 28, 28, 0.68);
-    font: 600 11px/1 Inter, system-ui, sans-serif;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 7px 14px;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: background 180ms ease, color 180ms ease, transform 140ms ease;
-  }
-
-  .cust-tab-btn:active {
-    transform: scale(0.96);
-  }
-
-  .cust-tab-btn[aria-selected="true"] {
-    background: rgba(28, 28, 28, 0.86);
-    color: #faf6f2;
   }
 }
 
@@ -714,6 +806,30 @@ body.loading .preset-dock {
   .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
   .plate b { font-size: clamp(22px, 6.8vw, 34px); }
   .plate .head > i { font-size: 9px; letter-spacing: 0.06em; }
+
+  .preset-btn {
+    width: 30px;
+    height: 42px;
+    border-radius: 10px;
+  }
+
+  .recipe-slot-btn {
+    width: 38px;
+    height: 42px;
+    border-radius: 11px;
+  }
+
+  .slot-visual {
+    width: 32px;
+    height: 32px;
+  }
+
+  .slot-visual[data-count="1"] img.slot-thumb { width: 27px; height: 27px; left: 2.5px; top: 2.5px; }
+  .slot-visual.slot-tastes[data-count="1"] img.slot-thumb { width: 26px; height: 26px; left: 3px; top: 3px; }
+  .slot-visual[data-count="2"] img.slot-thumb { width: 20px; height: 20px; }
+  .slot-visual[data-count="3"] img.slot-thumb { width: 18px; height: 18px; }
+  .slot-visual[data-count="3"] img.slot-thumb:nth-child(1) { left: 7px; top: 0px; }
+  .slot-visual[data-count="4"] img.slot-thumb { width: 16px; height: 16px; }
 }
 
 @media (max-width: 440px) {
@@ -722,31 +838,54 @@ body.loading .preset-dock {
   .plate .head > i { font-size: 8px; letter-spacing: 0.03em; margin-top: 4px; }
   .preset-dock {
     bottom: max(12px, env(safe-area-inset-bottom));
-    gap: 2px;
     padding: 4px 5px;
+    gap: 1px;
     border-radius: 15px;
   }
   .preset-btn {
-    width: 31px;
-    height: 40px;
-    border-radius: 10px;
+    width: 26px;
+    height: 38px;
+    padding: 2px 1px;
   }
   .preset-sep {
     height: 22px;
-    margin: 0 2px;
+    margin: 0 3px;
   }
-  .preset-customize-btn img {
-    width: 28px;
-    height: 28px;
+  .recipe-slots {
+    gap: 2px;
   }
-  .preset-btn::after {
-    display: none;
+  .recipe-slot-btn {
+    width: 34px;
+    height: 38px;
+    padding: 2px;
+  }
+  .slot-visual {
+    width: 30px;
+    height: 30px;
+  }
+  .slot-visual[data-count="1"] img.slot-thumb { width: 25px; height: 25px; left: 2.5px; top: 2.5px; }
+  .slot-visual.slot-tastes[data-count="1"] img.slot-thumb { width: 24px; height: 24px; left: 3px; top: 3px; }
+  .slot-visual[data-count="2"] img.slot-thumb { width: 18px; height: 18px; }
+  .slot-visual[data-count="3"] img.slot-thumb { width: 16px; height: 16px; }
+  .slot-visual[data-count="3"] img.slot-thumb:nth-child(1) { left: 7px; top: 0px; }
+  .slot-visual[data-count="4"] img.slot-thumb { width: 15px; height: 15px; }
+  .pop-grid-taste {
+    grid-template-columns: repeat(2, clamp(46px, 6.4vh, 56px));
+    gap: 4px 6px;
+  }
+  .pop-grid-toppings .pop-item {
+    width: clamp(50px, 7.2vh, 62px);
+    height: clamp(48px, 6.8vh, 58px);
+  }
+  .pop-grid-base .pop-item {
+    width: clamp(58px, 8vh, 70px);
+    height: clamp(58px, 8vh, 70px);
   }
 }
 
 /* ?clean: the scene alone */
 .clean .plate,
-.clean .customize-studio,
-.clean .preset-dock {
+.clean .preset-dock,
+.clean .dock-popover {
   display: none !important;
 }

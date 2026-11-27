@@ -1,18 +1,19 @@
 import * as THREE from 'three';
 import type { BaseKind, FlavorId, ToppingId } from './recipe';
-import { FLAVOR_LIST, TOPPING_LIST } from './recipe';
+import { FLAVOR_LIST, FLAVOR_MAP, TOPPING_LIST } from './recipe';
 import { createToppingThumbSpecimen } from './fruits';
 
 export interface CustomizeIconSet {
   bases: Record<BaseKind, string>;
-  flavors: Record<FlavorId, string>;
+  /** Textured circular taste medallions — visual texture adapts to Water (icy translucent) vs Milk (creamy marbled)! */
+  flavors: Record<BaseKind, Record<FlavorId, string>>;
   toppings: Record<ToppingId, string>;
 }
 
 /**
  * Generates an organically beveled rounded 3D ice cube geometry for the Water & Concentrated Milk bases.
  */
-function createRoundedIceCubeGeometry(subdiv = 26): THREE.BufferGeometry {
+function createRoundedIceCubeGeometry(subdiv = 22): THREE.BufferGeometry {
   const geo = new THREE.BoxGeometry(1, 1, 1, subdiv, subdiv, subdiv);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const v = new THREE.Vector3();
@@ -73,6 +74,16 @@ const SHARED_NOISE_GLSL = /* glsl */ `
       f.z
     );
   }
+  float fbm3(vec3 p) {
+    float v = 0.0;
+    float a = 0.52;
+    for (int i = 0; i < 3; i++) {
+      v += a * noise3(p);
+      p = p * 2.07 + vec3(13.1, -7.4, 5.9);
+      a *= 0.5;
+    }
+    return v;
+  }
 `;
 
 /**
@@ -115,7 +126,6 @@ function createWaterIceCubeMaterial(): THREE.ShaderMaterial {
         float frostCloud = smoothstep(0.40, 0.76, frost1 * 0.65 + frost2 * 0.35) * internalCore;
         float bubbles = smoothstep(0.76, 0.88, noise3(vLocalPos * 16.0 + vec3(4.1, 1.2, -3.5))) * internalCore;
 
-        // Luminous clear glacial crystal (bright white-aqua clarity, never muddy grey!)
         vec3 iceDeep   = vec3(0.66, 0.84, 0.95);
         vec3 iceGlass  = vec3(0.90, 0.96, 1.00);
         vec3 iceWhite  = vec3(1.00, 1.00, 1.00);
@@ -143,7 +153,7 @@ function createWaterIceCubeMaterial(): THREE.ShaderMaterial {
         float windowGlint = smoothstep(0.72, 0.94, dot(reflect(-V, N), lKey));
         col += vec3(1.9, 1.96, 2.0) * (spec1 + windowGlint * 0.45) + vec3(0.95, 1.0, 1.08) * spec2 * 0.60;
 
-        float alpha = clamp(0.40 + fresnel * 0.54 + frostCloud * 0.25 + botCaustic * 0.26 + bubbles * 0.38 + spec1 * 0.55 + windowGlint * 0.30, 0.0, 0.98);
+        float alpha = clamp(0.42 + fresnel * 0.52 + frostCloud * 0.25 + botCaustic * 0.26 + bubbles * 0.38 + spec1 * 0.55 + windowGlint * 0.30, 0.0, 0.98);
         gl_FragColor = vec4(col, alpha);
       }
     `,
@@ -216,6 +226,167 @@ function createMilkIceCubeMaterial(): THREE.ShaderMaterial {
   });
 }
 
+/**
+ * Single shared ShaderMaterial for rendering textured circular 3D taste medallions!
+ * Adapts texture dramatically to the active main ingredient:
+ * - Water base (`uIsMilk = 0`): crystal-translucent backlit fruit-ice orb with crystalline frost grain,
+ *   sparkling trapped air micro-bubbles, lower backlit caustic glow & crisp studio window reflections.
+ * - Concentrated Milk base (`uIsMilk = 1`): velvety creamy marbled paleta orb with rich condensed-milk
+ *   swirl pockets, soft micro-grain & warm matte-satin sheen (zero glass glare!).
+ * - Kiwi (`uSeeds = 1`): automatically embeds crisp dark kiwi seeds inside the green texture!
+ */
+function createTasteCircleMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: true,
+    side: THREE.FrontSide,
+    uniforms: {
+      uIsMilk: { value: 0.0 },
+      uCore: { value: new THREE.Vector3(1.4, 0.5, 0.4) },
+      uMid: { value: new THREE.Vector3(1.1, 0.2, 0.2) },
+      uDeep: { value: new THREE.Vector3(0.7, 0.04, 0.08) },
+      uCreamAlb: { value: new THREE.Vector3(0.8, 0.12, 0.15) },
+      uCreamSss: { value: new THREE.Vector3(1.0, 0.22, 0.25) },
+      uCreamDeep: { value: new THREE.Vector3(0.35, 0.03, 0.05) },
+      uCloudiness: { value: 0.1 },
+      uSeeds: { value: 0.0 },
+      uSeed: { value: 1.0 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorldPos;
+      varying vec3 vWorldNormal;
+      varying vec3 vLocalPos;
+      void main() {
+        vLocalPos = position;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+      uniform float uIsMilk;
+      uniform vec3 uCore;
+      uniform vec3 uMid;
+      uniform vec3 uDeep;
+      uniform vec3 uCreamAlb;
+      uniform vec3 uCreamSss;
+      uniform vec3 uCreamDeep;
+      uniform float uCloudiness;
+      uniform float uSeeds;
+      uniform float uSeed;
+
+      varying vec3 vWorldPos;
+      varying vec3 vWorldNormal;
+      varying vec3 vLocalPos;
+      ${SHARED_NOISE_GLSL}
+
+      void main() {
+        vec3 N = normalize(vWorldNormal);
+        vec3 V = normalize(cameraPosition - vWorldPos);
+        float ndv = clamp(dot(N, V), 0.0, 1.0);
+        float fresnel = pow(1.0 - ndv, 3.0);
+
+        vec3 lKey = normalize(vec3(-0.56, 0.72, 0.64));
+        vec3 lFill = normalize(vec3(0.68, 0.24, 0.56));
+        vec3 lBot = normalize(vec3(0.24, -0.78, 0.56));
+        float nKey = clamp((dot(N, lKey) + 0.45) / 1.45, 0.0, 1.0);
+        float nFill = clamp((dot(N, lFill) + 0.35) / 1.35, 0.0, 1.0);
+
+        vec3 pSeed = vLocalPos + vec3(uSeed * 2.1, -uSeed * 1.3, uSeed * 0.9);
+        vec3 col;
+
+        if (uIsMilk < 0.5) {
+          // === WATER ICE TEXTURED CIRCLE: translucent backlit fruit ice + crystalline grain + micro-bubbles ===
+          float radialDepth = pow(ndv, 0.85);
+          float crystalGrain = fbm3(pSeed * 4.8 - V * 0.25);
+          float iceFrost = smoothstep(0.36, 0.82, crystalGrain) * (0.32 + uCloudiness * 0.55);
+          float microIce = (noise3(pSeed * 16.0) - 0.5) * 0.10;
+          float bubbles = smoothstep(0.75, 0.87, noise3(pSeed * 12.5 + vec3(3.1, -2.2, 4.7))) * smoothstep(0.18, 0.75, ndv);
+
+          // Rich sunlit translucent fruit gradient: deep saturated outer lens -> luminous glowing backlit core!
+          vec3 iceCol = mix(uDeep, uMid, smoothstep(0.06, 0.52, radialDepth));
+          iceCol = mix(iceCol, uCore, smoothstep(0.38, 0.95, radialDepth) * (0.72 + 0.28 * nKey));
+
+          // Lower backlit caustic lens glow + delicate frosty ice-crystal clouds
+          float caustic = pow(clamp(dot(N, lBot) * 0.75 + 0.35, 0.0, 1.0), 2.4) * smoothstep(0.14, 0.72, ndv) * (1.0 - uCloudiness * 0.55);
+          iceCol += uCore * caustic * 0.30;
+          iceCol = mix(iceCol, mix(uCore * 1.12, vec3(1.12, 1.09, 1.05), 0.32), iceFrost * 0.30);
+          iceCol += vec3(microIce) * (0.55 + uCloudiness * 0.5);
+          iceCol = mix(iceCol, vec3(1.32, 1.29, 1.25), bubbles * 0.78);
+
+          // Crisp glass-ice contour & studio window specular catchlight (extra definition for pale citrus/vanilla orbs!)
+          float contour = smoothstep(0.50, 0.06, ndv);
+          iceCol = mix(iceCol, uDeep * 0.66, contour * 0.44);
+
+          vec3 h1 = normalize(lKey + V);
+          vec3 h2 = normalize(lFill + V);
+          float spec1 = pow(max(dot(N, h1), 0.0), 96.0);
+          float spec2 = pow(max(dot(N, h2), 0.0), 34.0);
+          float glint = smoothstep(0.78, 0.95, dot(reflect(-V, N), lKey));
+          iceCol += vec3(1.52, 1.49, 1.45) * (spec1 * 0.92 + glint * 0.28) + uCore * spec2 * 0.16;
+          iceCol += mix(uCore, vec3(1.02), 0.42) * fresnel * 0.26;
+          col = iceCol;
+        } else {
+          // === CONCENTRATED MILK TEXTURED CIRCLE: velvety creamy marbled paleta swirl + matte satin sheen ===
+          vec3 warp = vec3(
+            fbm3(pSeed * 2.2 + vec3(1.7, 3.2, -1.1)),
+            fbm3(pSeed * 2.2 + vec3(-2.4, 1.1, 4.3)),
+            0.0
+          ) - 0.5;
+          float swirlVal = fbm3((pSeed + warp * 0.85) * 2.45 + vec3(0.0, 1.2, 0.0));
+          // Organic condensed-milk cream pockets swirled into rich fruit cream!
+          float creamPocket = smoothstep(0.56, 0.74, swirlVal);
+          float microCream = (noise3(pSeed * 18.0) - 0.5) * 0.045;
+
+          vec3 creamWhiteAlb = vec3(0.92, 0.85, 0.72);
+          vec3 creamWhiteDeep = vec3(0.66, 0.56, 0.42);
+          vec3 alb = mix(uCreamAlb, creamWhiteAlb, creamPocket * 0.82);
+          vec3 dp = mix(uCreamDeep, creamWhiteDeep, creamPocket * 0.78);
+
+          vec3 milkCol = mix(dp, alb, smoothstep(0.06, 0.82, nKey * 0.76 + nFill * 0.28));
+          milkCol = mix(milkCol, mix(uCreamSss, vec3(1.04, 0.96, 0.82), creamPocket * 0.78), smoothstep(0.55, 1.0, nKey) * 0.42);
+          // Warm velvety subsurface scatter + delicate creamy ice-crystal micro-grain
+          float sss = pow(clamp(1.0 - abs(dot(N, lKey)), 0.0, 1.0), 1.7) * 0.22 + fresnel * 0.22;
+          milkCol += mix(uCreamSss, vec3(1.02, 0.93, 0.76), creamPocket * 0.65) * sss * 0.26 + vec3(microCream);
+
+          // Soft matte-satin milk sheen (zero harsh glassy highlights!)
+          vec3 h1 = normalize(lKey + V);
+          float satin = pow(max(dot(N, h1), 0.0), 26.0);
+          milkCol += vec3(1.0, 0.97, 0.92) * satin * 0.24;
+          milkCol = mix(milkCol, dp * 0.82, smoothstep(0.32, 0.02, ndv) * 0.28);
+          col = milkCol;
+        }
+
+        // Embedded crisp black kiwi seeds inside green Kiwi orbs (both water & milk bases!)
+        if (uSeeds > 0.5) {
+          vec3 sp = vLocalPos * 4.9 + vec3(uSeed * 1.4, 0.6, -0.8);
+          vec3 cell = floor(sp);
+          vec3 f = fract(sp);
+          float h = hash31(cell);
+          if (h > 0.42) {
+            vec3 jitter = vec3(
+              hash31(cell + vec3(11.3, 4.7, 2.1)),
+              hash31(cell + vec3(3.1, 17.9, 8.3)),
+              hash31(cell + vec3(7.7, 2.3, 13.7))
+            );
+            vec3 d = f - (0.24 + 0.52 * jitter);
+            d.y *= 0.72;
+            float r = length(d.xy);
+            float seedDot = (1.0 - smoothstep(0.085, 0.145, r)) * smoothstep(0.18, 0.55, ndv);
+            col = mix(col, vec3(0.014, 0.011, 0.008), seedDot * 0.92);
+          }
+        }
+
+        // Crisp anti-aliased circular silhouette edge
+        float edgeAlpha = smoothstep(0.02, 0.14, ndv);
+        gl_FragColor = vec4(col, edgeAlpha);
+      }
+    `,
+  });
+}
+
 function readTargetToDataUrl(
   renderer: THREE.WebGLRenderer,
   rt: THREE.WebGLRenderTarget,
@@ -260,414 +431,13 @@ function readTargetToDataUrl(
   return canvas.toDataURL('image/png');
 }
 
-interface JuiceDropSpec {
-  core: [number, number, number];
-  mid: [number, number, number];
-  deep: [number, number, number];
-  caustic: [number, number, number];
-  creaminess: number;
-  pulp: number;
-  bendX: number;
-  beadSide: number;
-  seeds?: number;
-}
-
-const JUICE_DROP_SPECS: Record<FlavorId, JuiceDropSpec> = {
-  mango: {
-    core: [1.26, 0.72, 0.04],
-    mid: [0.92, 0.38, 0.012],
-    deep: [0.52, 0.14, 0.004],
-    caustic: [1.75, 1.18, 0.18],
-    creaminess: 0.38,
-    pulp: 0.44,
-    bendX: -0.18,
-    beadSide: 1,
-  },
-  lemon: {
-    core: [1.38, 1.30, 0.12],
-    mid: [0.98, 0.86, 0.03],
-    deep: [0.56, 0.46, 0.010],
-    caustic: [1.90, 1.82, 0.46],
-    creaminess: 0.10,
-    pulp: 0.22,
-    bendX: 0.16,
-    beadSide: -1,
-  },
-  orange: {
-    core: [1.38, 0.40, 0.025],
-    mid: [0.98, 0.17, 0.008],
-    deep: [0.58, 0.050, 0.003],
-    caustic: [1.88, 0.80, 0.12],
-    creaminess: 0.20,
-    pulp: 0.40,
-    bendX: -0.14,
-    beadSide: 1,
-  },
-  kiwi: {
-    core: [0.46, 0.98, 0.11],
-    mid: [0.22, 0.64, 0.04],
-    deep: [0.08, 0.30, 0.012],
-    caustic: [0.88, 1.48, 0.28],
-    creaminess: 0.24,
-    pulp: 0.45,
-    bendX: 0.18,
-    beadSide: -1,
-    seeds: 1,
-  },
-  watermelon: {
-    core: [1.38, 0.28, 0.38],
-    mid: [0.98, 0.10, 0.19],
-    deep: [0.56, 0.026, 0.075],
-    caustic: [1.85, 0.72, 0.78],
-    creaminess: 0.04,
-    pulp: 0.06,
-    bendX: 0.20,
-    beadSide: -1,
-  },
-  strawberry: {
-    core: [1.18, 0.08, 0.09],
-    mid: [0.76, 0.028, 0.036],
-    deep: [0.36, 0.008, 0.014],
-    caustic: [1.72, 0.36, 0.28],
-    creaminess: 0.08,
-    pulp: 0.10,
-    bendX: -0.16,
-    beadSide: 1,
-  },
-  raspberry: {
-    core: [0.98, 0.038, 0.30],
-    mid: [0.58, 0.012, 0.15],
-    deep: [0.24, 0.004, 0.060],
-    caustic: [1.58, 0.26, 0.64],
-    creaminess: 0.08,
-    pulp: 0.12,
-    bendX: 0.15,
-    beadSide: -1,
-  },
-  blueberry: {
-    core: [0.24, 0.16, 1.12],
-    mid: [0.095, 0.055, 0.66],
-    deep: [0.032, 0.014, 0.28],
-    caustic: [0.68, 0.54, 1.72],
-    creaminess: 0.12,
-    pulp: 0.10,
-    bendX: -0.20,
-    beadSide: 1,
-  },
-  banana: {
-    core: [1.16, 0.96, 0.36],
-    mid: [0.90, 0.70, 0.20],
-    deep: [0.52, 0.35, 0.070],
-    caustic: [1.34, 1.16, 0.58],
-    creaminess: 0.76,
-    pulp: 0.28,
-    bendX: 0.17,
-    beadSide: -1,
-  },
-  chocolate: {
-    core: [0.22, 0.095, 0.042],
-    mid: [0.115, 0.044, 0.017],
-    deep: [0.036, 0.012, 0.004],
-    caustic: [0.40, 0.20, 0.095],
-    creaminess: 0.94,
-    pulp: 0.04,
-    bendX: -0.15,
-    beadSide: 1,
-  },
-};
-
-/**
- * Sculpted floating 3D liquid droplet with organic surface-tension curves & orbiting micro-splash beads.
- * All 9 flavors share the exact same hero bounding footprint so tastes read as a uniform, crisp set.
- */
-function createJuiceDropGeometry(bendX: number, phase: number): THREE.BufferGeometry {
-  const geo = new THREE.SphereGeometry(1, 48, 36);
-  const pos = geo.attributes.position as THREE.BufferAttribute;
-  const v = new THREE.Vector3();
-
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const yn = v.y; // [-1, 1]
-    const up = Math.max(0, yn);
-    const dn = Math.max(0, -yn);
-
-    // Classic plump suspended teardrop: full rounded lower belly tapering into a smooth curved liquid peak
-    const belly = 1.0 + 0.18 * dn * (1.0 - 0.42 * dn);
-    const taper = Math.pow(Math.max(0.0, 1.0 - up * 0.78), 0.70);
-    const radialScale = (yn >= 0 ? taper : belly) * 0.56;
-
-    // Gentle organic fluid wobble so each flavor drop feels alive in mid-air
-    const ang = Math.atan2(v.z, v.x);
-    const wobble = 1.0 + 0.026 * Math.sin(ang * 2.0 + phase) * (1.0 - up * 0.65);
-
-    const x = v.x * radialScale * wobble + bendX * up * up * 0.88;
-    const y = (yn * 0.68 + up * up * 0.14) - 0.07;
-    const z = v.z * radialScale * (0.94 + 0.04 * dn);
-
-    pos.setXYZ(i, x, y, z);
-  }
-  geo.computeVertexNormals();
-  return geo;
-}
-
-/**
- * Photorealistic macro-studio liquid juice shader:
- * - Translucent fruit juices: backlit lower caustic lens glow, Beer-Lambert depth rim, subtle natural pulp,
- *   razor-crisp curved studio softbox reflections & pinpoint specular catchlights
- * - Creamy banana puree & melted dark-chocolate ganache: rich glossy velvety liquid sheen
- */
-function createJuiceDropMaterial(spec: JuiceDropSpec, seed: number): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: true,
-    side: THREE.FrontSide,
-    uniforms: {
-      uCore: { value: new THREE.Vector3(...spec.core) },
-      uMid: { value: new THREE.Vector3(...spec.mid) },
-      uDeep: { value: new THREE.Vector3(...spec.deep) },
-      uCaustic: { value: new THREE.Vector3(...spec.caustic) },
-      uCreaminess: { value: spec.creaminess },
-      uPulp: { value: spec.pulp },
-      uSeed: { value: seed },
-      uSeeds: { value: spec.seeds ?? 0 },
-    },
-    vertexShader: /* glsl */ `
-      varying vec3 vWorldPos;
-      varying vec3 vWorldNormal;
-      varying vec3 vLocalPos;
-      void main() {
-        vLocalPos = position;
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWorldPos = wp.xyz;
-        vWorldNormal = normalize(mat3(modelMatrix) * normal);
-        gl_Position = projectionMatrix * viewMatrix * wp;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      precision highp float;
-      uniform vec3 uCore;
-      uniform vec3 uMid;
-      uniform vec3 uDeep;
-      uniform vec3 uCaustic;
-      uniform float uCreaminess;
-      uniform float uPulp;
-      uniform float uSeed;
-      uniform float uSeeds;
-
-      varying vec3 vWorldPos;
-      varying vec3 vWorldNormal;
-      varying vec3 vLocalPos;
-      ${SHARED_NOISE_GLSL}
-
-      void main() {
-        vec3 N = normalize(vWorldNormal);
-        vec3 V = normalize(cameraPosition - vWorldPos);
-        float ndv = clamp(dot(N, V), 0.0, 1.0);
-        float fresnel = 0.03 + 0.97 * pow(1.0 - ndv, 3.6);
-
-        vec3 lKey = normalize(vec3(-0.56, 0.72, 0.66));
-        vec3 lRim = normalize(vec3(0.76, 0.36, -0.34));
-        vec3 lCaustic = normalize(vec3(0.32, -0.82, 0.48));
-
-        float wrapKey = clamp((dot(N, lKey) + 0.46) / 1.46, 0.0, 1.0);
-        float centerThick = pow(ndv, 1.15);
-
-        // Refracted internal volume color: luminous translucent heart -> saturated deep jewel edge
-        vec3 jewelCol = mix(uDeep, uMid, smoothstep(0.08, 0.62, ndv));
-        jewelCol = mix(jewelCol, uCore, smoothstep(0.36, 0.95, centerThick * 0.78 + wrapKey * 0.32));
-
-        // Signature macro-photography backlit liquid caustic crescent concentrated in the lower-right belly!
-        float causticZone = pow(max(dot(N, lCaustic), 0.0), 1.65) * smoothstep(0.06, 0.56, ndv);
-        float bellyFocus = smoothstep(0.38, -0.42, vLocalPos.y);
-        float causticAmt = causticZone * (0.55 + 0.55 * bellyFocus) * (1.0 - uCreaminess * 0.82);
-        jewelCol = mix(jewelCol, uCaustic, clamp(causticAmt * 0.78, 0.0, 0.84));
-
-        // Subtle organic suspended juice pulp shimmer (mango / orange / lemon / kiwi)
-        if (uPulp > 0.02) {
-          float pN = noise3(vLocalPos * 12.5 + vec3(uSeed, -uSeed * 0.7, uSeed * 1.3));
-          float pulpGlow = smoothstep(0.46, 0.86, pN) * uPulp * smoothstep(0.18, 0.72, ndv);
-          jewelCol = mix(jewelCol, uCore * 1.16 + vec3(0.06), pulpGlow * 0.28);
-        }
-
-        // Tiny suspended black oval kiwi seeds inside the Kiwi juice droplet!
-        if (uSeeds > 0.5) {
-          vec2 sp = vLocalPos.xy - V.xy * 0.08;
-          float sMask = 0.0;
-          vec2 d0 = (sp - vec2(-0.18, -0.14)) * vec2(1.0, 1.55);
-          sMask = max(sMask, 1.0 - smoothstep(0.036, 0.064, length(d0)));
-          vec2 d1 = (sp - vec2( 0.16, -0.24)) * vec2(1.45, 1.0);
-          sMask = max(sMask, 1.0 - smoothstep(0.036, 0.062, length(d1)));
-          vec2 d2 = (sp - vec2( 0.04,  0.04)) * vec2(1.15, 1.50);
-          sMask = max(sMask, 1.0 - smoothstep(0.034, 0.060, length(d2)));
-          vec2 d3 = (sp - vec2(-0.08, -0.36)) * vec2(1.50, 1.05);
-          sMask = max(sMask, 1.0 - smoothstep(0.032, 0.058, length(d3)));
-          vec2 d4 = (sp - vec2( 0.22,  0.08)) * vec2(1.0, 1.45);
-          sMask = max(sMask, 1.0 - smoothstep(0.030, 0.054, length(d4)));
-          jewelCol = mix(jewelCol, vec3(0.024, 0.016, 0.008), sMask * smoothstep(0.18, 0.56, ndv) * 0.88);
-        }
-
-        // Creamy glossy liquid shading for banana puree & melted dark chocolate ganache
-        vec3 creamCol = mix(uDeep, uMid, smoothstep(0.05, 0.65, wrapKey));
-        creamCol = mix(creamCol, uCore, smoothstep(0.55, 1.0, wrapKey) * 0.72);
-        creamCol += uCaustic * pow(1.0 - ndv, 2.4) * 0.22;
-
-        vec3 col = mix(jewelCol, creamCol, uCreaminess);
-
-        // Crisp dark refractive TIR inner contour (makes floating clear drops pop like liquid jewels on warm taupe!)
-        float tirRing = smoothstep(0.46, 0.14, ndv) * smoothstep(0.01, 0.16, ndv);
-        col = mix(col, uDeep * 0.52, tirRing * mix(0.62, 0.28, uCreaminess));
-
-        // Crisp refined studio softbox highlight crescent + pinpoint liquid catchlight (never washes out jewel color!)
-        vec3 R = reflect(-V, N);
-        float softbox = smoothstep(0.89, 0.975, dot(R, lKey));
-        float rimStrip = smoothstep(0.84, 0.96, dot(R, lRim)) * (0.40 + 0.60 * fresnel);
-
-        vec3 h1 = normalize(lKey + V);
-        vec3 h2 = normalize(lRim + V);
-        float specSharp = pow(max(dot(N, h1), 0.0), mix(180.0, 110.0, uCreaminess));
-        float specBroad = pow(max(dot(N, h1), 0.0), mix(44.0, 30.0, uCreaminess));
-        float specRim = pow(max(dot(N, h2), 0.0), 68.0);
-
-        vec3 specTint = mix(vec3(1.0, 0.99, 0.97), vec3(1.04, 0.94, 0.86), uCreaminess);
-        col += specTint * (specSharp * 1.85 + softbox * 0.58 + specBroad * 0.16 + rimStrip * 0.30 + specRim * 0.36);
-
-        // Delicate luminous studio rim bounce along silhouette
-        col = mix(col, mix(uCaustic * 0.72 + vec3(0.32), vec3(1.0, 0.98, 0.95), 0.40), fresnel * mix(0.32, 0.16, uCreaminess));
-
-        float alpha = clamp(
-          mix(0.84 + fresnel * 0.15 + causticAmt * 0.12 + specSharp * 0.40 + softbox * 0.20, 0.99, uCreaminess),
-          0.0,
-          0.995
-        );
-        gl_FragColor = vec4(col, alpha);
-      }
-    `,
-  });
-}
-
-function createJuiceDropSpecimen(flavorId: FlavorId, idx: number): { object: THREE.Group; dispose(): void } {
-  const spec = JUICE_DROP_SPECS[flavorId];
-  const group = new THREE.Group();
-  const mat = createJuiceDropMaterial(spec, idx * 3.7 + 1.3);
-
-  const mainGeo = createJuiceDropGeometry(spec.bendX, idx * 1.45);
-  const mainMesh = new THREE.Mesh(mainGeo, mat);
-  group.add(mainMesh);
-
-  // Orbiting liquid micro-splash bead hovering gracefully beside the curved peak
-  const bead1Geo = new THREE.SphereGeometry(0.115, 22, 16);
-  const bead1 = new THREE.Mesh(bead1Geo, mat);
-  bead1.scale.set(0.95, 1.18, 0.95);
-  bead1.position.set(spec.beadSide * 0.44, 0.44, 0.08);
-  bead1.rotation.z = -spec.beadSide * 0.42;
-  group.add(bead1);
-
-  const bead2Geo = new THREE.SphereGeometry(0.062, 16, 12);
-  const bead2 = new THREE.Mesh(bead2Geo, mat);
-  bead2.position.set(spec.beadSide * 0.58, 0.16, 0.12);
-  group.add(bead2);
-
-  // Gentle studio presentation angle
-  group.rotation.set(0.08, spec.beadSide * -0.14, 0);
-
-  return {
-    object: group,
-    dispose() {
-      mainGeo.dispose();
-      bead1Geo.dispose();
-      bead2Geo.dispose();
-      mat.dispose();
-    },
-  };
-}
-
 let cachedIcons: CustomizeIconSet | null = null;
-let cachedDockRaspberry: string | null = null;
 
 /**
- * Renders just the single crisp 3D translucent ruby raspberry icon for the Customize dock button (<3ms).
- */
-export function getCustomizeDockRaspberryIcon(
-  renderer: THREE.WebGLRenderer,
-  envMap: THREE.Texture | null,
-): string {
-  if (cachedDockRaspberry) return cachedDockRaspberry;
-  if (cachedIcons) {
-    cachedDockRaspberry = cachedIcons.toppings.raspberry;
-    return cachedDockRaspberry;
-  }
-
-  const SIZE = 192;
-  const rt = new THREE.WebGLRenderTarget(SIZE, SIZE, {
-    type: THREE.UnsignedByteType,
-    format: THREE.RGBAFormat,
-    samples: 0,
-    depthBuffer: true,
-    stencilBuffer: false,
-  });
-
-  const scene = new THREE.Scene();
-  if (envMap) scene.environment = envMap;
-
-  const cam = new THREE.PerspectiveCamera(28, 1, 0.1, 20);
-  cam.position.set(0, 0.08, 3.25);
-  cam.lookAt(0, 0, 0);
-
-  const key = new THREE.DirectionalLight(0xfff6eb, 2.55);
-  key.position.set(-2.4, 3.2, 2.8);
-  const fill = new THREE.DirectionalLight(0xffe7d6, 1.15);
-  fill.position.set(2.8, 1.0, 2.4);
-  const rim = new THREE.DirectionalLight(0xffffff, 1.45);
-  rim.position.set(0.4, 2.0, -3.2);
-  const amb = new THREE.HemisphereLight(0xfff8f0, 0xd8c3b4, 0.95);
-  scene.add(key, fill, rim, amb);
-
-  const prevRT = renderer.getRenderTarget();
-  const prevClearCol = new THREE.Color();
-  renderer.getClearColor(prevClearCol);
-  const prevClearAlpha = renderer.getClearAlpha();
-  const prevAutoClear = renderer.autoClear;
-  const prevTone = renderer.toneMapping;
-  const prevExp = renderer.toneMappingExposure;
-
-  const pixels = new Uint8Array(SIZE * SIZE * 4);
-  const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const ctx = canvas.getContext('2d')!;
-  const imgData = ctx.createImageData(SIZE, SIZE);
-
-  try {
-    renderer.autoClear = true;
-    renderer.setRenderTarget(rt);
-    renderer.setClearColor(0x000000, 0);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.18;
-
-    const spec = createToppingThumbSpecimen('raspberry', 1);
-    scene.add(spec.object);
-    renderer.clear(true, true, false);
-    renderer.render(scene, cam);
-    cachedDockRaspberry = readTargetToDataUrl(renderer, rt, SIZE, pixels, canvas, ctx, imgData, true);
-    scene.remove(spec.object);
-    spec.dispose();
-  } finally {
-    renderer.setRenderTarget(prevRT);
-    renderer.setClearColor(prevClearCol, prevClearAlpha);
-    renderer.autoClear = prevAutoClear;
-    renderer.toneMapping = prevTone;
-    renderer.toneMappingExposure = prevExp;
-    rt.dispose();
-  }
-
-  return cachedDockRaspberry;
-}
-
-/**
- * Lazily renders crisp supersampled 256×256 studio-lit 3D icons for:
+ * Lazily renders crisp 128×128 (2× retina for 30–56px dock & popover slots) studio-lit 3D icons for:
  * - 2 Base material cubes (Water crystal ice & Concentrated Milk)
- * - 9 Odd-shaped colored frozen-juice ice chunks (one unique sculpted shape per taste!)
- * - 6 Real 3D topping specimens (reusing the exact procedural fruit/chunk meshes & materials)
+ * - 10 × 2 Textured circular taste medallions (Water icy-translucent orbs AND Milk creamy-marbled orbs!)
+ * - 7 Real 3D topping specimens (reusing the exact procedural fruit/chunk/Tajín meshes & materials)
  */
 export function getCustomizeIcons(
   renderer: THREE.WebGLRenderer,
@@ -675,7 +445,7 @@ export function getCustomizeIcons(
 ): CustomizeIconSet {
   if (cachedIcons) return cachedIcons;
 
-  const SIZE = 256;
+  const SIZE = 128;
   const rt = new THREE.WebGLRenderTarget(SIZE, SIZE, {
     type: THREE.UnsignedByteType,
     format: THREE.RGBAFormat,
@@ -688,7 +458,7 @@ export function getCustomizeIcons(
   if (envMap) scene.environment = envMap;
 
   const cam = new THREE.PerspectiveCamera(28, 1, 0.1, 20);
-  cam.position.set(0, 0.18, 3.7);
+  cam.position.set(0, 0.16, 3.65);
   cam.lookAt(0, 0, 0);
 
   const key = new THREE.DirectionalLight(0xfff6eb, 2.55);
@@ -716,7 +486,8 @@ export function getCustomizeIcons(
   const imgData = ctx.createImageData(SIZE, SIZE);
 
   const bases = {} as Record<BaseKind, string>;
-  const flavors = {} as Record<FlavorId, string>;
+  const flavorsWater = {} as Record<FlavorId, string>;
+  const flavorsMilk = {} as Record<FlavorId, string>;
   const toppings = {} as Record<ToppingId, string>;
 
   try {
@@ -725,7 +496,7 @@ export function getCustomizeIcons(
     renderer.setClearColor(0x000000, 0);
 
     // 1. Two 3D base cubes (Water & Concentrated Milk)
-    const cubeGeo = createRoundedIceCubeGeometry(26);
+    const cubeGeo = createRoundedIceCubeGeometry(22);
     const waterMat = createWaterIceCubeMaterial();
     const milkMat = createMilkIceCubeMaterial();
     const cubeMesh = new THREE.Mesh(cubeGeo, waterMat);
@@ -748,24 +519,48 @@ export function getCustomizeIcons(
     waterMat.dispose();
     milkMat.dispose();
 
-    // 2. Nine uniform-size 3D glossy floating juice droplets / splashes!
+    // 2. Textured circular 3D taste medallions for BOTH Water (translucent icy) & Milk (creamy marbled) bases!
+    const orbGeo = new THREE.SphereGeometry(0.68, 36, 28);
+    const orbMat = createTasteCircleMaterial();
+    const orbMesh = new THREE.Mesh(orbGeo, orbMat);
+    scene.add(orbMesh);
+
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
-    cam.position.set(0, 0.06, 3.35);
-    cam.lookAt(0, 0.02, 0);
+    renderer.toneMappingExposure = 1.08;
+    cam.position.set(0, 0, 3.25);
+    cam.lookAt(0, 0, 0);
 
     for (let i = 0; i < FLAVOR_LIST.length; i++) {
       const flv = FLAVOR_LIST[i];
-      const spec = createJuiceDropSpecimen(flv.id, i);
-      scene.add(spec.object);
+      const spec = FLAVOR_MAP[flv.id];
+      orbMat.uniforms.uCore.value.set(...spec.core);
+      orbMat.uniforms.uMid.value.set(...spec.mid);
+      orbMat.uniforms.uDeep.value.set(...spec.deep);
+      orbMat.uniforms.uCreamAlb.value.set(...spec.creamAlbedo);
+      orbMat.uniforms.uCreamSss.value.set(...spec.creamSss);
+      orbMat.uniforms.uCreamDeep.value.set(...spec.creamDeep);
+      orbMat.uniforms.uCloudiness.value = spec.waterCloudiness;
+      orbMat.uniforms.uSeeds.value = flv.id === 'kiwi' ? 1.0 : 0.0;
+      orbMat.uniforms.uSeed.value = i * 3.17 + 1.1;
+
+      // Water-base icy translucent circle
+      orbMat.uniforms.uIsMilk.value = 0.0;
       renderer.clear(true, true, false);
       renderer.render(scene, cam);
-      flavors[flv.id] = readTargetToDataUrl(renderer, rt, SIZE, pixels, canvas, ctx, imgData, true);
-      scene.remove(spec.object);
-      spec.dispose();
+      flavorsWater[flv.id] = readTargetToDataUrl(renderer, rt, SIZE, pixels, canvas, ctx, imgData, true);
+
+      // Milk-base velvety creamy marbled circle
+      orbMat.uniforms.uIsMilk.value = 1.0;
+      renderer.clear(true, true, false);
+      renderer.render(scene, cam);
+      flavorsMilk[flv.id] = readTargetToDataUrl(renderer, rt, SIZE, pixels, canvas, ctx, imgData, true);
     }
 
-    // 3. Six real 3D topping specimens with photographic ACES tone mapping
+    scene.remove(orbMesh);
+    orbGeo.dispose();
+    orbMat.dispose();
+
+    // 3. Seven real 3D topping specimens with photographic ACES tone mapping
     renderer.toneMappingExposure = 1.18;
     cam.position.set(0, 0.08, 3.25);
     cam.lookAt(0, 0, 0);
@@ -787,6 +582,10 @@ export function getCustomizeIcons(
     rt.dispose();
   }
 
-  cachedIcons = { bases, flavors, toppings };
+  cachedIcons = {
+    bases,
+    flavors: { water: flavorsWater, coconut: flavorsMilk },
+    toppings,
+  };
   return cachedIcons;
 }

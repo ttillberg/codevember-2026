@@ -17,6 +17,7 @@ export type ToppingId =
   | 'chocolate'
   | 'shaved-lemon'
   | 'strawberry'
+  | 'tajin'
   | 'raspberry'
   | 'kaksmulor';
 
@@ -93,17 +94,17 @@ export const FLAVOR_LIST: FlavorOpticalSpec[] = [
   {
     id: 'mango',
     label: 'Mango',
-    swatch: '#f5a61c',
-    sigma: [0.22, 1.52, 8.60],
-    core: [1.68, 1.18, 0.20],
-    mid: [1.46, 0.72, 0.06],
-    deep: [0.98, 0.30, 0.02],
-    waterCloudiness: 0.22,
-    creamAlbedo: [0.92, 0.46, 0.035],
-    creamSss: [1.14, 0.64, 0.09],
-    creamDeep: [0.56, 0.20, 0.010],
-    stain: [0.95, 0.60, 0.10],
-    dropSigma: [0.22, 1.20, 4.40],
+    swatch: '#f29214',
+    sigma: [0.24, 2.45, 9.60],
+    core: [1.48, 0.78, 0.09],
+    mid: [1.24, 0.44, 0.028],
+    deep: [0.82, 0.18, 0.008],
+    waterCloudiness: 0.36,
+    creamAlbedo: [0.90, 0.36, 0.025],
+    creamSss: [1.12, 0.54, 0.07],
+    creamDeep: [0.54, 0.15, 0.008],
+    stain: [0.94, 0.48, 0.06],
+    dropSigma: [0.22, 1.75, 4.90],
   },
   {
     id: 'lemon',
@@ -251,6 +252,7 @@ export const TOPPING_LIST: Array<{ id: ToppingId; label: string; swatch: string 
   { id: 'chocolate', label: 'Chocolate', swatch: '#3d2013' },
   { id: 'shaved-lemon', label: 'Shaved lemon', swatch: '#f5d738' },
   { id: 'strawberry', label: 'Strawberry', swatch: '#d92836' },
+  { id: 'tajin', label: 'Tajín', swatch: '#c84110' },
   { id: 'raspberry', label: 'Raspberry', swatch: '#b9164d' },
   { id: 'kaksmulor', label: 'Kaksmulor', swatch: '#302420' },
 ];
@@ -277,9 +279,9 @@ export const POPSICLE_PRESETS: PopsiclePreset[] = [
   },
   {
     id: 'mango-sunrise',
-    name: 'Mango Sunrise',
+    name: 'Mango Tajín',
     seed: 4,
-    recipe: { base: 'water', flavors: ['mango', 'orange'], toppings: ['raspberry', 'shaved-lemon'] },
+    recipe: { base: 'water', flavors: ['mango'], toppings: ['tajin'] },
   },
   {
     id: 'pink-lemonade',

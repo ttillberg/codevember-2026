@@ -294,6 +294,7 @@ function ensureStudioEnv(): THREE.Texture {
   if (!studioEnv) {
     studioEnv = createMacroStudioEnv(renderer);
     solidScene.environment = studioEnv;
+    surfaceScene.environment = studioEnv;
   }
   return studioEnv;
 }
@@ -633,6 +634,8 @@ solidScene.add(sideKeyLight);
 const backZScene = new THREE.Scene();
 const bubblesScene = new THREE.Scene();
 const iceScene = new THREE.Scene();
+const surfaceScene = new THREE.Scene();
+surfaceScene.add(buildStudioLights());
 const dropsScene = new THREE.Scene();
 
 // === SIMULATION & GENERATIVE POPSICLE STATE ===
@@ -779,6 +782,7 @@ function buildPopsicle(seed: number, startMelt = initialMelt) {
 
   if (fruitAssembly) {
     solidScene.remove(fruitAssembly.group);
+    surfaceScene.remove(fruitAssembly.surfaceGroup);
     fruitAssembly.dispose();
   }
   if (iceSystem) {
@@ -808,6 +812,7 @@ function buildPopsicle(seed: number, startMelt = initialMelt) {
   ensureStudioEnv();
   fruitAssembly = createFruitAssembly(seed, currentRecipe);
   solidScene.add(fruitAssembly.group);
+  surfaceScene.add(fruitAssembly.surfaceGroup);
 
   iceSystem = createPopsicleIceSystem(seed, isMobile, currentRecipe);
   iceScene.add(iceSystem.iceMesh);
@@ -1294,14 +1299,7 @@ canvas.addEventListener('pointerleave', () => {
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// === UI CONTROLS ===
-const customizeStudio = document.getElementById('customize-studio') as HTMLDivElement;
-const custFlavorsEl = document.getElementById('cust-flavors') as HTMLDivElement;
-const custToppingsEl = document.getElementById('cust-toppings') as HTMLDivElement;
-const imgBaseWater = document.getElementById('img-base-water') as HTMLImageElement;
-const imgBaseCoconut = document.getElementById('img-base-coconut') as HTMLImageElement;
-const baseBtns = Array.from(customizeStudio.querySelectorAll<HTMLButtonElement>('[data-base]'));
-
+// === UNIFIED BOTTOM DOCK: PRESETS | Ingredient (cube) · Tastes (textured circles) · Toppings (3D berries/bits) ===
 const presetDock = document.getElementById('preset-dock') as HTMLElement;
 
 const ASSET_BASE = import.meta.env.BASE_URL ?? '/';
@@ -1332,68 +1330,439 @@ for (let i = 0; i < POPSICLE_PRESETS.length; i++) {
       return;
     }
     applyPreset(preset);
-    if (!dockHovered && customizeStudio.hidden) expandPresetDock(1800);
+    if (!dockHovered && activePopover === null) expandPresetDock(1800);
   });
   presetDock.appendChild(btn);
   presetButtons.set(preset.id, btn);
 }
 
-// Etched glass vertical separator + Customize trigger on the main preset selector dock!
+// Etched glass vertical separator dividing PRESETS | Recipe slots
 const presetSep = document.createElement('span');
 presetSep.className = 'preset-sep';
 presetSep.setAttribute('aria-hidden', 'true');
 presetDock.appendChild(presetSep);
 
-const btnCustomize = document.createElement('button');
-btnCustomize.id = 'btn-dock-customize';
-btnCustomize.type = 'button';
-btnCustomize.className = 'preset-btn preset-customize-btn';
-btnCustomize.dataset.label = 'Customize';
-btnCustomize.title = 'Customize popsicle (C)';
-btnCustomize.setAttribute('aria-label', 'Customize popsicle');
-btnCustomize.setAttribute('aria-expanded', 'false');
-btnCustomize.setAttribute('aria-controls', 'customize-studio');
-const custDockImg = document.createElement('img');
-custDockImg.src = `${ASSET_BASE}presets/customize-raspberry.webp`;
-custDockImg.alt = '';
-custDockImg.width = 96;
-custDockImg.height = 96;
-custDockImg.draggable = false;
-custDockImg.decoding = 'async';
-btnCustomize.appendChild(custDockImg);
-presetDock.appendChild(btnCustomize);
+type PopoverKind = 'base' | 'taste' | 'toppings';
+let activePopover: PopoverKind | null = null;
+
+const recipeSlotsEl = document.createElement('div');
+recipeSlotsEl.className = 'recipe-slots';
+presetDock.appendChild(recipeSlotsEl);
+
+function createRecipeSlot(kind: PopoverKind, defaultLabel: string, ariaTitle: string) {
+  const wrap = document.createElement('div');
+  wrap.className = 'recipe-slot-wrap';
+
+  const btn = document.createElement('button');
+  btn.id = `btn-slot-${kind}`;
+  btn.type = 'button';
+  btn.className = `recipe-slot-btn recipe-slot-${kind}`;
+  btn.dataset.slot = kind;
+  btn.dataset.label = defaultLabel;
+  btn.setAttribute('aria-label', defaultLabel);
+  btn.setAttribute('aria-expanded', 'false');
+  btn.setAttribute('aria-haspopup', 'dialog');
+
+  const visual = document.createElement('span');
+  visual.className = `slot-visual slot-${kind === 'taste' ? 'tastes' : kind}`;
+  btn.appendChild(visual);
+
+  const popover = document.createElement('div');
+  popover.className = 'dock-popover';
+  popover.dataset.popover = kind;
+  popover.setAttribute('role', 'dialog');
+  popover.setAttribute('aria-label', ariaTitle);
+  popover.hidden = true;
+
+  const grid = document.createElement('div');
+  grid.className = `pop-grid pop-grid-${kind}`;
+  popover.appendChild(grid);
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (presetDock.classList.contains('is-peeking')) {
+      setPresetDockPeeking(false);
+    }
+    setActivePopover(activePopover === kind ? null : kind);
+  });
+
+  wrap.appendChild(btn);
+  // Portal frameless stacks directly to document.body so dock transforms / mobile scroll NEVER clip them!
+  document.body.appendChild(popover);
+  recipeSlotsEl.appendChild(wrap);
+  return { wrap, btn, visual, popover, grid, closeTimer: null as number | null };
+}
+
+const slotBase = createRecipeSlot('base', 'Ingredient', 'Main Ingredient');
+const slotTaste = createRecipeSlot('taste', 'Tastes', 'Tastes');
+const slotToppings = createRecipeSlot('toppings', 'Toppings', 'Toppings');
+const popoversByKind: Record<
+  PopoverKind,
+  { btn: HTMLButtonElement; popover: HTMLDivElement; closeTimer: number | null }
+> = {
+  base: slotBase,
+  taste: slotTaste,
+  toppings: slotToppings,
+};
+
+interface StackItemMotion {
+  rowFromBottom: number;
+  stackX: number;
+  stackRot: number;
+  riseFrom: number;
+  riseRot: number;
+  fallDist: number;
+  fallDrift: number;
+  fallRot: number;
+  staggerInMs: number;
+  staggerOutMs: number;
+  floatDur: number;
+  floatDelay: number;
+}
+
+function createStackItemButton(
+  label: string,
+  motion: StackItemMotion,
+): { btn: HTMLButtonElement; img: HTMLImageElement } {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pop-item';
+  btn.dataset.tip = label;
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('aria-pressed', 'false');
+
+  btn.style.setProperty('--stack-x', `${motion.stackX.toFixed(1)}px`);
+  btn.style.setProperty('--stack-rot', `${motion.stackRot.toFixed(1)}deg`);
+  btn.style.setProperty('--rise-from', `${motion.riseFrom.toFixed(0)}px`);
+  btn.style.setProperty('--rise-rot', `${motion.riseRot.toFixed(1)}deg`);
+  btn.style.setProperty('--fall-dist', `${motion.fallDist.toFixed(0)}px`);
+  btn.style.setProperty('--fall-drift', `${motion.fallDrift.toFixed(1)}px`);
+  btn.style.setProperty('--fall-rot', `${motion.fallRot.toFixed(1)}deg`);
+  btn.style.setProperty('--stagger-in', `${motion.staggerInMs.toFixed(0)}ms`);
+  btn.style.setProperty('--stagger-out', `${motion.staggerOutMs.toFixed(0)}ms`);
+  btn.style.setProperty('--float-dur', `${motion.floatDur.toFixed(2)}s`);
+  btn.style.setProperty('--float-delay', `${motion.floatDelay.toFixed(2)}s`);
+
+  const floatWrap = document.createElement('span');
+  floatWrap.className = 'pop-item-float';
+  const img = document.createElement('img');
+  img.alt = '';
+  img.draggable = false;
+  floatWrap.appendChild(img);
+  btn.appendChild(floatWrap);
+  return { btn, img };
+}
+
+// 1. Main Ingredient vertical stack (2 big 3D cubes: Water & Concentrated Milk)
+const baseButtons = new Map<BaseKind, HTMLButtonElement>();
+const baseImages = new Map<BaseKind, HTMLImageElement>();
+const BASE_OPTIONS: Array<{ id: BaseKind; label: string }> = [
+  { id: 'water', label: 'Water' },
+  { id: 'coconut', label: 'Concentrated Milk' },
+];
+for (let i = 0; i < BASE_OPTIONS.length; i++) {
+  const opt = BASE_OPTIONS[i];
+  const rowFromBottom = BASE_OPTIONS.length - 1 - i;
+  const side = i % 2 === 0 ? -1 : 1;
+  const { btn, img } = createStackItemButton(opt.label, {
+    rowFromBottom,
+    stackX: side * 3,
+    stackRot: side * -3,
+    riseFrom: 70 + rowFromBottom * 62,
+    riseRot: side * -12,
+    fallDist: 160 + rowFromBottom * 85,
+    fallDrift: side * 12,
+    fallRot: side * 18,
+    staggerInMs: rowFromBottom * 55,
+    staggerOutMs: rowFromBottom * 38,
+    floatDur: 3.4 + i * 0.45,
+    floatDelay: -0.6 - i * 1.1,
+  });
+  btn.dataset.base = opt.id;
+  btn.addEventListener('click', () => {
+    if (opt.id !== currentRecipe.base) {
+      applyRecipe({ ...currentRecipe, base: opt.id });
+    }
+  });
+  slotBase.grid.appendChild(btn);
+  baseButtons.set(opt.id, btn);
+  baseImages.set(opt.id, img);
+}
+
+// 2. Tastes frameless 2-column vertical stack (10 big circular textured orbs adapting to Water vs Milk!)
+const flavorButtons = new Map<FlavorId, HTMLButtonElement>();
+const flavorImages = new Map<FlavorId, HTMLImageElement>();
+const TASTE_COLS = 2;
+const TASTE_ROWS = Math.ceil(FLAVOR_LIST.length / TASTE_COLS);
+for (let i = 0; i < FLAVOR_LIST.length; i++) {
+  const flv = FLAVOR_LIST[i];
+  const col = i % TASTE_COLS;
+  const row = Math.floor(i / TASTE_COLS);
+  const rowFromBottom = TASTE_ROWS - 1 - row;
+  const side = col === 0 ? -1 : 1;
+  const { btn, img } = createStackItemButton(flv.label, {
+    rowFromBottom,
+    stackX: (row % 2 === 0 ? 1 : -1) * 2.5,
+    stackRot: 0,
+    riseFrom: 65 + rowFromBottom * 54,
+    riseRot: side * -10,
+    fallDist: 150 + rowFromBottom * 66,
+    fallDrift: side * (8 + (row % 3) * 4),
+    fallRot: side * (12 + (row % 3) * 6),
+    staggerInMs: rowFromBottom * 34 + col * 18,
+    staggerOutMs: rowFromBottom * 24 + col * 14,
+    floatDur: 3.1 + ((i * 37) % 10) * 0.11,
+    floatDelay: -((i * 53) % 30) * 0.1,
+  });
+  btn.dataset.flavor = flv.id;
+  btn.dataset.col = String(col);
+  btn.addEventListener('click', () => {
+    const cur = [...currentRecipe.flavors];
+    const idx = cur.indexOf(flv.id);
+    if (idx >= 0) {
+      if (currentRecipe.base === 'coconut' || cur.length > 1) {
+        cur.splice(idx, 1);
+      }
+    } else {
+      if (cur.length >= 2) cur.shift();
+      cur.push(flv.id);
+    }
+    applyRecipe({ ...currentRecipe, flavors: cur });
+  });
+  slotTaste.grid.appendChild(btn);
+  flavorButtons.set(flv.id, btn);
+  flavorImages.set(flv.id, img);
+}
+
+// 3. Toppings frameless tall vertical berry stack (7 big 3D berries/toppings rising & falling with gravity!)
+const toppingButtons = new Map<ToppingId, HTMLButtonElement>();
+const toppingImages = new Map<ToppingId, HTMLImageElement>();
+const TOPPING_STACK_X = [-4, 5, -3, 4, -5, 3, -2];
+const TOPPING_STACK_ROT = [-5, 6, -4, 5, -6, 4, -3];
+for (let i = 0; i < TOPPING_LIST.length; i++) {
+  const top = TOPPING_LIST[i];
+  const rowFromBottom = TOPPING_LIST.length - 1 - i;
+  const side = i % 2 === 0 ? -1 : 1;
+  const { btn, img } = createStackItemButton(top.label, {
+    rowFromBottom,
+    stackX: TOPPING_STACK_X[i % TOPPING_STACK_X.length],
+    stackRot: TOPPING_STACK_ROT[i % TOPPING_STACK_ROT.length],
+    riseFrom: 75 + rowFromBottom * 58,
+    riseRot: side * 18,
+    fallDist: 230 + rowFromBottom * 82,
+    fallDrift: side * (11 + (i % 3) * 6),
+    fallRot: side * (24 + (i % 4) * 9),
+    staggerInMs: rowFromBottom * 34,
+    staggerOutMs: rowFromBottom * 18,
+    floatDur: 3.0 + ((i * 41) % 11) * 0.11,
+    floatDelay: -((i * 61) % 32) * 0.1,
+  });
+  btn.dataset.topping = top.id;
+  btn.addEventListener('click', () => {
+    const cur = [...currentRecipe.toppings];
+    const idx = cur.indexOf(top.id);
+    if (idx >= 0) cur.splice(idx, 1);
+    else cur.push(top.id);
+    applyRecipe({ ...currentRecipe, toppings: cur });
+  });
+  slotToppings.grid.appendChild(btn);
+  toppingButtons.set(top.id, btn);
+  toppingImages.set(top.id, img);
+}
 
 let dockHideTimer: number | null = null;
 let dockHovered = false;
-let customizeIconsLoaded = false;
+let customizeIcons: ReturnType<typeof getCustomizeIcons> | null = null;
 
 function ensureCustomizeIcons() {
-  if (customizeIconsLoaded) return;
-  const icons = getCustomizeIcons(renderer, ensureStudioEnv());
-  imgBaseWater.src = icons.bases.water;
-  imgBaseCoconut.src = icons.bases.coconut;
-  for (const [id, img] of flavorImages) {
-    img.src = icons.flavors[id];
-  }
+  if (customizeIcons) return customizeIcons;
+  customizeIcons = getCustomizeIcons(renderer, ensureStudioEnv());
+  baseImages.get('water')!.src = customizeIcons.bases.water;
+  baseImages.get('coconut')!.src = customizeIcons.bases.coconut;
   for (const [id, img] of toppingImages) {
-    img.src = icons.toppings[id];
+    img.src = customizeIcons.toppings[id];
   }
-  customizeIconsLoaded = true;
+  syncTasteIconTextures();
+  renderRecipeSlots();
+  return customizeIcons;
 }
 
-function setCustomizeOpen(open: boolean) {
-  if (open) {
+function syncTasteIconTextures() {
+  if (!customizeIcons) return;
+  const set = customizeIcons.flavors[currentRecipe.base];
+  for (const [id, img] of flavorImages) {
+    img.src = set[id];
+  }
+}
+
+function renderRecipeSlots() {
+  if (!customizeIcons) return;
+
+  // Slot 1: Main Ingredient (active 3D Water or Milk cube)
+  slotBase.visual.dataset.count = '1';
+  slotBase.visual.innerHTML = '';
+  const baseImg = document.createElement('img');
+  baseImg.className = 'slot-thumb';
+  baseImg.src = customizeIcons.bases[currentRecipe.base];
+  baseImg.alt = '';
+  baseImg.draggable = false;
+  slotBase.visual.appendChild(baseImg);
+  slotBase.btn.dataset.label = currentRecipe.base === 'water' ? 'Water' : 'Milk';
+
+  // Slot 2: Tastes (0, 1, or 2 textured circles matching active Water/Milk base!)
+  const flvSet = customizeIcons.flavors[currentRecipe.base];
+  const flvList = currentRecipe.flavors;
+  slotTaste.visual.innerHTML = '';
+  if (flvList.length === 0) {
+    slotTaste.visual.dataset.count = '0';
+    const empty = document.createElement('span');
+    empty.className = currentRecipe.base === 'coconut' ? 'slot-empty-milk' : 'slot-empty-ring';
+    if (currentRecipe.base !== 'coconut') empty.textContent = '+';
+    slotTaste.visual.appendChild(empty);
+    slotTaste.btn.dataset.label = currentRecipe.base === 'coconut' ? 'Pure Milk' : 'Tastes';
+  } else {
+    slotTaste.visual.dataset.count = String(Math.min(2, flvList.length));
+    for (let i = 0; i < Math.min(2, flvList.length); i++) {
+      const img = document.createElement('img');
+      img.className = 'slot-thumb';
+      img.src = flvSet[flvList[i]];
+      img.alt = '';
+      img.draggable = false;
+      slotTaste.visual.appendChild(img);
+    }
+    const labels = flvList.map((id) => FLAVOR_LIST.find((f) => f.id === id)?.label ?? id);
+    slotTaste.btn.dataset.label = labels.join(' + ');
+  }
+
+  // Slot 3: Toppings (graceful 0 / 1 / 2 / 3 / 4+ multi-item cluster!)
+  const topList = currentRecipe.toppings;
+  slotToppings.visual.innerHTML = '';
+  if (topList.length === 0) {
+    slotToppings.visual.dataset.count = '0';
+    const empty = document.createElement('span');
+    empty.className = 'slot-empty-ring';
+    empty.textContent = '+';
+    slotToppings.visual.appendChild(empty);
+    slotToppings.btn.dataset.label = 'Toppings';
+  } else {
+    const shown = Math.min(4, topList.length);
+    slotToppings.visual.dataset.count = String(shown);
+    for (let i = 0; i < shown; i++) {
+      const img = document.createElement('img');
+      img.className = 'slot-thumb';
+      img.src = customizeIcons.toppings[topList[i]];
+      img.alt = '';
+      img.draggable = false;
+      slotToppings.visual.appendChild(img);
+    }
+    if (topList.length > 4) {
+      const badge = document.createElement('span');
+      badge.className = 'slot-more-badge';
+      badge.textContent = `+${topList.length - 4}`;
+      slotToppings.visual.appendChild(badge);
+    }
+    const labels = topList.map((id) => TOPPING_LIST.find((t) => t.id === id)?.label ?? id);
+    slotToppings.btn.dataset.label = labels.length <= 2 ? labels.join(' + ') : `${labels.length} Toppings`;
+  }
+}
+
+function positionPopover(kind: PopoverKind) {
+  const entry = popoversByKind[kind];
+  const pop = entry.popover;
+  if (pop.hidden) return;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const dockRect = presetDock.getBoundingClientRect();
+  const btnRect = entry.btn.getBoundingClientRect();
+  const popW = pop.offsetWidth;
+  const bottomPx = Math.max(72, Math.round(vh - dockRect.top + 14));
+  const desiredLeft = btnRect.left + btnRect.width * 0.5 - popW * 0.5;
+  const clampedLeft = Math.max(10, Math.min(vw - popW - 10, Math.round(desiredLeft)));
+  pop.style.bottom = `${bottomPx}px`;
+  pop.style.left = `${clampedLeft}px`;
+}
+
+function positionActivePopover() {
+  if (activePopover !== null) positionPopover(activePopover);
+}
+
+const POPOVER_FALL_DURATION_MS = 620;
+
+function openPopoverEntry(kind: PopoverKind) {
+  const entry = popoversByKind[kind];
+  const pop = entry.popover;
+  if (entry.closeTimer !== null) {
+    window.clearTimeout(entry.closeTimer);
+    entry.closeTimer = null;
+  }
+  const alreadyOpen = !pop.hidden && pop.classList.contains('is-open') && !pop.classList.contains('is-closing');
+  if (alreadyOpen) {
+    positionPopover(kind);
+    return;
+  }
+  pop.classList.remove('is-closing', 'is-open');
+  pop.hidden = false;
+  positionPopover(kind);
+  // Force layout reflow so the spring-up keyframes replay crisply even if re-opened mid-fall
+  void pop.offsetWidth;
+  pop.classList.add('is-open');
+}
+
+function closePopoverEntry(kind: PopoverKind) {
+  const entry = popoversByKind[kind];
+  const pop = entry.popover;
+  if (pop.hidden || pop.classList.contains('is-closing')) return;
+  if (entry.closeTimer !== null) {
+    window.clearTimeout(entry.closeTimer);
+    entry.closeTimer = null;
+  }
+  pop.classList.remove('is-open');
+  void pop.offsetWidth;
+  pop.classList.add('is-closing');
+  entry.closeTimer = window.setTimeout(() => {
+    entry.closeTimer = null;
+    pop.classList.remove('is-closing');
+    pop.hidden = true;
+  }, POPOVER_FALL_DURATION_MS);
+}
+
+function setActivePopover(next: PopoverKind | null) {
+  const wasOpen = activePopover !== null;
+  activePopover = next;
+  const isOpen = activePopover !== null;
+  if (isOpen) {
     ensureCustomizeIcons();
     clearPresetDockTimer();
     setPresetDockPeeking(false);
-    // Present the popsicle fresh out of the fridge with some frost cleared so colors & toppings read clearly!
-    syncSystemsToMelt(CUSTOMIZE_PREVIEW_MELT, true);
+    // Lightly defrost fresh popsicle only if still deeply frosted so colors & toppings read clearly while customizing
+    if (!wasOpen && meltState.melt < CUSTOMIZE_PREVIEW_MELT) {
+      syncSystemsToMelt(CUSTOMIZE_PREVIEW_MELT, true);
+    }
   }
-  customizeStudio.hidden = !open;
-  btnCustomize.setAttribute('aria-expanded', String(open));
-  if (!open && !dockHovered && !paused) {
+  presetDock.classList.toggle('has-popover', isOpen);
+  for (const kind of ['base', 'taste', 'toppings'] as const) {
+    const entry = popoversByKind[kind];
+    const openHere = activePopover === kind;
+    entry.btn.setAttribute('aria-expanded', String(openHere));
+    if (openHere) {
+      openPopoverEntry(kind);
+    } else {
+      closePopoverEntry(kind);
+    }
+  }
+  if (isOpen) {
+    requestAnimationFrame(positionActivePopover);
+  }
+  if (!isOpen && !dockHovered && !paused) {
     schedulePresetDockHide(1100);
   }
+}
+
+window.addEventListener('resize', positionActivePopover, { passive: true });
+presetDock.addEventListener('scroll', positionActivePopover, { passive: true });
+
+function setCustomizeOpen(open: boolean) {
+  setActivePopover(open ? (activePopover ?? 'taste') : null);
 }
 
 function updatePresetPeekShift() {
@@ -1421,7 +1790,7 @@ function shouldKeepPresetDockVisible(): boolean {
 
 function setPresetDockPeeking(peeking: boolean) {
   clearPresetDockTimer();
-  if (peeking && customizeStudio.hidden && !shouldKeepPresetDockVisible()) {
+  if (peeking && activePopover === null && !shouldKeepPresetDockVisible()) {
     updatePresetPeekShift();
     presetDock.classList.add('is-peeking');
   } else {
@@ -1430,11 +1799,11 @@ function setPresetDockPeeking(peeking: boolean) {
 }
 
 function schedulePresetDockHide(delayMs = 1150) {
-  if (paused || dockHovered || !customizeStudio.hidden || shouldKeepPresetDockVisible()) return;
+  if (paused || dockHovered || activePopover !== null || shouldKeepPresetDockVisible()) return;
   clearPresetDockTimer();
   dockHideTimer = window.setTimeout(() => {
     dockHideTimer = null;
-    if (!dockHovered && customizeStudio.hidden && !shouldKeepPresetDockVisible() && !presetDock.matches(':focus-within')) {
+    if (!dockHovered && activePopover === null && !shouldKeepPresetDockVisible() && !presetDock.matches(':focus-within')) {
       setPresetDockPeeking(true);
     }
   }, delayMs);
@@ -1443,14 +1812,14 @@ function schedulePresetDockHide(delayMs = 1150) {
 mobileDockMQ.addEventListener('change', () => {
   if (shouldKeepPresetDockVisible()) {
     setPresetDockPeeking(false);
-  } else if (!dockHovered && customizeStudio.hidden && !paused) {
+  } else if (!dockHovered && activePopover === null && !paused) {
     schedulePresetDockHide(1100);
   }
 });
 
 function expandPresetDock(autoHideMs?: number) {
   setPresetDockPeeking(false);
-  if (autoHideMs !== undefined && customizeStudio.hidden) {
+  if (autoHideMs !== undefined && activePopover === null) {
     schedulePresetDockHide(autoHideMs);
   }
 }
@@ -1475,28 +1844,28 @@ presetDock.addEventListener('focusout', () => {
   schedulePresetDockHide(1100);
 });
 
-// Tapping the canvas collapses an expanded desktop dock right away (unless Customize studio is open)
+// Tapping the canvas collapses an expanded desktop dock right away (unless a popover is open)
 canvas.addEventListener(
   'pointerdown',
   () => {
-    if (!dockHovered && !paused && customizeStudio.hidden && !presetDock.classList.contains('is-peeking')) {
+    if (!dockHovered && !paused && activePopover === null && !presetDock.classList.contains('is-peeking')) {
       setPresetDockPeeking(true);
     }
   },
   { passive: true },
 );
 
-// Tapping/clicking anywhere outside the Customize controls (without dragging to orbit/scroll) closes Customize!
+// Clicking/tapping anywhere outside the dock & popovers (without dragging to orbit!) closes the active popover!
 let custOutsideTap: { id: number; x: number; y: number } | null = null;
 window.addEventListener(
   'pointerdown',
   (e) => {
-    if (customizeStudio.hidden || !e.isPrimary) {
+    if (activePopover === null || !e.isPrimary) {
       custOutsideTap = null;
       return;
     }
     const target = e.target instanceof Element ? e.target : null;
-    if (target?.closest('.float-obj, #cust-mobile-tabs, #preset-dock, .plate a')) {
+    if (target?.closest('#preset-dock, .dock-popover, .plate a')) {
       custOutsideTap = null;
       return;
     }
@@ -1510,8 +1879,8 @@ window.addEventListener(
     if (!custOutsideTap || e.pointerId !== custOutsideTap.id) return;
     const dist = Math.hypot(e.clientX - custOutsideTap.x, e.clientY - custOutsideTap.y);
     custOutsideTap = null;
-    if (dist < 8 && !customizeStudio.hidden) {
-      setCustomizeOpen(false);
+    if (dist < 8 && activePopover !== null) {
+      setActivePopover(null);
     }
   },
   { passive: true },
@@ -1526,167 +1895,32 @@ window.addEventListener(
 
 function applyPreset(preset: PopsiclePreset) {
   const isSamePreset = recipesMatch(currentRecipe, preset.recipe);
+  if (activePopover !== null) {
+    setActivePopover(null);
+  }
   currentRecipe = normalizeRecipe(preset.recipe);
-  // Always start a fresh melt cycle (lightly defrosted if Customize view is open, fresh freezer frost otherwise)
+  // Always start a fresh melt cycle
   const nextSeed = isSamePreset ? currentSeed + 1 : preset.seed;
-  const startMelt = customizeStudio.hidden ? DEFAULT_INITIAL_MELT : CUSTOMIZE_PREVIEW_MELT;
-  buildPopsicle(nextSeed, startMelt);
+  buildPopsicle(nextSeed, DEFAULT_INITIAL_MELT);
 }
 
 function syncPresetUI() {
-  let matchedAnyPreset = false;
   for (let i = 0; i < POPSICLE_PRESETS.length; i++) {
     const preset = POPSICLE_PRESETS[i];
     const btn = presetButtons.get(preset.id);
     if (!btn) continue;
     const active = recipesMatch(currentRecipe, preset.recipe);
-    if (active) matchedAnyPreset = true;
     btn.setAttribute('aria-pressed', String(active));
     btn.title = active
       ? `${preset.name} — click for new mix (${i + 1})`
       : `${preset.name} (${i + 1})`;
   }
-  btnCustomize.dataset.customActive = String(!matchedAnyPreset);
   updatePresetPeekShift();
 }
 
-// Organic hand-drawn fine-liner ink loop paths so every selected floating item feels individually sketched!
-const OBJ_PEN_PATHS = [
-  'M22 21 C44 8, 86 11, 100 31 C111 49, 103 80, 79 90 C50 100, 17 92, 11 68 C5 44, 21 19, 49 14',
-  'M89 19 C65 7, 25 13, 13 35 C3 56, 14 85, 42 92 C72 99, 103 85, 107 61 C110 37, 92 16, 65 13',
-  'M27 16 C56 6, 95 16, 105 40 C113 62, 96 89, 68 94 C38 99, 10 83, 9 57 C8 32, 28 14, 57 12',
-  'M84 15 C55 7, 19 18, 11 44 C4 68, 22 92, 51 95 C81 98, 107 80, 108 55 C109 30, 88 12, 60 11',
-];
-
-// Clean, symmetrical 3 + 4 + 3 organic constellation for all 10 uniform-size 3D juice droplets (left wing)
-const TASTE_FLOAT_LAYOUT: Array<{ x: number; y: number; size: number; rot: number }> = [
-  { x: 42, y: 6, size: 64, rot: -4 },       // mango
-  { x: 126, y: 2, size: 64, rot: 4 },       // lemon
-  { x: 210, y: 8, size: 64, rot: -3 },      // orange
-  { x: 4, y: 94, size: 64, rot: 3 },        // kiwi
-  { x: 86, y: 90, size: 64, rot: -4 },      // watermelon
-  { x: 168, y: 96, size: 64, rot: 4 },      // strawberry
-  { x: 250, y: 90, size: 64, rot: -3 },     // raspberry
-  { x: 42, y: 182, size: 64, rot: 3 },      // blueberry
-  { x: 126, y: 178, size: 64, rot: -4 },    // banana
-  { x: 210, y: 184, size: 64, rot: 4 },     // chocolate
-];
-
-// Clean, balanced 2×3 organic constellation for the 6 real 3D toppings (right wing; harmonized sizes!)
-const TOPPING_FLOAT_LAYOUT: Array<{ x: number; y: number; size: number; rot: number }> = [
-  { x: 18, y: 14, size: 92, rot: -4 },      // blueberry
-  { x: 148, y: 20, size: 84, rot: 5 },      // chocolate
-  { x: 22, y: 132, size: 86, rot: 3 },      // shaved-lemon
-  { x: 144, y: 126, size: 94, rot: -5 },    // strawberry
-  { x: 16, y: 244, size: 96, rot: 4 },      // raspberry
-  { x: 148, y: 252, size: 84, rot: -3 },    // kaksmulor
-];
-
-const flavorButtons = new Map<FlavorId, HTMLButtonElement>();
-const flavorImages = new Map<FlavorId, HTMLImageElement>();
-for (let i = 0; i < FLAVOR_LIST.length; i++) {
-  const flv = FLAVOR_LIST[i];
-  const lay = TASTE_FLOAT_LAYOUT[i % TASTE_FLOAT_LAYOUT.length];
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'float-obj taste-chunk-btn';
-  btn.dataset.flavor = flv.id;
-  btn.dataset.tip = flv.label;
-  btn.setAttribute('aria-label', flv.label);
-  btn.setAttribute('aria-pressed', 'false');
-  btn.style.setProperty('--fx', `${lay.x}px`);
-  btn.style.setProperty('--fy', `${lay.y}px`);
-  btn.style.setProperty('--size', `${lay.size}px`);
-  btn.style.setProperty('--rot', `${lay.rot}deg`);
-  btn.style.setProperty('--float-delay', `${(-0.5 - i * 0.67).toFixed(2)}s`);
-  btn.style.setProperty('--float-dur', `${(4.7 + (i % 4) * 0.45).toFixed(2)}s`);
-  const penPath = OBJ_PEN_PATHS[(i + 1) % OBJ_PEN_PATHS.length];
-  btn.innerHTML = `<svg class="pen-ring" viewBox="0 0 116 102" fill="none" aria-hidden="true"><path pathLength="1" d="${penPath}" /></svg><span class="obj-stage"></span>`;
-  const img = document.createElement('img');
-  img.alt = '';
-  img.draggable = false;
-  btn.querySelector('.obj-stage')!.appendChild(img);
-  btn.addEventListener('click', () => {
-    const cur = [...currentRecipe.flavors];
-    const idx = cur.indexOf(flv.id);
-    if (idx >= 0) {
-      if (currentRecipe.base === 'coconut' || cur.length > 1) {
-        cur.splice(idx, 1);
-      }
-    } else {
-      if (cur.length >= 2) cur.shift();
-      cur.push(flv.id);
-    }
-    applyRecipe({ ...currentRecipe, flavors: cur });
-  });
-  custFlavorsEl.appendChild(btn);
-  flavorButtons.set(flv.id, btn);
-  flavorImages.set(flv.id, img);
-}
-
-const toppingButtons = new Map<ToppingId, HTMLButtonElement>();
-const toppingImages = new Map<ToppingId, HTMLImageElement>();
-for (let i = 0; i < TOPPING_LIST.length; i++) {
-  const top = TOPPING_LIST[i];
-  const lay = TOPPING_FLOAT_LAYOUT[i % TOPPING_FLOAT_LAYOUT.length];
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'float-obj topping-card';
-  btn.dataset.topping = top.id;
-  btn.dataset.tip = top.label;
-  btn.setAttribute('aria-label', top.label);
-  btn.setAttribute('aria-pressed', 'false');
-  btn.style.setProperty('--fx', `${lay.x}px`);
-  btn.style.setProperty('--fy', `${lay.y}px`);
-  btn.style.setProperty('--size', `${lay.size}px`);
-  btn.style.setProperty('--rot', `${lay.rot}deg`);
-  btn.style.setProperty('--float-delay', `${(-0.8 - i * 0.92).toFixed(2)}s`);
-  btn.style.setProperty('--float-dur', `${(4.9 + (i % 3) * 0.52).toFixed(2)}s`);
-  const penPath = OBJ_PEN_PATHS[i % OBJ_PEN_PATHS.length];
-  btn.innerHTML = `<svg class="pen-ring" viewBox="0 0 116 102" fill="none" aria-hidden="true"><path pathLength="1" d="${penPath}" /></svg><span class="obj-stage"></span>`;
-  const img = document.createElement('img');
-  img.alt = '';
-  img.draggable = false;
-  btn.querySelector('.obj-stage')!.appendChild(img);
-  btn.addEventListener('click', () => {
-    const cur = [...currentRecipe.toppings];
-    const idx = cur.indexOf(top.id);
-    if (idx >= 0) cur.splice(idx, 1);
-    else cur.push(top.id);
-    applyRecipe({ ...currentRecipe, toppings: cur });
-  });
-  custToppingsEl.appendChild(btn);
-  toppingButtons.set(top.id, btn);
-  toppingImages.set(top.id, img);
-}
-
-// Mobile bottom category switcher (Base · Taste · Toppings): shows one clean floating row at a time
-const custMobileTabs = Array.from(document.querySelectorAll<HTMLButtonElement>('#cust-mobile-tabs .cust-tab-btn'));
-function setMobileCustomizeTab(tab: 'base' | 'taste' | 'toppings') {
-  customizeStudio.dataset.mobileTab = tab;
-  for (const tBtn of custMobileTabs) {
-    tBtn.setAttribute('aria-selected', String(tBtn.dataset.tab === tab));
-  }
-}
-for (const tBtn of custMobileTabs) {
-  tBtn.addEventListener('click', () => {
-    const tab = tBtn.dataset.tab as 'base' | 'taste' | 'toppings' | undefined;
-    if (tab) setMobileCustomizeTab(tab);
-  });
-}
-
-for (const btn of baseBtns) {
-  btn.addEventListener('click', () => {
-    const nextBase = btn.dataset.base as BaseKind;
-    if (nextBase !== currentRecipe.base) {
-      applyRecipe({ ...currentRecipe, base: nextBase });
-    }
-  });
-}
-
 function syncCustomizeUI() {
-  for (const btn of baseBtns) {
-    btn.setAttribute('aria-pressed', String(btn.dataset.base === currentRecipe.base));
+  for (const [id, btn] of baseButtons) {
+    btn.setAttribute('aria-pressed', String(id === currentRecipe.base));
   }
   for (const [id, btn] of flavorButtons) {
     btn.setAttribute('aria-pressed', String(currentRecipe.flavors.includes(id)));
@@ -1694,6 +1928,8 @@ function syncCustomizeUI() {
   for (const [id, btn] of toppingButtons) {
     btn.setAttribute('aria-pressed', String(currentRecipe.toppings.includes(id)));
   }
+  syncTasteIconTextures();
+  renderRecipeSlots();
   syncPresetUI();
 }
 
@@ -1756,10 +1992,6 @@ function applyToppingDebugState(syncRecipe = true) {
   renderDirty = true;
 }
 
-btnCustomize.addEventListener('click', () => {
-  setCustomizeOpen(customizeStudio.hidden);
-});
-
 function applyDropDebug(partial: Partial<DropDebugParams>, forceRepack = false, persist = true) {
   Object.assign(dropDebug, partial);
   if (partial.bottomPool !== undefined) {
@@ -1794,7 +2026,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Escape') {
-    if (!customizeStudio.hidden) setCustomizeOpen(false);
+    if (activePopover !== null) setActivePopover(null);
     return;
   }
   if (e.code === 'Space') {
@@ -1809,7 +2041,7 @@ window.addEventListener('keydown', (e) => {
   } else if (e.key === 'n' || e.key === 'N') {
     buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
   } else if (e.key === 'c' || e.key === 'C') {
-    setCustomizeOpen(customizeStudio.hidden);
+    setCustomizeOpen(activePopover === null);
   } else if (e.key >= '1' && e.key <= '9') {
     const preset = POPSICLE_PRESETS[Number(e.key) - 1];
     if (preset) {
@@ -2153,6 +2385,10 @@ function renderPicturePasses() {
     renderer.render(solidScene, camera);
   }
   renderer.render(iceScene, camera);
+  // Superficial toppings (e.g. Tajín spice coating) render crisp right on top of the live ice with hardware depth test!
+  if (fruitAssembly.surfaceGroup.children.length > 0) {
+    renderer.render(surfaceScene, camera);
+  }
 
   // --- PASS 6: Separate Water Drops (Additive Metaball Liquid Field + Optical Resolve + 3D Pendant Drops!) ---
   waterDrops.uniforms.uSceneTex.value = postIceRT.texture;
@@ -2276,7 +2512,7 @@ function tick(now: number) {
   }
 
   // Pause ambient melting while Customize studio is open so the popsicle stays fresh & lightly frosted while editing!
-  const dt = paused || !customizeStudio.hidden ? 0 : rawDt;
+  const dt = paused || activePopover !== null ? 0 : rawDt;
 
   // Advance smooth NEST-style crossfade from wireframe drawing into the warmed photorealistic popsicle!
   if (revealing && reveal < 1) {
@@ -2503,6 +2739,7 @@ async function bootAsync() {
   }
 
   revealing = true;
+  ensureCustomizeIcons();
   document.body.classList.remove('loading');
   updatePresetPeekShift();
   schedulePresetDockHide(2600);
@@ -2512,6 +2749,7 @@ async function bootAsync() {
 if (paused && !holdLoader) {
   // Deterministic paused boot (headless verification & preset icon prerendering): ready on frame 0!
   buildPopsicle(currentSeed, initialMelt);
+  ensureCustomizeIcons();
   if (toppingDebugMode !== 'off' || floatAirRaspberry) {
     applyToppingDebugState(true);
   }

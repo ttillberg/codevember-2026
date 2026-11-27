@@ -2,13 +2,16 @@ import * as THREE from 'three';
 import { clamp, fbm3, mulberry32, smoothstep } from './rng';
 import {
   baseHalfWidthAt,
+  evaluatePopsicleVertex,
   ExactIceSurfaceInfo,
   getMeltBounds,
   iceContainmentDepth,
   MeltFieldState,
   POPSICLE,
   prepareProfileFrame,
+  prepareProfileRow,
   ProfileFrameCache,
+  ProfileRowCache,
   sampleExactIceSurface,
   sampleIceContainment,
   sampleLocalHeat,
@@ -117,8 +120,10 @@ export interface ToppingDebugStage {
 }
 
 export interface FruitAssembly {
-  /** Group containing all solid fruits + wooden stick */
+  /** Group containing all interior solid fruits + wooden stick */
   group: THREE.Group;
+  /** Group containing superficial surface-only toppings (e.g. Tajín) rendered post-ice with hardware depth test */
+  surfaceGroup: THREE.Group;
   stickMesh: THREE.Mesh;
   stickUniforms: {
     uIceBottomY: { value: number };
@@ -1608,6 +1613,126 @@ function createLemonZestMaterial(tex: ToppingTextureSet): THREE.MeshPhysicalMate
   });
 }
 
+/**
+ * Compact 20-triangle irregular crushed chili-flake / coarse salt crystal geometry for instanced superficial Tajín.
+ */
+function createTajinFlakeGeometry(seed = 911): THREE.BufferGeometry {
+  const geo = new THREE.IcosahedronGeometry(1, 0);
+  const rand = mulberry32(seed);
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    const jitter = 0.78 + rand() * 0.44;
+    // Slightly angular flattened chili flake profile (local +Z aligns with popsicle outward normal)
+    pos.setXYZ(i, v.x * jitter * 1.15, v.y * jitter * 0.92, v.z * jitter * 0.48);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function createTajinMaterial(forSurfacePass = true): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.86,
+    metalness: 0.0,
+    flatShading: true,
+    envMapIntensity: 0.14,
+  });
+  if (forSurfacePass) {
+    // Write postIceRT.a = 0.25 (open-surface tag) so Pass 6b's berry-ice capillary seam blur
+    // never blurs crisp superficial Tajín flakes sitting over the buried wooden stick or embedded fruits!
+    mat.customProgramCacheKey = () => 'tajin-surface-tag-v1';
+    mat.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+      gl_FragColor.a = 0.25;`,
+      );
+    };
+  }
+  return mat;
+}
+
+/**
+ * Picks authentic 5-part Tajín seasoning grain species (fiery guajillo/árbol chili flakes,
+ * warm paprika-amber shreds, dehydrated lime-chili flecks, coarse sea-salt crystals, and
+ * dark toasted chili skin specks) with matching per-instance RGB color & anisotropic grain scale.
+ */
+function pickTajinGrainStyle(
+  rand: () => number,
+  outColor: THREE.Color,
+  outScale: THREE.Vector3,
+  scaleMul = 1.0,
+): void {
+  // ~80% ultra-fine chili-lime-salt powder specks (50% smaller!) + ~20% crisp coarse crushed chili flakes & salt crystals!
+  const isPowder = rand() < 0.80;
+  const sizeMul = isPowder ? 0.21 + rand() * 0.14 : 0.90 + Math.pow(rand(), 1.35) * 0.46;
+  const mul = scaleMul * sizeMul;
+
+  const roll = rand();
+  if (roll < 0.44) {
+    // Rich fiery red-orange guajillo & árbol chili flakes / powder
+    const t = rand();
+    outColor.setRGB(
+      (178 + t * 44) / 255,
+      (34 + t * 34) / 255,
+      (6 + t * 10) / 255,
+      THREE.SRGBColorSpace,
+    );
+    const w = (0.0085 + rand() * 0.0095) * mul;
+    const h = w * (isPowder ? 0.78 + rand() * 0.36 : 0.56 + rand() * 0.64);
+    outScale.set(w, h, (0.0038 + rand() * 0.003) * mul);
+  } else if (roll < 0.72) {
+    // Warm paprika / toasted ancho burnt-orange flakes / powder
+    const t = rand();
+    outColor.setRGB(
+      (204 + t * 30) / 255,
+      (76 + t * 44) / 255,
+      (10 + t * 12) / 255,
+      THREE.SRGBColorSpace,
+    );
+    const w = (0.008 + rand() * 0.009) * mul;
+    const h = w * (isPowder ? 0.78 + rand() * 0.36 : 0.60 + rand() * 0.58);
+    outScale.set(w, h, (0.0038 + rand() * 0.003) * mul);
+  } else if (roll < 0.85) {
+    // Dehydrated lime zest & golden chili powder flecks
+    const t = rand();
+    outColor.setRGB(
+      (222 + t * 22) / 255,
+      (138 + t * 38) / 255,
+      (26 + t * 22) / 255,
+      THREE.SRGBColorSpace,
+    );
+    const w = (0.007 + rand() * 0.007) * mul;
+    const h = w * (0.72 + rand() * 0.45);
+    outScale.set(w, h, (0.0034 + rand() * 0.0028) * mul);
+  } else if (roll < 0.93) {
+    // Sparkling sea-salt & citric acid crystals / fine salt dust
+    const t = rand();
+    outColor.setRGB(
+      (236 + t * 16) / 255,
+      (214 + t * 22) / 255,
+      (178 + t * 28) / 255,
+      THREE.SRGBColorSpace,
+    );
+    const s = (0.0062 + rand() * 0.0055) * mul;
+    outScale.set(s * (0.85 + rand() * 0.35), s * (0.85 + rand() * 0.35), s * 0.88);
+  } else {
+    // Dark toasted chili skin & charred seed specks (crucial macro contrast!)
+    const t = rand();
+    outColor.setRGB(
+      (52 + t * 30) / 255,
+      (16 + t * 12) / 255,
+      (7 + t * 8) / 255,
+      THREE.SRGBColorSpace,
+    );
+    const w = (0.0068 + rand() * 0.0068) * mul;
+    const h = w * (0.68 + rand() * 0.50);
+    outScale.set(w, h, (0.0034 + rand() * 0.0028) * mul);
+  }
+}
+
 function createKaksmulorMaterial(tex: ToppingTextureSet): THREE.MeshPhysicalMaterial {
   return new THREE.MeshPhysicalMaterial({
     map: tex.albedo,
@@ -2148,18 +2273,22 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
     }
   }
 
-  // Chocolate: abundant smaller rounded dark-chocolate drops & pearls scattered harmoniously top to bottom!
+  // Chocolate: 50% chunky dark-chocolate drops/pearls (too heavy to ride syrup -> cleanly drop under gravity)
+  // and 50% finely divided chocolate bits (divided by 2, 3, or 4 -> tiny flecks that ride the melt flow to the floor!).
   if (hasChocolate) {
-    const dropCount = largePool.length === 0 ? 18 : 12;
-    for (let n = 0; n < dropCount; n++) {
-      const yMin = -0.84 + (n / dropCount) * 1.54;
-      const yMax = Math.min(0.80, yMin + 0.22);
-      const r = 0.040 + rand() * 0.016;
+    const totalChoc = largePool.length === 0 ? 72 : 50;
+    const chunkyCount = Math.floor(totalChoc * 0.5);
+    const fineCount = totalChoc - chunkyCount;
+    for (let n = 0; n < chunkyCount; n++) {
+      const yMin = -0.84 + (n / chunkyCount) * 1.56;
+      const yMax = Math.min(0.82, yMin + 0.22);
+      const r = n % 2 === 0 ? 0.038 + rand() * 0.018 : 0.028 + rand() * 0.014;
       tryPlace('chocolate', r, yMin, yMax, n % 3 === 0 ? -0.012 : 0.056);
     }
-    const pearlCount = largePool.length === 0 ? 54 : 38;
-    for (let n = 0; n < pearlCount; n++) {
-      const r = 0.020 + rand() * 0.018;
+    for (let n = 0; n < fineCount; n++) {
+      const baseR = 0.024 + rand() * 0.030;
+      const divisor = rand() < 0.34 ? 2 : rand() < 0.67 ? 3 : 4;
+      const r = Math.min(0.022, baseR / divisor);
       tryPlace('chocolate', r, -0.86, 0.84, n % 3 === 0 ? -0.014 : 0.060);
     }
   }
@@ -2197,6 +2326,7 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
 
 export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAULT_RECIPE): FruitAssembly {
   const group = new THREE.Group();
+  const surfaceGroup = new THREE.Group();
   const disposables: Array<{ dispose(): void }> = [];
   const palette = resolveOpticalPalette(recipe);
 
@@ -2461,6 +2591,8 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         geo = createKaksmulorGeometry(seed * 179 + idx * 41 + 23, isChunk);
         break;
       }
+      case 'tajin':
+        return;
     }
     disposables.push(geo);
 
@@ -2591,11 +2723,16 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       if (f.thawUniform) f.thawUniform.value = 0;
       f.mesh.visible = true;
     }
+    resetTajin?.();
     stickUniforms.uIceBottomY.value = POPSICLE.yBottom;
     stickUniforms.uIceTopY.value = POPSICLE.yTop;
     stickUniforms.uIceAmount.value = 1.0;
     stickUniforms.uStickWetness.value = 0.0;
   }
+
+  // Forward-declared hooks wired right below once the exact surface & stick helpers are ready
+  let resetTajin: (() => void) | null = null;
+  let updateTajin: ((meltState: MeltFieldState, dt: number) => void) | null = null;
 
   interface FruitPhysicsProfile {
     gravity: number;
@@ -2704,6 +2841,21 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       flexGain: 0.85,
       isFlat: true,
     },
+    tajin: {
+      gravity: 6.8,
+      restitution: 0.10,
+      wetDrag: 2.2,
+      adhesion: 0.36,
+      rollGain: 0.40,
+      airDragLin: 0.34,
+      airDragQuad: 0.12,
+      angDrag: 1.4,
+      maxSpin: 7.5,
+      flatAero: 0.8,
+      magnus: 0.015,
+      flexGain: 0.0,
+      isFlat: true,
+    },
   };
 
   const sagEuler = new THREE.Euler();
@@ -2729,6 +2881,8 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         return f.radius * 0.42;
       case 'shaved-lemon':
         return f.radius * 0.35;
+      case 'tajin':
+        return f.radius * 0.45;
       case 'kaksmulor':
         return f.radius * 0.50;
       case 'chocolate':
@@ -2741,7 +2895,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
   /** Small, lightweight bits where capillary surface tension & syrup viscosity keep them riding the melt flow! */
   function isSmallFlowBit(f: FruitItem): boolean {
     if (f.kind === 'shaved-lemon') return true;
-    if (f.kind === 'chocolate') return f.radius <= 0.060;
+    if (f.kind === 'chocolate') return f.radius <= 0.023;
     if (f.kind === 'kaksmulor') return f.radius <= 0.056;
     if (f.kind === 'raspberry') return f.radius <= 0.056;
     if (f.kind === 'strawberry') return f.radius <= 0.072;
@@ -2896,6 +3050,520 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     f.seatOffset = Math.max(0, minFrozenSeat - rawGrip0);
     sampleExactIceSurface(f.basePos.x, f.basePos.y, f.basePos.z, liveProfileFrame, frozenBaselineState, physExactSurf);
     f.baseSignedOut0 = physExactSurf.signedOut;
+  }
+
+  // === SUPERFICIAL TAJÍN SPICE COATING (Single InstancedMesh, exact outer-skin cling + viscous melt-flow!) ===
+  if (activeSet.has('tajin')) {
+    interface TajinGrain {
+      vNorm0: number;
+      sinT0: number;
+      cosT0: number;
+      px: number;
+      py: number;
+      pz: number;
+      vx: number;
+      vy: number;
+      vz: number;
+      sx: number;
+      sy: number;
+      sz: number;
+      rideOut: number;
+      spin: number;
+      tiltX: number;
+      tiltY: number;
+      releaseMelt: number;
+      speedBias: number;
+      stickiness: number;
+      flowPhase: number;
+      flowTime: number;
+      fallTime: number;
+      /** 0 = clinging on surface, 1 = gliding in melt flow / stick runoff, 2 = dripping fall, 3 = hidden */
+      state: number;
+    }
+
+    const isCompactDevice =
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(max-width: 860px)').matches || navigator.maxTouchPoints > 0);
+    const grainCount = isCompactDevice ? 1700 : 3400;
+    const tRand = mulberry32(seed * 977 + 431);
+    const tGeo = createTajinFlakeGeometry(seed * 313 + 71);
+    const tMat = createTajinMaterial();
+    const tMesh = new THREE.InstancedMesh(tGeo, tMat, grainCount);
+    tMesh.name = 'tajin-coating';
+    tMesh.frustumCulled = false;
+    disposables.push(tGeo, tMat);
+    surfaceGroup.add(tMesh);
+
+    const tColor = new THREE.Color();
+    const tScale = new THREE.Vector3();
+    const tPos = new THREE.Vector3();
+    const tQuat = new THREE.Quaternion();
+    const tAlignQuat = new THREE.Quaternion();
+    const tTwistQuat = new THREE.Quaternion();
+    const tTiltEuler = new THREE.Euler();
+    const tTiltQuat = new THREE.Quaternion();
+    const tNorm = new THREE.Vector3();
+    const tMat4 = new THREE.Matrix4();
+    const Z_AXIS = new THREE.Vector3(0, 0, 1);
+    const tRowCache: ProfileRowCache = prepareProfileRow(0.5, liveProfileFrame);
+    const tPt = { x: 0, y: 0, z: 0 };
+    const tPtP = { x: 0, y: 0, z: 0 };
+    const tPtM = { x: 0, y: 0, z: 0 };
+    const tRowP: ProfileRowCache = { ...tRowCache };
+    const tRowM: ProfileRowCache = { ...tRowCache };
+    const tSurf: ExactIceSurfaceInfo = {
+      sx: 0,
+      sy: 0,
+      sz: 0,
+      nx: 0,
+      ny: 0,
+      nz: 1,
+      signedOut: 0,
+      iceGone: false,
+    };
+    const tStickN = new THREE.Vector3();
+    const clumpOff = tRand() * 30;
+    const grains: TajinGrain[] = [];
+
+    for (let i = 0; i < grainCount; i++) {
+      // Uniform arc-length surface sampling (invert superellipse X/Z exponents so there is ZERO bald stripe at x=0!)
+      // with lush shaken-on chili clustering across the upper & center body tapering gently toward the golden bottom!
+      let vNorm0 = 0.5;
+      let sinT0 = 0;
+      let cosT0 = 1;
+      for (let attempt = 0; attempt < 24; attempt++) {
+        vNorm0 = 0.06 + Math.pow(tRand(), 0.72) * 0.90;
+        prepareProfileRow(vNorm0, liveProfileFrame, tRowCache);
+        if (tRand() < 0.84) {
+          // Broad front (+Z) & back (-Z) faces: uniform X across [-0.98..+0.98] -> dense even coat right across center!
+          const uX = (tRand() * 2 - 1) * 0.985;
+          sinT0 = Math.sign(uX) * Math.pow(Math.abs(uX), 1.0 / tRowCache.invExpX);
+          cosT0 = (tRand() < 0.56 ? 1 : -1) * Math.sqrt(Math.max(0, 1.0 - sinT0 * sinT0));
+        } else {
+          // Rounded left/right side edges: uniform Z across [-0.95..+0.95]
+          const uZ = (tRand() * 2 - 1) * 0.95;
+          cosT0 = Math.sign(uZ) * Math.pow(Math.abs(uZ), 1.0 / tRowCache.invExpZ);
+          sinT0 = (tRand() < 0.5 ? 1 : -1) * Math.sqrt(Math.max(0, 1.0 - cosT0 * cosT0));
+        }
+        evaluatePopsicleVertex(sinT0, cosT0, liveProfileFrame, tRowCache, frozenBaselineState, tPt);
+
+        // Organic shaken-on clumping: lush dense chili blanket across upper/mid face + subtle golden mango windows near bottom
+        const upperWeight = 0.14 + 0.86 * smoothstep(0.08, 0.42, vNorm0);
+        const clump = fbm3(tPt.x * 2.4 + clumpOff, tPt.y * 1.8 - clumpOff * 0.5, tPt.z * 2.4);
+        const acceptProb = upperWeight * (0.42 + 0.88 * smoothstep(0.20, 0.72, clump));
+        if (tRand() < acceptProb) break;
+      }
+
+      pickTajinGrainStyle(tRand, tColor, tScale, 1.0);
+      tMesh.setColorAt(i, tColor);
+
+      prepareProfileRow(vNorm0, liveProfileFrame, tRowCache);
+      evaluatePopsicleVertex(sinT0, cosT0, liveProfileFrame, tRowCache, frozenBaselineState, tPt);
+      sampleExactIceSurface(tPt.x, tPt.y, tPt.z, liveProfileFrame, frozenBaselineState, tSurf);
+
+      const rideOut = tScale.z * 0.85 + 0.009;
+      const px = tPt.x + tSurf.nx * rideOut;
+      const py = tPt.y + tSurf.ny * rideOut;
+      const pz = tPt.z + tSurf.nz * rideOut;
+
+      // Coherent vertical melt-rivulet release channels + wide individual grain jitter so fiery streaks break loose organically!
+      const rivuletNoise = fbm3(tPt.x * 5.2 + clumpOff * 1.7, tPt.y * 1.15, tPt.z * 5.2);
+      const releaseMelt = clamp(0.075 + rivuletNoise * 0.24 + Math.pow(tRand(), 1.15) * 0.30, 0.07, 0.62);
+
+      grains.push({
+        vNorm0,
+        sinT0,
+        cosT0,
+        px,
+        py,
+        pz,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        sx: tScale.x,
+        sy: tScale.y,
+        sz: tScale.z,
+        rideOut,
+        spin: tRand() * Math.PI * 2,
+        tiltX: (tRand() - 0.5) * 0.46,
+        tiltY: (tRand() - 0.5) * 0.46,
+        releaseMelt,
+        speedBias: 0.32 + Math.pow(tRand(), 1.3) * 1.58,
+        stickiness: tRand(),
+        flowPhase: tRand() * Math.PI * 2,
+        flowTime: 0,
+        fallTime: 0,
+        state: 0,
+      });
+
+      tNorm.set(tSurf.nx, tSurf.ny, tSurf.nz).normalize();
+      tAlignQuat.setFromUnitVectors(Z_AXIS, tNorm);
+      tTwistQuat.setFromAxisAngle(Z_AXIS, grains[i].spin);
+      tTiltEuler.set(grains[i].tiltX, grains[i].tiltY, 0);
+      tTiltQuat.setFromEuler(tTiltEuler);
+      tQuat.copy(tAlignQuat).multiply(tTwistQuat).multiply(tTiltQuat);
+      tPos.set(px, py, pz);
+      tMat4.compose(tPos, tQuat, tScale);
+      tMesh.setMatrixAt(i, tMat4);
+    }
+    if (tMesh.instanceColor) tMesh.instanceColor.needsUpdate = true;
+    tMesh.instanceMatrix.needsUpdate = true;
+
+    const writeGrainMatrix = (idx: number, g: TajinGrain, nx: number, ny: number, nz: number) => {
+      if (g.state === 3) {
+        tScale.set(0, 0, 0);
+        tPos.set(0, -10, 0);
+        tMat4.compose(tPos, tQuat.identity(), tScale);
+        tMesh.setMatrixAt(idx, tMat4);
+        return;
+      }
+      tNorm.set(nx, ny, nz);
+      const nLen = tNorm.length();
+      if (nLen > 1e-4) tNorm.divideScalar(nLen);
+      else tNorm.set(0, 0, 1);
+      tAlignQuat.setFromUnitVectors(Z_AXIS, tNorm);
+      tTwistQuat.setFromAxisAngle(Z_AXIS, g.spin);
+      tTiltEuler.set(g.tiltX, g.tiltY, 0);
+      tTiltQuat.setFromEuler(tTiltEuler);
+      tQuat.copy(tAlignQuat).multiply(tTwistQuat).multiply(tTiltQuat);
+      tPos.set(g.px, g.py, g.pz);
+      tScale.set(g.sx, g.sy, g.sz);
+      tMat4.compose(tPos, tQuat, tScale);
+      tMesh.setMatrixAt(idx, tMat4);
+    };
+
+    const placeClingingGrain = (idx: number, g: TajinGrain, frame: ProfileFrameCache, meltState: MeltFieldState) => {
+      prepareProfileRow(g.vNorm0, frame, tRowCache);
+      evaluatePopsicleVertex(g.sinT0, g.cosT0, frame, tRowCache, meltState, tPt);
+      // Fast lightweight outward normal estimate (horizontal + vertical slope)
+      const vP = Math.min(0.998, g.vNorm0 + 0.015);
+      const vM = Math.max(0.002, g.vNorm0 - 0.015);
+      prepareProfileRow(vP, frame, tRowP);
+      prepareProfileRow(vM, frame, tRowM);
+      evaluatePopsicleVertex(g.sinT0, g.cosT0, frame, tRowP, meltState, tPtP);
+      evaluatePopsicleVertex(g.sinT0, g.cosT0, frame, tRowM, meltState, tPtM);
+      const vy = tPtP.y - tPtM.y;
+      const vx = tPtP.x - tPtM.x;
+      const vz = tPtP.z - tPtM.z;
+      // Tangent around theta is roughly (cosT0, 0, -sinT0); cross with dP/dv gives outward normal
+      let nx = -g.sinT0 * vy;
+      let ny = -g.sinT0 * vx - g.cosT0 * vz;
+      let nz = -g.cosT0 * vy;
+      // Ensure outward sign matches (sinT0, 0, cosT0)
+      if (nx * g.sinT0 + nz * g.cosT0 < 0) {
+        nx = -nx;
+        ny = -ny;
+        nz = -nz;
+      }
+      const nLen = Math.hypot(nx, ny, nz) || 1;
+      nx /= nLen;
+      ny /= nLen;
+      nz /= nLen;
+
+      g.px = tPt.x + nx * g.rideOut;
+      g.py = tPt.y + ny * g.rideOut;
+      g.pz = tPt.z + nz * g.rideOut;
+      writeGrainMatrix(idx, g, nx, ny, nz);
+    };
+
+    resetTajin = () => {
+      prepareProfileFrame(frozenBaselineState, liveProfileFrame);
+      tMat.roughness = 0.86;
+      for (let i = 0; i < grains.length; i++) {
+        const g = grains[i];
+        g.state = 0;
+        g.vx = g.vy = g.vz = 0;
+        g.flowTime = 0;
+        g.fallTime = 0;
+        placeClingingGrain(i, g, liveProfileFrame, frozenBaselineState);
+      }
+      tMesh.instanceMatrix.needsUpdate = true;
+    };
+
+    updateTajin = (meltState: MeltFieldState, dt: number) => {
+      const { yBot: yBotLive, iceGone } = getMeltBounds(meltState.melt);
+      // Powdery dry matte chili when frozen -> juicy glossy wet chili-oil sheen as mango melts!
+      tMat.roughness = 0.86 - smoothstep(0.06, 0.36, meltState.melt) * 0.46;
+
+      if (dt <= 0) {
+        for (let i = 0; i < grains.length; i++) {
+          const g = grains[i];
+          if (iceGone || meltState.melt > g.releaseMelt + 0.24) {
+            g.state = 3;
+            writeGrainMatrix(i, g, 0, 0, 1);
+          } else {
+            g.state = 0;
+            g.vx = g.vy = g.vz = 0;
+            g.flowTime = 0;
+            g.fallTime = 0;
+            placeClingingGrain(i, g, liveProfileFrame, meltState);
+          }
+        }
+        tMesh.instanceMatrix.needsUpdate = true;
+        return;
+      }
+
+      const stepDt = Math.min(0.033, dt);
+      const iceHalfWBound = POPSICLE.halfWidthBottom + 0.24;
+      const iceHalfDBound = POPSICLE.halfDepth + 0.24;
+      let anyUpdated = false;
+
+      for (let i = 0; i < grains.length; i++) {
+        const g = grains[i];
+        if (g.state === 3) continue;
+        anyUpdated = true;
+
+        if (g.state === 0) {
+          if (iceGone) {
+            g.state = 2;
+            g.fallTime = 0;
+            g.vy = -0.06;
+            continue;
+          }
+          placeClingingGrain(i, g, liveProfileFrame, meltState);
+          const localHeat = sampleLocalHeat(g.px, g.py, meltState);
+          const effMelt = meltState.melt + localHeat * 0.42;
+          if (meltState.melt > 0.06 && effMelt >= g.releaseMelt) {
+            g.state = 1;
+            g.flowTime = 0;
+            g.vx = 0;
+            g.vy = -0.008 * g.speedBias;
+            g.vz = 0;
+          }
+          continue;
+        }
+
+        if (g.state === 1) {
+          g.flowTime += stepDt;
+
+          // 1. BELOW STICK TIP: Ride strictly inside/on the golden vertical drip filament off-screen (never scatter in air!)
+          if (g.py <= POPSICLE.stickBottomY + 0.008 && Math.abs(g.px) < STICK_HALF_W + 0.08) {
+            const dBelow = Math.max(0, POPSICLE.stickBottomY - g.py);
+            const swayAmp = smoothstep(0.05, 0.65, dBelow) * 0.0045;
+            const cx = Math.sin(dBelow * 4.0 - meltState.time * 1.4) * swayAmp;
+            const cz = Math.cos(dBelow * 3.2 - meltState.time * 1.1) * swayAmp * 0.65;
+            // Smooth V-meniscus collar funnel (0.020 at stick tip -> sleek 0.010 core inside the 0.017 drip filament!)
+            const filRad = 0.010 + 0.012 * Math.exp(-dBelow / 0.045);
+            const rx = g.px - cx;
+            const rz = g.pz - cz;
+            const rDist = Math.hypot(rx, rz);
+            const pullRate = 1.0 - Math.exp(-stepDt * 14.0);
+            if (rDist > filRad) {
+              const targetScale = filRad / Math.max(1e-5, rDist);
+              g.px += (cx + rx * targetScale - g.px) * Math.min(1, pullRate * 1.35);
+              g.pz += (cz + rz * targetScale - g.pz) * Math.min(1, pullRate * 1.35);
+            } else {
+              // Subtle gentle centering inside the flowing syrup thread
+              g.px += (cx - g.px) * pullRate * 0.18;
+              g.pz += (cz - g.pz) * pullRate * 0.18;
+            }
+            // Viscous gravity-stretched drip-filament stream speed (smooth, syrupy, continuous down the thread!)
+            const filSpeed = (0.34 + 0.48 * smoothstep(0.0, 0.85, dBelow)) * (0.72 + g.speedBias * 0.36);
+            const vDamp = 1.0 - Math.exp(-stepDt * 9.0);
+            g.vx *= Math.exp(-stepDt * 12.0);
+            g.vz *= Math.exp(-stepDt * 12.0);
+            g.vy += (-filSpeed - g.vy) * vDamp;
+            g.py += g.vy * stepDt;
+            g.spin += (2.4 + filSpeed * 3.2) * (g.flowPhase > Math.PI ? 1 : -1) * stepDt;
+            if (g.py < -4.2) {
+              g.state = 3;
+            }
+            writeGrainMatrix(i, g, 0, 0, 1);
+            continue;
+          }
+
+          // 2. ON WET BIRCH WOODEN STICK: Cling down the stick & converge tightly around semicircular tip into (0, 0)!
+          const onStickBand =
+            g.py <= yBotLive + 0.018 &&
+            Math.abs(g.px) < STICK_HALF_W + 0.075 &&
+            Math.abs(g.pz) < STICK_HALF_D + 0.125;
+
+          if (onStickBand) {
+            const dStick = sampleStickSDF(g.px, g.py, g.pz, tStickN);
+            const stickPulse = 0.5 + 0.45 * Math.sin(g.py * 6.8 + g.flowPhase + g.flowTime * 1.15);
+            const stickSpeed =
+              (0.09 + 0.18 * smoothstep(0.14, 0.78, meltState.melt)) *
+              g.speedBias *
+              (0.26 + 0.92 * stickPulse * stickPulse);
+            const damp = 1.0 - Math.exp(-stepDt * 8.5);
+            // Smooth semicircular bottom-tip funnel: tightly guide every edge flake into the center V-meniscus collar!
+            const nearArch = smoothstep(STICK_BOT_ARCH_Y + 0.12, POPSICLE.stickBottomY + 0.008, g.py);
+            const dyArc = clamp(STICK_BOT_ARCH_Y - g.py, 0, STICK_HALF_W);
+            const woodHalfW = Math.sqrt(Math.max(0, STICK_HALF_W * STICK_HALF_W - dyArc * dyArc));
+            const maxXAtY = Math.max(0.012, woodHalfW * (1.0 - nearArch * 0.45) + g.rideOut * 0.6);
+
+            const targetVx =
+              Math.sin(g.py * 11.5 + g.flowPhase) * 0.012 * (1.0 - nearArch * 0.9) -
+              g.px * (0.55 + nearArch * 6.2) * Math.max(0.14, stickSpeed);
+            const targetVz = -g.pz * (1.4 + nearArch * 5.2) * Math.max(0.14, stickSpeed);
+            g.vx += (targetVx - g.vx) * damp;
+            g.vy += (-stickSpeed - g.vy) * damp;
+            g.vz += (targetVz - g.vz) * damp;
+            g.px += g.vx * stepDt;
+            g.py += g.vy * stepDt;
+            g.pz += g.vz * stepDt;
+
+            // Clamp tightly onto the curved semicircular stick tip so nothing slips off the rounded sides!
+            if (g.py < STICK_BOT_ARCH_Y && Math.abs(g.px) > maxXAtY) {
+              g.px = Math.sign(g.px) * maxXAtY;
+            }
+            const errS = g.rideOut - dStick;
+            if (errS > 0) {
+              g.px += tStickN.x * errS;
+              g.py += tStickN.y * errS;
+              g.pz += tStickN.z * errS;
+            } else {
+              const pull = Math.max(errS * 0.48, -0.026);
+              g.px += tStickN.x * pull;
+              g.py += tStickN.y * pull;
+              g.pz += tStickN.z * pull;
+            }
+            g.spin += stickSpeed * 1.4 * stepDt;
+            writeGrainMatrix(i, g, tStickN.x, tStickN.y, tStickN.z);
+            continue;
+          }
+
+          // 3. ON POPSICLE BODY & STICKY UNDERSIDE RIM: Never fall off outer bottom edges while ice remains!
+          // Instead, cling tightly to the sticky pooled underside and creep smoothly inward straight onto the wooden stick!
+          if (!iceGone && Math.abs(g.px) < iceHalfWBound + 0.06 && Math.abs(g.pz) < iceHalfDBound + 0.06) {
+            sampleExactIceSurface(g.px, g.py, g.pz, liveProfileFrame, meltState, tSurf);
+            if (!tSurf.iceGone) {
+              const nx = tSurf.nx;
+              const ny = tSurf.ny;
+              const nz = tSurf.nz;
+
+              // Strictly outside the exact rendered surface (never sinks inside the ice!)
+              if (tSurf.signedOut < g.rideOut) {
+                const push = g.rideOut - tSurf.signedOut;
+                g.px += nx * push;
+                g.py += ny * push;
+                g.pz += nz * push;
+              } else {
+                const pull = Math.min(tSurf.signedOut - g.rideOut, 0.045) * 0.72;
+                g.px -= nx * pull;
+                g.py -= ny * pull;
+                g.pz -= nz * pull;
+              }
+
+              // Detect sticky bottom rim / underside pouch (outer corners stay super sticky and creep inward to the stick!)
+              const onStickyUnderside = g.py <= yBotLive + 0.032 || ny <= -0.62;
+              if (onStickyUnderside) {
+                const targetX = clamp(g.px, -STICK_HALF_W * 0.75, STICK_HALF_W * 0.75);
+                const dirX = Math.sign(targetX - g.px);
+                const dirZ = -Math.sign(g.pz || 1);
+                const pulse = 0.5 + 0.42 * Math.sin(g.px * 12.0 + g.flowPhase + g.flowTime * 1.3);
+                const creepSpeed = (0.075 + 0.14 * smoothstep(0.14, 0.78, meltState.melt)) * g.speedBias * (0.35 + 0.85 * pulse * pulse);
+                const damp = 1.0 - Math.exp(-stepDt * 8.0);
+                // Creep inward along the sticky underside meniscus directly into the wooden stick collar!
+                g.vx += (dirX * creepSpeed * 1.15 - g.vx) * damp;
+                g.vz += (dirZ * clamp(Math.abs(g.pz) * 4.5, 0, 1) * creepSpeed * 0.95 - g.vz) * damp;
+                // Keep y tucked snugly right along the sticky bottom rim until reaching the stick!
+                const rimTargetY = Math.min(tSurf.sy - g.rideOut * 0.6, yBotLive + 0.008);
+                g.vy += (clamp((rimTargetY - g.py) * 8.0, -0.09, 0.06) - g.vy) * damp;
+                g.px += g.vx * stepDt;
+                g.py += g.vy * stepDt;
+                g.pz += g.vz * stepDt;
+                g.spin += creepSpeed * 2.2 * stepDt;
+                writeGrainMatrix(i, g, nx, ny, nz);
+                continue;
+              }
+
+              // Downward surface tangent t = g - (g · N) N
+              const gn = -ny;
+              let tx = -gn * nx;
+              let ty = -1.0 - gn * ny;
+              let tz = -gn * nz;
+              const tLen = Math.hypot(tx, ty, tz);
+              if (tLen > 1e-4) {
+                tx /= tLen;
+                ty /= tLen;
+                tz /= tLen;
+              } else {
+                tx = 0;
+                ty = -1;
+                tz = 0;
+              }
+
+              // Horizontal tangent for organic meandering rivulet streaks + flute funneling + gentle lower-body inward funnel
+              let hx = nz;
+              let hz = -nx;
+              const hLen = Math.hypot(hx, hz);
+              if (hLen > 1e-4) {
+                hx /= hLen;
+                hz /= hLen;
+              } else {
+                hx = 1;
+                hz = 0;
+              }
+              const meander =
+                Math.sin(g.py * 6.8 + g.flowPhase + meltState.time * (0.26 + g.speedBias * 0.16)) * 0.20 +
+                Math.cos(g.px * 10.5 - g.py * 4.4 + g.flowPhase * 1.5) * 0.13;
+              const nearestFluteX = g.px >= 0 ? POPSICLE.fluteX : -POPSICLE.fluteX;
+              const flutePull = clamp((nearestFluteX - g.px) * 1.25, -0.16, 0.16) * (1.0 - smoothstep(0.35, 0.72, meltState.melt));
+
+              // Smooth bottom-zone capillary funneling across the ENTIRE width so grains naturally curve toward the stick!
+              const botZone = smoothstep(yBotLive + 0.30, yBotLive + 0.02, g.py);
+              const stickTargetX = clamp(g.px, -STICK_HALF_W * 0.85, STICK_HALF_W * 0.85);
+              const stickFunnelX = clamp((stickTargetX - g.px) * 2.8, -0.82, 0.82) * botZone;
+              const stickFunnelZ = -Math.sign(g.pz || 1) * 0.48 * botZone;
+              const sideDrift = (meander + flutePull * (nz >= 0 ? 1 : -1)) * (1.0 - botZone * 0.72);
+
+              // Varied viscous syrup speed: smooth startup ramp + wide per-grain bias + stick-slip surges + pointer warmth!
+              const startup = 0.08 + 0.92 * smoothstep(0.0, 0.45 + g.stickiness * 0.90, g.flowTime);
+              const pulse =
+                0.5 +
+                0.30 * Math.sin(g.py * 5.2 + g.flowPhase + meltState.time * (0.35 + g.speedBias * 0.32)) +
+                0.24 * Math.sin(g.flowTime * (0.90 + g.stickiness * 0.85) + g.flowPhase * 2.1);
+              const pC = clamp(pulse, 0, 1);
+              const stickSlip = 0.15 + 1.20 * pC * pC;
+              const slopeEase = 0.42 + 0.58 * Math.abs(ty);
+              const warmth = sampleLocalHeat(g.px, g.py, meltState);
+              const baseRunoff = 0.085 + 0.27 * smoothstep(0.10, 0.78, meltState.melt) + warmth * 0.26;
+              const speed = baseRunoff * g.speedBias * slopeEase * startup * stickSlip;
+
+              const damp = 1.0 - Math.exp(-stepDt * 7.5);
+              g.vx += ((tx + hx * sideDrift + stickFunnelX) * speed - g.vx) * damp;
+              g.vy += (ty * speed - g.vy) * damp;
+              g.vz += ((tz + hz * sideDrift + stickFunnelZ) * speed - g.vz) * damp;
+
+              g.px += g.vx * stepDt;
+              g.py += g.vy * stepDt;
+              g.pz += g.vz * stepDt;
+              g.spin += (g.vx * 5.5 + (g.flowPhase > Math.PI ? 1 : -1) * speed * 1.8) * stepDt;
+
+              writeGrainMatrix(i, g, nx, ny, nz);
+              continue;
+            }
+          }
+
+          // Ice completely gone -> cleanly drip off into gravity fall!
+          g.state = 2;
+          g.fallTime = 0;
+          g.vx *= 0.28;
+          g.vz *= 0.28;
+          g.vy = Math.min(g.vy, -0.07);
+        }
+
+        // state === 2: final drip fall off bottom lip / stick tip
+        g.fallTime += stepDt;
+        g.vy -= 5.8 * stepDt;
+        const drag = Math.exp(-stepDt * 1.2);
+        g.vx *= drag;
+        g.vz *= drag;
+        g.px += g.vx * stepDt;
+        g.py += g.vy * stepDt;
+        g.pz += g.vz * stepDt;
+        g.spin += 4.2 * stepDt;
+        if (g.py < -5.2 || g.fallTime > 4.2) {
+          g.state = 3;
+        }
+        writeGrainMatrix(i, g, 0, 0, 1);
+      }
+
+      if (anyUpdated) {
+        tMesh.instanceMatrix.needsUpdate = true;
+      }
+    };
   }
 
   function evaluateFruitGrip(f: FruitItem, meltState: MeltFieldState, slideY = 0): number {
@@ -3160,7 +3828,10 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       }
     }
 
-    if (dt <= 0) return;
+    if (dt <= 0) {
+      updateTajin?.(meltState, 0);
+      return;
+    }
 
     // Pass 2: 4-substep 3D Rigid-Body + Wet-Syrup Slide + Stick Bounce + Fruit-to-Fruit Collision + Aerodynamics!
     const substeps = 4;
@@ -3195,18 +3866,122 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           const py = f.mesh.position.y;
           const pz = f.mesh.position.z;
 
-          const onStickBand =
-            py <= yBotLive + 0.028 &&
-            py > POPSICLE.stickBottomY + 0.035 &&
-            Math.abs(px) < STICK_HALF_W + rCol * 1.65 &&
-            Math.abs(pz) < STICK_HALF_D + rCol * 1.90;
+          // 1. BELOW STICK TIP: Follow the vertical dripping syrup filament cleanly off-screen!
+          if (py <= POPSICLE.stickBottomY + 0.008 && Math.abs(px) < STICK_HALF_W + 0.08 + rCol) {
+            const dBelow = Math.max(0, POPSICLE.stickBottomY - py);
+            const swayAmp = smoothstep(0.05, 0.65, dBelow) * 0.0045;
+            const cx = Math.sin(dBelow * 4.0 - meltState.time * 1.4) * swayAmp;
+            const cz = Math.cos(dBelow * 3.2 - meltState.time * 1.1) * swayAmp * 0.65;
+            const filRad = Math.max(0.010, rCol * 0.32) + 0.012 * Math.exp(-dBelow / 0.045);
+            const rx = px - cx;
+            const rz = pz - cz;
+            const rDist = Math.hypot(rx, rz);
+            const pullRate = 1.0 - Math.exp(-subDt * 14.0);
+            if (rDist > filRad) {
+              const targetScale = filRad / Math.max(1e-5, rDist);
+              f.mesh.position.x += (cx + rx * targetScale - px) * Math.min(1, pullRate * 1.35);
+              f.mesh.position.z += (cz + rz * targetScale - pz) * Math.min(1, pullRate * 1.35);
+            } else {
+              f.mesh.position.x += (cx - px) * pullRate * 0.18;
+              f.mesh.position.z += (cz - pz) * pullRate * 0.18;
+            }
+            const filSpeed = (0.34 + 0.48 * smoothstep(0.0, 0.85, dBelow)) * (0.72 + f.flowSpeedBias * 0.36);
+            const vDamp = 1.0 - Math.exp(-subDt * 9.0);
+            f.velocity.x *= Math.exp(-subDt * 12.0);
+            f.velocity.z *= Math.exp(-subDt * 12.0);
+            f.velocity.y += (-filSpeed - f.velocity.y) * vDamp;
+            f.mesh.position.y += f.velocity.y * subDt;
+            const wMagF = f.angVel.length();
+            if (wMagF > 1e-4) {
+              spinAxis.copy(f.angVel).divideScalar(wMagF);
+              spinQuat.setFromAxisAngle(spinAxis, wMagF * subDt);
+              f.mesh.quaternion.premultiply(spinQuat);
+              f.mesh.quaternion.normalize();
+            }
+            f.wetContact += (1.0 - f.wetContact) * Math.min(1, subDt * 12.0);
+            continue;
+          }
 
-          if (!iceGone && py > yBotLive + 0.012 && Math.abs(px) < iceHalfWBound + rCol && Math.abs(pz) < iceHalfDBound + rCol) {
+          // 2. ON WET BIRCH STICK: Ride down the wood & converge tightly around the semicircular bottom tip into (0, 0)!
+          const onStickBand =
+            py <= yBotLive + 0.018 &&
+            Math.abs(px) < STICK_HALF_W + 0.075 + rCol * 1.3 &&
+            Math.abs(pz) < STICK_HALF_D + 0.125 + rCol * 1.3;
+
+          if (onStickBand) {
+            const dStick = sampleStickSDF(px, py, pz, physStickN);
+            const stickPulse = 0.5 + 0.45 * Math.sin(py * 6.5 + f.flowPhase + f.flowTime * 1.1);
+            const stickSpeed =
+              (0.085 + 0.17 * smoothstep(0.16, 0.80, meltState.melt)) *
+              f.flowSpeedBias *
+              (0.26 + 0.92 * stickPulse * stickPulse);
+            const damp = 1.0 - Math.exp(-subDt * 8.5);
+            const nearArch = smoothstep(STICK_BOT_ARCH_Y + 0.12, POPSICLE.stickBottomY + 0.008, py);
+            const dyArc = clamp(STICK_BOT_ARCH_Y - py, 0, STICK_HALF_W);
+            const woodHalfW = Math.sqrt(Math.max(0, STICK_HALF_W * STICK_HALF_W - dyArc * dyArc));
+            const maxXAtY = Math.max(0.014, woodHalfW * (1.0 - nearArch * 0.45) + rCol * 0.45);
+
+            f.velocity.x +=
+              (Math.sin(py * 11.0 + f.flowPhase) * 0.012 * (1.0 - nearArch * 0.9) -
+                px * (0.55 + nearArch * 6.0) * Math.max(0.14, stickSpeed) -
+                f.velocity.x) *
+              damp;
+            f.velocity.y += (-stickSpeed - f.velocity.y) * damp;
+            f.velocity.z += (-pz * (1.4 + nearArch * 5.0) * Math.max(0.14, stickSpeed) - f.velocity.z) * damp;
+            f.mesh.position.addScaledVector(f.velocity, subDt);
+
+            if (f.mesh.position.y < STICK_BOT_ARCH_Y && Math.abs(f.mesh.position.x) > maxXAtY) {
+              f.mesh.position.x = Math.sign(f.mesh.position.x) * maxXAtY;
+            }
+            const targetStickDist = prof.isFlat ? 0.008 : rCol * 0.60;
+            const errS = targetStickDist - dStick;
+            if (errS > 0) {
+              f.mesh.position.addScaledVector(physStickN, errS);
+            } else {
+              f.mesh.position.addScaledVector(physStickN, Math.max(errS * 0.48, -0.024));
+            }
+            physRollAxis.crossVectors(physStickN, f.velocity).divideScalar(Math.max(0.04, rCol));
+            f.angVel.lerp(physRollAxis.multiplyScalar(0.32), 1.0 - Math.exp(-subDt * 6.0));
+            const wMagS = f.angVel.length();
+            if (wMagS > 1e-4) {
+              spinAxis.copy(f.angVel).divideScalar(wMagS);
+              spinQuat.setFromAxisAngle(spinAxis, wMagS * subDt);
+              f.mesh.quaternion.premultiply(spinQuat);
+              f.mesh.quaternion.normalize();
+            }
+            f.wetContact += (1.0 - f.wetContact) * Math.min(1, subDt * 12.0);
+            continue;
+          }
+
+          // 3. ON POPSICLE BODY & STICKY UNDERSIDE RIM: Cling tightly along sticky underside & creep inward to the stick!
+          if (!iceGone && Math.abs(px) < iceHalfWBound + rCol + 0.06 && Math.abs(pz) < iceHalfDBound + rCol + 0.06) {
             sampleExactIceSurface(px, py, pz, liveProfileFrame, meltState, physExactSurf);
             physN.set(physExactSurf.nx, physExactSurf.ny, physExactSurf.nz);
 
-            // Stay on the ice film as long as we're near the outer skin and haven't hit a steep underside overhang
-            if (!physExactSurf.iceGone && physExactSurf.signedOut < rCol * 2.4 && physN.y > -0.56) {
+            if (!physExactSurf.iceGone) {
+              const rideOut = prof.isFlat ? 0.009 : rCol * 0.62;
+              const onStickyUnderside = py <= yBotLive + 0.032 || physN.y <= -0.62;
+              if (onStickyUnderside) {
+                const targetX = clamp(px, -STICK_HALF_W * 0.75, STICK_HALF_W * 0.75);
+                const dirX = Math.sign(targetX - px);
+                const dirZ = -Math.sign(pz || 1);
+                const pulse = 0.5 + 0.42 * Math.sin(px * 12.0 + f.flowPhase + f.flowTime * 1.3);
+                const creepSpeed = (0.075 + 0.14 * smoothstep(0.14, 0.78, meltState.melt)) * f.flowSpeedBias * (0.35 + 0.85 * pulse * pulse);
+                const damp = 1.0 - Math.exp(-subDt * 8.0);
+                f.velocity.x += (dirX * creepSpeed * 1.12 - f.velocity.x) * damp;
+                f.velocity.z += (dirZ * clamp(Math.abs(pz) * 4.5, 0, 1) * creepSpeed * 0.92 - f.velocity.z) * damp;
+                const rimTargetY = Math.min(physExactSurf.sy - rideOut * 0.55, yBotLive + 0.008);
+                f.velocity.y += (clamp((rimTargetY - py) * 8.0, -0.09, 0.06) - f.velocity.y) * damp;
+                f.mesh.position.addScaledVector(f.velocity, subDt);
+                sampleExactIceSurface(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, liveProfileFrame, meltState, physExactSurf);
+                physN.set(physExactSurf.nx, physExactSurf.ny, physExactSurf.nz);
+                if (physExactSurf.signedOut < rideOut) {
+                  f.mesh.position.addScaledVector(physN, rideOut - physExactSurf.signedOut);
+                }
+                f.wetContact += (1.0 - f.wetContact) * Math.min(1, subDt * 12.0);
+                continue;
+              }
+
               // Local downward tangent along the exact curved melting ice face: t = g - (g · N) N
               const gn = -physN.y;
               let tx = -gn * physN.x;
@@ -3223,7 +3998,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
                 tz = 0;
               }
 
-              // Horizontal surface tangent for gentle meandering rivulet paths + subtle pull toward flute valleys
+              // Horizontal surface tangent for gentle meandering rivulet paths + flute valleys + full-width bottom stick funnel!
               let sx = physN.z;
               let sz = -physN.x;
               const sLen = Math.hypot(sx, sz);
@@ -3235,11 +4010,16 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
                 sz = 0;
               }
               const meander =
-                Math.sin(py * 7.4 + f.flowPhase + meltState.time * (0.28 + f.flowSpeedBias * 0.18)) * 0.24 +
-                Math.cos(px * 9.5 - py * 4.8 + f.flowPhase * 1.7) * 0.14;
+                Math.sin(py * 7.4 + f.flowPhase + meltState.time * (0.28 + f.flowSpeedBias * 0.18)) * 0.22 +
+                Math.cos(px * 9.5 - py * 4.8 + f.flowPhase * 1.7) * 0.13;
               const nearestFluteX = px >= 0 ? POPSICLE.fluteX : -POPSICLE.fluteX;
               const flutePull = clamp((nearestFluteX - px) * 1.15, -0.15, 0.15) * (1.0 - smoothstep(0.35, 0.72, meltState.melt));
-              const sideDrift = meander + flutePull * (physN.z >= 0 ? 1 : -1);
+
+              const botZone = smoothstep(yBotLive + 0.30, yBotLive + 0.02, py);
+              const stickTargetX = clamp(px, -STICK_HALF_W * 0.85, STICK_HALF_W * 0.85);
+              const stickFunnelX = clamp((stickTargetX - px) * 2.8, -0.82, 0.82) * botZone;
+              const stickFunnelZ = -Math.sign(pz || 1) * 0.48 * botZone;
+              const sideDrift = (meander + flutePull * (physN.z >= 0 ? 1 : -1)) * (1.0 - botZone * 0.72);
 
               // Natural per-bit viscous creep: gentle break-away ramp + wide speed personality + organic stick-slip surges + heat!
               const startupRamp = 0.08 + 0.92 * smoothstep(0.0, 0.55 + f.flowStickiness * 0.95, f.flowTime);
@@ -3248,17 +4028,16 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
                 0.30 * Math.sin(py * 5.0 + f.flowPhase + meltState.time * (0.38 + f.flowSpeedBias * 0.34)) +
                 0.24 * Math.sin(f.flowTime * (0.95 + f.flowStickiness * 0.85) + f.flowPhase * 2.3);
               const pClamped = clamp(pulse, 0, 1);
-              // Squared pulse creates authentic viscous stick-slip (brief slow hesitations + glossy rivulet glides!)
               const stickSlip = 0.16 + 1.18 * pClamped * pClamped;
               const sizeEase = clamp(0.036 / Math.max(0.016, f.radius), 0.58, 1.42);
-              const slopeEase = 0.35 + 0.65 * Math.abs(ty);
+              const slopeEase = 0.42 + 0.58 * Math.abs(ty);
               const localWarmth = sampleLocalHeat(px, py, meltState);
               const baseRunoff = 0.08 + 0.26 * smoothstep(0.14, 0.78, meltState.melt) + localWarmth * 0.24;
               const targetSpeed = baseRunoff * f.flowSpeedBias * sizeEase * slopeEase * startupRamp * stickSlip;
 
-              const vTargetX = (tx + sx * sideDrift) * targetSpeed;
+              const vTargetX = (tx + sx * sideDrift + stickFunnelX) * targetSpeed;
               const vTargetY = ty * targetSpeed;
-              const vTargetZ = (tz + sz * sideDrift) * targetSpeed;
+              const vTargetZ = (tz + sz * sideDrift + stickFunnelZ) * targetSpeed;
 
               const damp = 1.0 - Math.exp(-subDt * 7.5);
               f.velocity.x += (vTargetX - f.velocity.x) * damp;
@@ -3266,17 +4045,13 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
               f.velocity.z += (vTargetZ - f.velocity.z) * damp;
               f.mesh.position.addScaledVector(f.velocity, subDt);
 
-              // Strict one-way outer surface hug against the EXACT rendered popsicle mesh:
-              // back edge kisses the wet syrup meniscus (zero air gap), while center stays strictly OUTSIDE so it NEVER re-enters the ice!
+              // Strict one-way outer surface hug against the EXACT rendered popsicle mesh
               sampleExactIceSurface(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, liveProfileFrame, meltState, physExactSurf);
               physN.set(physExactSurf.nx, physExactSurf.ny, physExactSurf.nz);
-              const rideOut = prof.isFlat ? 0.009 : rCol * 0.62;
               if (physExactSurf.signedOut < rideOut) {
-                // Hard outward normal projection: physically impossible to sink back inside the opaque ice cream!
                 f.mesh.position.addScaledVector(physN, rideOut - physExactSurf.signedOut);
               } else {
-                // Gently keep capillary contact as the ice retreats inward, never pulling inside rideOut
-                const pullIn = Math.min(physExactSurf.signedOut - rideOut, 0.04) * 0.65;
+                const pullIn = Math.min(physExactSurf.signedOut - rideOut, 0.045) * 0.70;
                 f.mesh.position.addScaledVector(physN, -pullIn);
               }
 
@@ -3302,44 +4077,12 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
             }
           }
 
-          if (onStickBand) {
-            // Bits that wash onto the birch stick ride the wet sticky runoff film down the wood with natural speed variation!
-            const dStick = sampleStickSDF(px, py, pz, physStickN);
-            const stickPulse = 0.5 + 0.45 * Math.sin(py * 6.5 + f.flowPhase + f.flowTime * 1.1);
-            const stickSpeed =
-              (0.075 + 0.14 * smoothstep(0.20, 0.80, meltState.melt)) *
-              f.flowSpeedBias *
-              (0.28 + 0.92 * stickPulse * stickPulse);
-            const damp = 1.0 - Math.exp(-subDt * 7.5);
-            f.velocity.x += (Math.sin(py * 11.0 + f.flowPhase) * 0.016 - f.velocity.x) * damp;
-            f.velocity.y += (-stickSpeed - f.velocity.y) * damp;
-            f.velocity.z += (0 - f.velocity.z) * damp;
-            f.mesh.position.addScaledVector(f.velocity, subDt);
-            const targetStickDist = prof.isFlat ? 0.008 : rCol * 0.60;
-            const errS = targetStickDist - dStick;
-            if (errS > 0) {
-              // Never sink inside the wooden stick
-              f.mesh.position.addScaledVector(physStickN, errS);
-            } else {
-              f.mesh.position.addScaledVector(physStickN, Math.max(errS * 0.55, -0.02));
-            }
-            physRollAxis.crossVectors(physStickN, f.velocity).divideScalar(Math.max(0.04, rCol));
-            f.angVel.lerp(physRollAxis.multiplyScalar(0.32), 1.0 - Math.exp(-subDt * 6.0));
-            const wMagS = f.angVel.length();
-            if (wMagS > 1e-4) {
-              spinAxis.copy(f.angVel).divideScalar(wMagS);
-              spinQuat.setFromAxisAngle(spinAxis, wMagS * subDt);
-              f.mesh.quaternion.premultiply(spinQuat);
-              f.mesh.quaternion.normalize();
-            }
-            f.wetContact += (1.0 - f.wetContact) * Math.min(1, subDt * 12.0);
-            continue;
-          }
-
-          // Reached the bottom ice lip (away from stick) or bottom tip of stick (or ice gone): release cleanly into a drip fall!
+          // Ice completely gone -> cleanly release into gravity fall!
           f.flowRiding = false;
           f.flowTime = 0;
           f.detachTime = 0;
+          f.velocity.x *= 0.28;
+          f.velocity.z *= 0.28;
           f.velocity.y = Math.min(f.velocity.y, -0.06);
         }
 
@@ -3713,6 +4456,8 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         f.mesh.visible = false;
       }
     }
+
+    updateTajin?.(meltState, dt);
   }
 
   function pickGrabbableFruit(raycaster: THREE.Raycaster): number {
@@ -4002,6 +4747,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
   return {
     group,
+    surfaceGroup,
     stickMesh,
     stickUniforms,
     fruits,
@@ -4107,6 +4853,12 @@ export function createToppingDebugStage(seed = 1): ToppingDebugStage {
       case 'kaksmulor':
         geo = createKaksmulorGeometry(seed * 179 + seedOffset, variant < 2);
         mat = variant % 2 === 1 ? kakaButterMat : kakaDarkMat;
+        break;
+      case 'tajin':
+        geo = createTajinFlakeGeometry(seed * 313 + seedOffset);
+        mat = createTajinMaterial(false);
+        (mat as THREE.MeshStandardMaterial).color.set('#c83c0c');
+        disposables.push(mat);
         break;
     }
     disposables.push(geo);
@@ -4361,6 +5113,43 @@ export function createToppingThumbSpecimen(
       add(createKaksmulorGeometry(seed * 179 + 27, true), darkMat, [-0.16, 0.08, 0.05], [0.32, -0.38, 0.22], 0.44);
       add(createKaksmulorGeometry(seed * 179 + 61, true), butterMat, [0.20, -0.10, 0.02], [-0.26, 0.48, -0.24], 0.38);
       add(createKaksmulorGeometry(seed * 179 + 73, false), darkMat, [0.04, -0.28, 0.14], [0.46, 0.18, 0.40], 0.24);
+      break;
+    }
+    case 'tajin': {
+      // Sculptural floating mid-air Tajín chili-spice mound/pinch burst matching the bold visual weight of other toppings!
+      const tGeo = createTajinFlakeGeometry(seed * 313 + 17);
+      const tMat = createTajinMaterial(false);
+      tMat.roughness = 0.72;
+      const count = 340;
+      const inst = new THREE.InstancedMesh(tGeo, tMat, count);
+      disposables.push(tGeo, tMat);
+      const rand = mulberry32(seed * 521 + 89);
+      const col = new THREE.Color();
+      const scl = new THREE.Vector3();
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const eul = new THREE.Euler();
+      const m4 = new THREE.Matrix4();
+      for (let i = 0; i < count; i++) {
+        // Lush dense conical/organic Tajín spice pinch core (33% coarse flakes + 66% fine powder!) + airy outer dust
+        const isCore = i < 255;
+        const rRad = isCore ? Math.pow(rand(), 0.58) * 0.44 : 0.38 + Math.pow(rand(), 0.85) * 0.24;
+        const th = rand() * Math.PI * 2;
+        const ph = Math.acos(2 * rand() - 1);
+        const cx = Math.sin(ph) * Math.cos(th) * rRad * 1.15;
+        const cy = Math.cos(ph) * rRad * 0.86;
+        const cz = Math.sin(ph) * Math.sin(th) * rRad * 0.65;
+        pickTajinGrainStyle(rand, col, scl, isCore ? 5.2 : 3.8);
+        inst.setColorAt(i, col);
+        pos.set(cx, cy, cz);
+        eul.set(rand() * Math.PI * 2, rand() * Math.PI * 2, rand() * Math.PI * 2);
+        quat.setFromEuler(eul);
+        m4.compose(pos, quat, scl);
+        inst.setMatrixAt(i, m4);
+      }
+      if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+      inst.instanceMatrix.needsUpdate = true;
+      object.add(inst);
       break;
     }
   }

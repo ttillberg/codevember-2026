@@ -253,24 +253,24 @@ export function createBlueberryTextures(seed = 207): BlueberryTextures {
       const nFine = sampleFastFbm3(sx * 3.6 + off + 4.3, sy * 3.6, sz * 3.6);
 
       // Deep rich velvety midnight-indigo / dark navy rubbed blueberry skin
-      let cr = 16 + nFine * 14;
-      let cg = 20 + nFine * 16;
-      let cb = 40 + nFine * 26;
+      let cr = 9 + nFine * 9;
+      let cg = 12 + nFine * 11;
+      let cb = 24 + nFine * 18;
 
-      // Authentic epicuticular dusty slate-blue waxy bloom smudge (mostly matte powdery blue + smaller rubbed dark spots!)
+      // Authentic epicuticular dusty slate-blue waxy bloom smudge over rich dark indigo skin
       const crownBias = 1.0 - smoothstep(0.24, 0.88, v) * 0.28;
       const smudgeRaw = nBloom * 0.56 + nSmudge * 0.32 + nFine * 0.12;
-      const bloomSoft = smoothstep(0.22, 0.66, smudgeRaw) * smoothstep(0.05, 0.16, v) * crownBias;
-      const bloomCrest = smoothstep(0.48, 0.82, smudgeRaw * 0.72 + nFine * 0.28) * smoothstep(0.07, 0.19, v) * crownBias;
+      const bloomSoft = smoothstep(0.30, 0.72, smudgeRaw) * smoothstep(0.05, 0.16, v) * crownBias;
+      const bloomCrest = smoothstep(0.54, 0.86, smudgeRaw * 0.72 + nFine * 0.28) * smoothstep(0.07, 0.19, v) * crownBias;
 
-      // Dusty periwinkle-slate blue smudge (#5c7ca9 -> wispy powdery #8faed6 highlights)
-      cr = cr + (88 - cr) * bloomSoft * 0.72;
-      cg = cg + (120 - cg) * bloomSoft * 0.74;
-      cb = cb + (170 - cb) * bloomSoft * 0.78;
+      // Deep dusty slate-blue smudge (#344a72 -> subtle powdery #566e98 wisps)
+      cr = cr + (52 - cr) * bloomSoft * 0.56;
+      cg = cg + (74 - cg) * bloomSoft * 0.58;
+      cb = cb + (114 - cb) * bloomSoft * 0.62;
 
-      cr = cr + (142 - cr) * bloomCrest * 0.46;
-      cg = cg + (168 - cg) * bloomCrest * 0.48;
-      cb = cb + (212 - cb) * bloomCrest * 0.52;
+      cr = cr + (86 - cr) * bloomCrest * 0.34;
+      cg = cg + (110 - cg) * bloomCrest * 0.36;
+      cb = cb + (152 - cb) * bloomCrest * 0.40;
 
       // Sculpted 5-pointed calyx star crater & warm russet-plum dried sepal rims at top pole
       const starWave = 0.5 + 0.5 * Math.cos(theta * 5.0);
@@ -278,14 +278,14 @@ export function createBlueberryTextures(seed = 207): BlueberryTextures {
       const calyxRim = Math.exp(-Math.pow((v - (0.095 + starWave * 0.032)) / 0.025, 2.0));
 
       // Subtle natural warm russet-plum dried calyx sepal rim (matches real blueberries!)
-      cr = cr + (114 - cr) * calyxRim * 0.62;
-      cg = cg + (82 - cg) * calyxRim * 0.56;
-      cb = cb + (64 - cb) * calyxRim * 0.48;
+      cr = cr + (94 - cr) * calyxRim * 0.58;
+      cg = cg + (66 - cg) * calyxRim * 0.52;
+      cb = cb + (52 - cb) * calyxRim * 0.44;
 
       // Warm dusky brown-plum sunken calyx interior cavity
-      cr = cr * (1 - calyxCrater * 0.76) + 54 * (calyxCrater * 0.76);
-      cg = cg * (1 - calyxCrater * 0.78) + 38 * (calyxCrater * 0.78);
-      cb = cb * (1 - calyxCrater * 0.76) + 34 * (calyxCrater * 0.76);
+      cr = cr * (1 - calyxCrater * 0.76) + 42 * (calyxCrater * 0.76);
+      cg = cg * (1 - calyxCrater * 0.78) + 30 * (calyxCrater * 0.78);
+      cb = cb * (1 - calyxCrater * 0.76) + 26 * (calyxCrater * 0.76);
 
       // Soft satin on rubbed dark-navy spots vs truly matte powdery dusty-blue smudge!
       const roughVal = 128 + bloomSoft * 94 + bloomCrest * 28 + (nFine - 0.5) * 20 + calyxRim * 42;

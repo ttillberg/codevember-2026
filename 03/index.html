@@ -28,39 +28,8 @@
          popsicle is a wireframe drawing and the optical shaders build (main.ts) -->
     <div class="plate"><div class="head"><b>03 Melt</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">融解</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i><i class="loading-label">Loading <span>…</span></i></div></div>
 
-    <nav id="preset-dock" class="preset-dock" aria-label="Popsicle presets"></nav>
-
-    <!-- Pure boxless floating Customize objects: Left top (2 base cubes), Left bottom (9 uniform 3D juice droplets, max 2), Right (6 balanced 3D toppings); mobile switches one clean row at a time -->
-    <div id="customize-studio" class="customize-studio" data-mobile-tab="taste" hidden aria-label="Customize popsicle">
-      <div class="cust-wing cust-wing-left">
-        <div class="base-float-field" data-cust-group="base" role="group" aria-label="Base material">
-          <button type="button" class="float-obj base-cube-btn" data-base="water" data-tip="Water" aria-label="Water ice" aria-pressed="true" style="--fx:60px;--fy:8px;--size:76px;--rot:-4deg;--float-delay:-0.4s;--float-dur:5.4s">
-            <svg class="pen-ring" viewBox="0 0 116 102" fill="none" aria-hidden="true">
-              <path pathLength="1" d="M22 20 C44 8, 86 11, 100 31 C111 49, 103 80, 79 90 C50 100, 17 92, 11 68 C5 44, 21 19, 49 14" />
-            </svg>
-            <span class="obj-stage"><img id="img-base-water" alt="" draggable="false" /></span>
-          </button>
-          <button type="button" class="float-obj base-cube-btn" data-base="coconut" data-tip="Concentrated Milk" aria-label="Concentrated Milk" aria-pressed="false" style="--fx:178px;--fy:12px;--size:76px;--rot:5deg;--float-delay:-2.3s;--float-dur:6.1s">
-            <svg class="pen-ring" viewBox="0 0 116 102" fill="none" aria-hidden="true">
-              <path pathLength="1" d="M89 19 C65 7, 25 13, 13 35 C3 56, 14 85, 42 92 C72 99, 103 85, 107 61 C110 37, 92 16, 65 13" />
-            </svg>
-            <span class="obj-stage"><img id="img-base-coconut" alt="" draggable="false" /></span>
-          </button>
-        </div>
-
-        <div id="cust-flavors" class="taste-float-field" data-cust-group="taste" role="group" aria-label="Tastes (max 2)"></div>
-      </div>
-
-      <div class="cust-wing cust-wing-right">
-        <div id="cust-toppings" class="topping-float-field" data-cust-group="toppings" role="group" aria-label="Toppings"></div>
-      </div>
-
-      <div id="cust-mobile-tabs" class="cust-mobile-tabs" role="tablist" aria-label="Customize sections">
-        <button type="button" class="cust-tab-btn" role="tab" data-tab="base" aria-selected="false">Base</button>
-        <button type="button" class="cust-tab-btn" role="tab" data-tab="taste" aria-selected="true">Taste</button>
-        <button type="button" class="cust-tab-btn" role="tab" data-tab="toppings" aria-selected="false">Toppings</button>
-      </div>
-    </div>
+    <!-- Unified bottom dock: PRESETS | Ingredient (cube) · Tastes (textured circles) · Toppings (3D berries/bits) with anchored popovers -->
+    <nav id="preset-dock" class="preset-dock" aria-label="Popsicle presets and recipe"></nav>
 
     <script type="module" src="./src/main.ts"></script>
   </body>
