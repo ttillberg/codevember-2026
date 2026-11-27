@@ -49,6 +49,22 @@ export class Dust {
     this.emitters.push({ p: p.clone(), rate: 240 * amount + 80 * Math.random(), left: 0.3 + Math.random() * 0.8 * amount, spread: 0.03 + 0.05 * amount, acc: 0, size });
   }
 
+  /** Grit thrown up and back from a point on the floor, as from under a paw. */
+  kick(p: THREE.Vector3, back: THREE.Vector3, n = 6) {
+    for (let k = 0; k < n; k++) {
+      const i = this.next;
+      this.next = (this.next + 1) % CRUMBS;
+      const j = i * 3, up = 0.35 + Math.random() * 0.9, out = 0.15 + Math.random() * 0.55;
+      this.pos[j] = p.x + (Math.random() - 0.5) * 0.03; this.pos[j + 1] = p.y + Math.random() * 0.006; this.pos[j + 2] = p.z + (Math.random() - 0.5) * 0.03;
+      this.vel[j] = back.x * out + (Math.random() - 0.5) * 0.5; this.vel[j + 1] = up; this.vel[j + 2] = back.z * out + (Math.random() - 0.5) * 0.5;
+      const r = Math.random();
+      this.data[i * 4] = Math.random() < 0.6 ? 0.0004 + r * 0.0008 : 0.001 + r * r * 0.004;
+      this.data[i * 4 + 1] = Math.random(); this.data[i * 4 + 2] = 1; this.data[i * 4 + 3] = 0;
+      this.state[i] = 1; this.age[i] = 0;
+    }
+    this.posAttr.needsUpdate = this.dataAttr.needsUpdate = true;
+  }
+
   private spawn(e: Emitter) {
     const i = this.next;
     this.next = (this.next + 1) % CRUMBS;

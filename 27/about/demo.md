@@ -7,10 +7,10 @@ xseconds: 30
 ---
 # 27 / Burrow, demo
 
-`?clean&auto`: opens on the hole in the bank and crawls in by itself. Ten seconds: the daylight falls away, the exposure opens up, the torch sweeps a root and the walls, and the first fork comes into the beam. Coordinates are in a 1200 × 1200 viewport; `move` aims the torch.
+`?clean&auto`: opens on the hole in the bank and runs in by itself, at a badger's rolling trot. Ten seconds: the daylight falls away, the exposure opens up, the torch sweeps a root and the walls, and the first fork comes into the beam. Coordinates are in a 1200 × 1200 viewport; `move` aims the torch.
 
 ```steps
-wait 3200
+wait 2400
 # inside now: sweep the beam up to the roots, then across the wall
 move 760,470 900ms
 wait 1300
@@ -23,7 +23,7 @@ wait 1200
 The den is at the far end (`?at=N,1.4` starts just short of it): eyes first, then the animal.
 
 ```x
-wait 3200
+wait 2400
 move 760,470 900ms
 wait 1500
 move 420,660 1300ms

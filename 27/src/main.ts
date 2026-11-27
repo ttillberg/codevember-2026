@@ -83,7 +83,9 @@ const casters: { obj: THREE.Mesh | THREE.Points | THREE.LineSegments; depth: THR
 const noShadow: THREE.Object3D[] = [sky, dust.motes, dust.crumbs, grass, soilPre];
 
 // ---- look, crawl ----
-const SPEED = 0.46;
+const SPEED = 1.05;
+/** one full cycle of the front paws, left then right, in metres of ground covered */
+const STRIDE = 0.55;
 const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0 };
 const look = { yaw: 0, pitch: 0, yawT: 0, pitchT: 0, yaw0: 0, pitch0: 0 };
 const aim = { x: 0, y: 0, mouse: false };
@@ -98,6 +100,10 @@ const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.V
 let travelled = 0;
 let torchReach = 1;
 let bob = 0;
+/** where we are in the stride: the left forepaw lands at 0, the right at π */
+let gait = 0;
+const basePos = new THREE.Vector3();
+const gaitOff = new THREE.Vector3();
 
 {
   const e = world.edges[0];
@@ -136,7 +142,7 @@ canvas.addEventListener('pointermove', (ev) => {
 });
 const release = (ev: PointerEvent) => {
   if (ev.pointerId !== input.id) return;
-  if (!input.mode && performance.now() - input.t < 260) nav.step = 0.9; // a tap: one shuffle forward
+  if (!input.mode && performance.now() - input.t < 260) nav.step = 1.4; // a tap: one short dash
   input.down = false;
   input.mode = '';
 };
@@ -174,6 +180,18 @@ function switchEdge(node: number, over: number, moveDir: THREE.Vector3) {
   nav.dir = (c.a === node ? 1 : -1) * nav.sign;
 }
 
+/** A forepaw comes down: side -1 left, +1 right. Grit jumps from under it. */
+const pawPos = new THREE.Vector3(), pawBack = new THREE.Vector3();
+function footfall(side: number) {
+  if (!nav.entered || nav.v < SPEED * 0.4) return;
+  pawBack.set(lookDir.x, 0, lookDir.z).normalize();
+  pawPos.copy(camPos).addScaledVector(pawBack, 0.12).addScaledVector(tmpC.set(-pawBack.z, 0, pawBack.x), side * 0.085);
+  const t = world.march(pawPos, tmpC.set(0, -1, 0), 0.5);
+  if (t >= 0.5) return;
+  pawPos.y -= t - 0.006;
+  dust.kick(pawPos, pawBack.multiplyScalar(-nav.sign), 4 + Math.floor(Math.random() * 5));
+}
+
 function crawl(dt: number) {
   if (input.down && !input.mode && performance.now() - input.t > 240) input.mode = 'crawl';
   let want = 0;
@@ -186,13 +204,17 @@ function crawl(dt: number) {
   if (nav.step > 0 && !want) want = 1;
   if (auto && clock > 1.2 && !want) want = 1;
   if (want) nav.sign = want;
-  nav.v += ((want ? SPEED : 0) - nav.v) * (1 - Math.exp(-dt / 0.22));
+  nav.v += ((want ? SPEED : 0) - nav.v) * (1 - Math.exp(-dt / 0.18));
   if (nav.v < 1e-4) return;
   const e = world.edges[nav.e];
   world.railTangent(e, nav.s, tmpA);
   const d = tmpA.dot(lookDir);
   if (Math.abs(d) > 0.15) nav.dir = Math.sign(d);
-  const ds = nav.v * dt;
+  // each paw pushes: the ground comes in surges, not at a steady rate
+  const ds = nav.v * dt * (1 + 0.18 * Math.cos(2 * gait - 1.6));
+  const before = Math.floor(gait / Math.PI);
+  gait += (ds / STRIDE) * 2 * Math.PI;
+  if (Math.floor(gait / Math.PI) !== before) footfall(Math.floor(gait / Math.PI) % 2 === 0 ? -1 : 1);
   nav.step = Math.max(0, nav.step - ds);
   travelled += ds;
   nav.s += nav.dir * nav.sign * ds;
@@ -211,11 +233,11 @@ function updateCamera(dt: number, time: number) {
   // the path pulls the eye along while crawling, unless a finger is steering
   const moving = nav.v / SPEED;
   if (moving > 0.05 && input.mode !== 'look' && !turn) {
-    const ahead = nav.s + nav.dir * nav.sign * 0.6;
+    const ahead = nav.s + nav.dir * nav.sign * 0.8;
     world.railPoint(e, ahead, tmpA).sub(world.railPoint(e, nav.s, tmpB));
     if (tmpA.lengthSq() > 0.02 && nav.sign > 0) {
       tmpA.normalize();
-      const k = (1 - Math.exp(-dt / 0.5)) * moving;
+      const k = (1 - Math.exp(-dt / 0.3)) * moving;
       look.yawT += wrapPi(Math.atan2(-tmpA.x, -tmpA.z) - look.yawT) * k;
       look.pitchT += (Math.asin(tmpA.y) * 0.8 - look.pitchT) * k * 0.6;
     }
@@ -232,14 +254,25 @@ function updateCamera(dt: number, time: number) {
   look.pitch += (look.pitchT - look.pitch) * k;
   fromYawPitch(look.yaw, look.pitch, lookDir);
 
-  // the body: on the rail, a little behind it, rocking on elbows and knees
+  // the body: on the rail, a little behind it, low, the nose not far off the floor
   world.railPoint(e, nav.s, tmpA);
-  bob += dt * (2.2 + 6.5 * moving);
-  const breathe = Math.sin(time * 1.3) * 0.002;
-  tmpA.y += 0.02 + breathe + Math.sin(bob) * 0.007 * moving;
-  camPos.lerp(tmpA, 1 - Math.exp(-dt / 0.16));
-  const roll = Math.sin(bob * 0.5) * 0.012 * moving;
-  camQ.setFromEuler(new THREE.Euler(look.pitch, look.yaw, roll, 'YXZ'));
+  bob += dt * 2.2;
+  tmpA.y += -0.02 + Math.sin(time * 1.3) * 0.002;
+  if (basePos.lengthSq() === 0) basePos.copy(tmpA);
+  basePos.lerp(tmpA, 1 - Math.exp(-dt / 0.12));
+
+  // the gait of something low and heavy-shouldered at a run. Each forepaw takes the weight in turn: the shoulder on
+  // that side drops and the head tips with it, the body swings over the planted paw, and every landing is a dip.
+  const g = gait, m = moving * moving;
+  const roll = 0.058 * Math.sin(g + 0.2) * m;
+  const yawG = 0.02 * Math.sin(g + 1.0) * m;
+  const pitchG = (0.013 * Math.sin(2 * g - 0.4) - 0.02) * m; // and the head carried a little down
+  gaitOff.set(-0.013 * Math.sin(g + 0.3) * m, (-0.011 * Math.cos(2 * g - 0.9) - 0.0035 * Math.cos(4 * g - 1.2)) * m, 0);
+  camQ.setFromEuler(new THREE.Euler(look.pitch + pitchG, look.yaw + yawG, roll, 'YXZ'));
+  // sideways along the shoulders, up and down in the world
+  tmpB.set(1, 0, 0).applyQuaternion(camQ);
+  camPos.copy(basePos).addScaledVector(tmpB, gaitOff.x);
+  camPos.y += gaitOff.y;
   camera.position.copy(camPos);
   camera.quaternion.copy(camQ);
   camera.updateMatrixWorld();
@@ -248,10 +281,11 @@ function updateCamera(dt: number, time: number) {
 function updateTorch(dt: number, time: number) {
   const tanV = Math.tan((camera.fov * Math.PI) / 360), tanH = tanV * camera.aspect;
   const ax = aim.mouse ? aim.x : 0, ay = aim.mouse ? aim.y : 0;
-  tmpA.set(ax * tanH * 0.85, ay * tanV * 0.85, -1).normalize().applyQuaternion(camQ);
-  // a hand, not a tripod
+  // carried, not mounted: it trails the stride by a beat and swings wider than the head does
+  const run = (nav.v / SPEED) ** 2;
+  tmpA.set(ax * tanH * 0.85 + 0.03 * Math.sin(gait - 0.5) * run, ay * tanV * 0.85 + 0.035 * Math.cos(2 * gait - 1.5) * run, -1).normalize().applyQuaternion(camQ);
   tmpA.x += Math.sin(time * 2.1) * 0.004 + Math.sin(time * 5.3) * 0.002;
-  tmpA.y += Math.sin(time * 1.7 + 1.0) * 0.004 + Math.sin(bob) * 0.012 * (nav.v / SPEED);
+  tmpA.y += Math.sin(time * 1.7 + 1.0) * 0.004;
   lightDir.lerp(tmpA.normalize(), 1 - Math.exp(-dt / 0.11)).normalize();
   // held beside the head; pulled in when there is no room for the arm
   tmpB.set(0.085, -0.07, -0.02).applyQuaternion(camQ);
@@ -416,6 +450,7 @@ Object.assign(window, {
       const e = world.edges[ei];
       nav.e = ei; nav.s = e.a === n ? along : e.len - along; nav.entered = !e.open; nav.v = 0;
       world.railPoint(e, nav.s, camPos);
+      basePos.copy(camPos);
       if (yaw === undefined) {
         world.railTangent(e, nav.s, tmpA);
         if (e.a === n) tmpA.negate();
