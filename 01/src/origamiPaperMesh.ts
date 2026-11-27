@@ -28,7 +28,7 @@ import {
  * completely different size, roof, window layout, and orientation!
  */
 
-export const PAPER_THICK = 0.056; // 0.56 mm cotton-rag paper casting crisp minimal ridge shadows
+export const PAPER_THICK = 0.020; // 0.20 mm crisp fine origami paper with razor-thin edges
 
 export interface ProjectionUniforms {
   uHasProj: { value: number };
@@ -168,7 +168,7 @@ function attachProjectiveShader(
   const clip = Boolean(opts.clipToSilhouette);
   const face = opts.face ?? 1;
   const sideExpr = face === 0 ? '1.0' : face > 0 ? 'step(0.0, uProjSide)' : 'step(0.0, -uProjSide)';
-  mat.customProgramCacheKey = () => `origami-cam-proj-v12-${clip ? 'clip' : 'full'}-f${face}`;
+  mat.customProgramCacheKey = () => `origami-cam-proj-v13-${clip ? 'clip' : 'full'}-f${face}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHasProj = uniforms.uHasProj;
     shader.uniforms.uProjTex = uniforms.uProjTex;
@@ -251,7 +251,7 @@ if (uHasProj > 0.5) {
         `#include <opaque_fragment>
 // Exact pre-tonemap linear pixel lock while resting flat on the sheet -> 0/255 color shift on fold swap!
 // Smoothly eases into live 3D PBR lighting & shadows as each wall lifts or cutout falls.
-float projSheetLift = max(0.0, abs(vLiveWorldPos.y - 0.028) - 0.042);
+float projSheetLift = max(0.0, abs(vLiveWorldPos.y - ${(PAPER_THICK * 0.5).toFixed(4)}) - ${(PAPER_THICK * 0.75 + 0.005).toFixed(4)});
 float projFlatLock = 0.0;
 if (uHasProj > 0.5 && projSideMatch > 0.5 && projHasCaptured > 0.5) {
   projFlatLock = (1.0 - smoothstep(0.015, 0.48, projSheetLift)) * uProjFade;
@@ -1299,6 +1299,7 @@ export interface OrigamiHouseRig {
   updatePanelVisual(id: FoldablePanelId, fold01: number, peekRad: number, hovered: boolean): void;
   setWindowOpen(mode: WindowOpenMode, ratio?: number): void;
   updateCutoutDrop(outerElapsedSec: number, dtSec?: number): boolean;
+  updateCutoutReassemble(remainSec: number, arrivePadSec?: number): void;
   setFoldLinesVisible(visible: boolean): void;
   setPaperRelief(relief01: number, forceFlatShadow?: boolean): void;
   dispose(): void;
@@ -1356,6 +1357,12 @@ export function buildOrigamiHouseRig(
   }
   const tmpSpinEuler = new THREE.Euler();
   const tmpSpinQuat = new THREE.Quaternion();
+  const tmpInvRootMat = new THREE.Matrix4();
+  const tmpInvRootQuat = new THREE.Quaternion();
+  const tmpHostWorldPos = new THREE.Vector3();
+  const tmpHostWorldQuat = new THREE.Quaternion();
+  const tmpSeatPos = new THREE.Vector3();
+  const tmpSeatQuat = new THREE.Quaternion();
   let cutoutRoot: THREE.Group | null = null;
   let outerCutoutMesh: THREE.Mesh | null = null;
   const fallingChads: FallingChad[] = [];
@@ -1484,12 +1491,12 @@ export function buildOrigamiHouseRig(
         if (def.crease) {
           const [ca, cb] = def.crease;
           foldLine = makeFoldLine(
-            [(ca[0] - def.hingeOrigin[0]) * MM, 0.004, -(ca[1] - def.hingeOrigin[1]) * MM],
-            [(cb[0] - def.hingeOrigin[0]) * MM, 0.004, -(cb[1] - def.hingeOrigin[1]) * MM],
+            [(ca[0] - def.hingeOrigin[0]) * MM, 0.002, -(ca[1] - def.hingeOrigin[1]) * MM],
+            [(cb[0] - def.hingeOrigin[0]) * MM, 0.002, -(cb[1] - def.hingeOrigin[1]) * MM],
             isMountain,
           );
         } else {
-          foldLine = makeFoldLine([0, 0.004, 0], [0, 0.004, 0], isMountain);
+          foldLine = makeFoldLine([0, 0.002, 0], [0, 0.002, 0], isMountain);
         }
         pivot.add(foldLine);
       }
@@ -1542,7 +1549,7 @@ export function buildOrigamiHouseRig(
         const chadFlatZ = flatOriginZ - cy;
         const chadGeo = buildDualSidedPaperGeometry(chadShape, chadFlatX, chadFlatZ, spec.yawOffset);
         const chadMesh = new THREE.Mesh(chadGeo, chadMats);
-        chadMesh.position.set(cx, 0.0014, -cy);
+        chadMesh.position.set(cx, 0.001, -cy);
         chadMesh.castShadow = false;
         chadMesh.receiveShadow = false;
         hostGroup.add(chadMesh);
@@ -2511,7 +2518,7 @@ export function buildOrigamiHouseRig(
     if (!cutoutRoot || !outerCutoutMesh) return false;
 
     const projSideSign = mats.projUniforms.uProjSide.value < 0 ? -1 : 1;
-    const seatY = 0.0014 * projSideSign;
+    const seatY = 0.001 * projSideSign;
 
     // Instant clear (e.g. scrub/debug jump to folded state)
     if (outerElapsedSec >= 90) {
@@ -2655,6 +2662,119 @@ export function buildOrigamiHouseRig(
     return true;
   };
 
+  // Exact physical time-reversal for Reverse (Unfold) mode:
+  // As each wall unfolds down (`1 -> 0`), its punched window chads rise from below, untumble into
+  // the descending wall's exact 3D pose, and click flush into the wall at `~14°` so the final landing
+  // is 100% solid, while the outer silhouette cutout rises smoothly back into place before `remainSec = 0`!
+  const updateCutoutReassemble = (remainSec: number, arrivePadSec = 0.22): void => {
+    if (!cutoutRoot || !outerCutoutMesh) return;
+
+    const projSideSign = mats.projUniforms.uProjSide.value < 0 ? -1 : 1;
+    const seatY = 0.001 * projSideSign;
+    const dropDir = projSideSign < 0 ? 1 : -1;
+    const dropScale = projSideSign < 0 ? 22 : 30;
+
+    cutoutRoot.visible = true;
+
+    // 1. Outer silhouette paper sheet: rises up & fades in cleanly to land flush by `arrivePadSec` before swap!
+    const fadeStart = 0.42;
+    const fadeEnd = 0.96;
+    const outerT = Math.max(0, remainSec - arrivePadSec);
+    if (outerT >= fadeEnd) {
+      outerCutoutMesh.visible = false;
+      outerCutoutMesh.castShadow = false;
+      mats.setCutoutOpacity(0);
+    } else if (outerT <= 0.0001) {
+      outerCutoutMesh.visible = true;
+      outerCutoutMesh.position.set(0, 0, 0);
+      outerCutoutMesh.rotation.set(0, 0, 0);
+      outerCutoutMesh.castShadow = false;
+      mats.setCutoutOpacity(1);
+    } else {
+      outerCutoutMesh.visible = true;
+      const ft = Math.max(0, outerT - 0.05);
+      const ft2 = ft * ft;
+      outerCutoutMesh.castShadow = ft > 0.08;
+      outerCutoutMesh.position.set(0.65 * ft2, dropDir * dropScale * ft2, 0.45 * ft2);
+      outerCutoutMesh.rotation.set(0.14 * ft2, 0, -0.10 * ft2);
+      if (outerT > fadeStart) {
+        const u = (outerT - fadeStart) / (fadeEnd - fadeStart);
+        mats.setCutoutOpacity(1 - u * u * (3 - 2 * u));
+      } else {
+        mats.setCutoutOpacity(1);
+      }
+    }
+
+    // 2. Per-wall window/door chads: fly up into each descending wall and click flush before flat landing!
+    let worldSynced = false;
+    for (const ch of fallingChads) {
+      const lift = effectivePanelLift(ch.hostPanelId);
+      const seatLift = ch.releaseThreshold;
+      const startLift = Math.min(0.86, seatLift + 0.30);
+
+      if (lift <= seatLift || remainSec <= 0.02) {
+        if (ch.detached) {
+          ch.hostGroup.add(ch.mesh);
+          ch.detached = false;
+        }
+        ch.dropElapsed = -1;
+        ch.mesh.visible = true;
+        ch.mesh.position.set(ch.localX, seatY, ch.localZ);
+        ch.mesh.quaternion.identity();
+        ch.mesh.scale.setScalar(1);
+        ch.mesh.castShadow = lift > 0.065;
+        continue;
+      }
+
+      if (lift >= startLift) {
+        if (!ch.detached) {
+          cutoutRoot.add(ch.mesh);
+          ch.detached = true;
+        }
+        ch.mesh.visible = false;
+        ch.mesh.castShadow = false;
+        continue;
+      }
+
+      // Actively flying upward & untumbling toward the descending wall's live 3D window frame!
+      if (!worldSynced) {
+        root.updateMatrixWorld(true);
+        tmpInvRootMat.copy(root.matrixWorld).invert();
+        root.getWorldQuaternion(tmpInvRootQuat).invert();
+        worldSynced = true;
+      }
+      if (!ch.detached) {
+        cutoutRoot.add(ch.mesh);
+        ch.detached = true;
+      }
+
+      const u = (lift - seatLift) / Math.max(0.001, startLift - seatLift); // 1 -> 0 as wall lowers
+      const ct = u * 0.84;
+      const ct2 = ct * ct;
+
+      tmpSeatPos.set(ch.localX, seatY, ch.localZ).applyMatrix4(ch.hostGroup.matrixWorld).applyMatrix4(tmpInvRootMat);
+      ch.hostGroup.getWorldQuaternion(tmpHostWorldQuat);
+      tmpSeatQuat.copy(tmpInvRootQuat).multiply(tmpHostWorldQuat);
+
+      ch.mesh.visible = true;
+      ch.mesh.castShadow = ct < 0.68;
+      ch.mesh.position.set(
+        tmpSeatPos.x + ch.outDirX * ct + ch.driftX * ct2,
+        tmpSeatPos.y + dropDir * (1.6 * ct + 0.5 * ch.grav * (dropDir > 0 ? 0.75 : 1) * ct2),
+        tmpSeatPos.z + ch.outDirZ * ct + ch.driftZ * ct2,
+      );
+      tmpSpinEuler.set(ch.spinX * ct, ch.spinY * ct, ch.spinZ * ct);
+      tmpSpinQuat.setFromEuler(tmpSpinEuler);
+      ch.mesh.quaternion.copy(tmpSeatQuat).multiply(tmpSpinQuat);
+      if (ct > 0.50) {
+        const sU = Math.min(1, (ct - 0.50) / (0.84 - 0.50));
+        ch.mesh.scale.setScalar(Math.max(0.01, 1 - sU * sU));
+      } else {
+        ch.mesh.scale.setScalar(1);
+      }
+    }
+  };
+
   return {
     net,
     root,
@@ -2666,6 +2786,7 @@ export function buildOrigamiHouseRig(
     updatePanelVisual,
     setWindowOpen,
     updateCutoutDrop,
+    updateCutoutReassemble,
     setFoldLinesVisible,
     setPaperRelief,
     dispose() {

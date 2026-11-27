@@ -44,6 +44,10 @@ import {
   evaluateFoldCurve,
   type FoldCurveShape,
 } from './foldCurve';
+import {
+  fitFlatNetToSilhouetteNDC,
+  sampleFoldedHouseSilhouetteNDC,
+} from './silhouetteMatch';
 
 const THUMB_SIZE = 240;
 
@@ -64,6 +68,7 @@ const helpModal = document.getElementById('help-modal') as HTMLDivElement;
 const helpClose = document.getElementById('help-close') as HTMLButtonElement;
 const btnAction = document.getElementById('btn-action') as HTMLButtonElement;
 const chkAuto = document.getElementById('chk-auto') as HTMLInputElement;
+const chkReverse = document.getElementById('chk-reverse') as HTMLInputElement;
 const statusEl = document.getElementById('status-label') as HTMLSpanElement;
 const btnDebug = document.getElementById('btn-debug') as HTMLButtonElement;
 const debugPanel = document.getElementById('debug-panel') as HTMLElement;
@@ -217,6 +222,7 @@ interface DebugSettings {
   seed: number;
   color: boolean;
   spin: boolean;
+  reverseFold: boolean;
   cameraTrick: CameraTrickMode;
   glideOnFold: boolean;
   fadeProjOnFold: boolean;
@@ -255,6 +261,7 @@ const FACTORY_SETTINGS: DebugSettings = {
   seed: 0,
   color: false,
   spin: true,
+  reverseFold: false,
   cameraTrick: 'balanced',
   glideOnFold: false,
   fadeProjOnFold: false,
@@ -346,6 +353,7 @@ function loadSavedSettings(): DebugSettings {
       }
       if (typeof parsed.color === 'boolean') s.color = parsed.color;
       if (typeof parsed.spin === 'boolean') s.spin = parsed.spin;
+      if (typeof parsed.reverseFold === 'boolean') s.reverseFold = parsed.reverseFold;
       if (typeof parsed.cameraTrick === 'string' && VALID_CAMERA_TRICKS.includes(parsed.cameraTrick as CameraTrickMode)) {
         s.cameraTrick = parsed.cameraTrick as CameraTrickMode;
       }
@@ -481,6 +489,8 @@ let debugColorEnabled =
   params.get('color') !== null ? params.get('color') !== '0' : initialSettings.color;
 let debugSpinEnabled =
   params.get('spin') !== null ? params.get('spin') !== '0' : initialSettings.spin;
+let debugReverseFoldEnabled =
+  params.get('reverse') !== null ? params.get('reverse') !== '0' : initialSettings.reverseFold;
 const pCamTrick = params.get('cameraTrick');
 let debugCameraTrick: CameraTrickMode =
   pCamTrick !== null && VALID_CAMERA_TRICKS.includes(pCamTrick as CameraTrickMode)
@@ -751,6 +761,7 @@ function syncDebugControls(): void {
   dbgColor.checked = debugColorEnabled;
   catColorBtn.setAttribute('aria-pressed', debugColorEnabled ? 'true' : 'false');
   dbgSpin.checked = debugSpinEnabled;
+  chkReverse.checked = debugReverseFoldEnabled;
   dbgCameraTrick.value = debugCameraTrick;
   dbgGlideFold.checked = debugGlideOnFoldEnabled;
   dbgFadeProj.checked = debugFadeProjEnabled;
@@ -799,6 +810,7 @@ function saveDebugSettings(): void {
       seed: mixSeed,
       color: debugColorEnabled,
       spin: debugSpinEnabled,
+      reverseFold: debugReverseFoldEnabled,
       cameraTrick: debugCameraTrick,
       glideOnFold: debugGlideOnFoldEnabled,
       fadeProjOnFold: debugFadeProjEnabled,
@@ -871,7 +883,7 @@ sun.shadow.camera.right = 14;
 sun.shadow.camera.top = 14;
 sun.shadow.camera.bottom = -14;
 sun.shadow.bias = -0.00018;
-sun.shadow.normalBias = 0.016;
+sun.shadow.normalBias = 0.012;
 sun.shadow.radius = 2.8;
 scene.add(sun);
 
@@ -911,7 +923,7 @@ function applyShadowFrustum(extent: number): void {
   sun.shadow.camera.bottom = -e;
   sun.shadow.camera.near = Math.max(2, sunDist - e * 2.2);
   sun.shadow.camera.far = sunDist + e * 2.6;
-  sun.shadow.normalBias = 0.016 * (e / 14);
+  sun.shadow.normalBias = 0.012 * (e / 14);
   sun.shadow.camera.updateProjectionMatrix();
 }
 applyShadowFrustum(curShadowExtent);
@@ -928,20 +940,28 @@ let targetYaw = defaultYaw;
 let targetPitch = defaultPitch;
 let targetRoll = 0;
 let targetDist = defaultDist;
+let targetLookX = 0;
 let targetLookY = BASE_LOOK_Y;
+let targetLookZ = 0;
 
 let curYaw = targetYaw;
 let curPitch = targetPitch;
 let curRoll = targetRoll;
 let curDist = targetDist;
+let curLookX = targetLookX;
 let curLookY = targetLookY;
+let curLookZ = targetLookZ;
 
-// Locked at the exact swap frame so 1:1 projection NEVER shifts; zooms smoothly as we approach final stage!
+// Locked at the exact swap frame so 1:1 projection NEVER shifts; zooms & centers smoothly as we fold!
 let swapDist = defaultDist;
+let swapLookX = 0;
 let swapLookY = BASE_LOOK_Y;
+let swapLookZ = 0;
 let finalDist = defaultDist;
 let finalLookY = BASE_LOOK_Y;
 let userZoomDelta = 0;
+let lastSilhouetteCoverage = 1;
+let lastSilhouetteBaseline = 1;
 
 // Optional per-slide camera shift & drastic top/bottom/rolled perspective jump-cut on projection
 let slideYawDelta = 0;
@@ -1136,11 +1156,11 @@ function syncTurntableLights(viewYaw = curYaw, shadowExtent = curShadowExtent): 
 function syncCameraFromOrbit(): void {
   camera.up.set(0, 1, 0);
   camera.position.set(
-    curDist * Math.cos(curPitch) * Math.sin(curYaw),
+    curLookX + curDist * Math.cos(curPitch) * Math.sin(curYaw),
     curLookY + curDist * Math.sin(curPitch),
-    curDist * Math.cos(curPitch) * Math.cos(curYaw),
+    curLookZ + curDist * Math.cos(curPitch) * Math.cos(curYaw),
   );
-  camera.lookAt(0, curLookY, 0);
+  camera.lookAt(curLookX, curLookY, curLookZ);
   if (Math.abs(curRoll) > 1e-5) {
     camera.rotateZ(curRoll);
   }
@@ -1179,10 +1199,14 @@ interface OutgoingLiveHouse {
   pitch: number;
   roll: number;
   dist: number;
+  lookX: number;
   lookY: number;
+  lookZ: number;
   swapDist: number;
   finalDist: number;
+  swapLookX: number;
   swapLookY: number;
+  swapLookZ: number;
   finalLookY: number;
   userZoomDelta: number;
   shadowExtent: number;
@@ -1190,9 +1214,44 @@ interface OutgoingLiveHouse {
   liveFramesRendered: number;
 }
 
+interface ReverseUnfoldState {
+  nextGen: number;
+  nextRig: OrigamiHouseRig;
+  nextMats: OrigamiMaterials;
+  nextMatIdx: 0 | 1;
+  targetRT: THREE.WebGLRenderTarget;
+  startYaw: number;
+  startPitch: number;
+  startRoll: number;
+  startDist: number;
+  startLookX: number;
+  startLookY: number;
+  startLookZ: number;
+  startShadowExtent: number;
+  landYaw: number;
+  landPitch: number;
+  landRoll: number;
+  landDist: number;
+  landLookX: number;
+  landLookY: number;
+  landLookZ: number;
+  landShadowExtent: number;
+  destYaw: number;
+  destPitch: number;
+  destRoll: number;
+  destDist: number;
+  destLookY: number;
+  destShadowExtent: number;
+  elapsedSec: number;
+  totalSec: number;
+  swapReady: boolean;
+  holdBeforeSwap: boolean;
+}
+
 let generation = 1;
 let rig: OrigamiHouseRig;
 let outgoing: OutgoingLiveHouse | null = null;
+let reverseUnfold: ReverseUnfoldState | null = null;
 let preparedNext: { generation: number; mixKey: string; matIdx: 0 | 1; rig: OrigamiHouseRig } | null = null;
 let prepareTimerId: number | null = null;
 const panelState = new Map<FoldablePanelId, PanelState>();
@@ -1208,6 +1267,13 @@ function clearOutgoing(): void {
   scene.remove(outgoing.rig.root);
   outgoing.rig.dispose();
   outgoing = null;
+}
+
+function clearReverseUnfold(): void {
+  if (!reverseUnfold) return;
+  scene.remove(reverseUnfold.nextRig.root);
+  reverseUnfold.nextRig.dispose();
+  reverseUnfold = null;
 }
 
 function clearPreparedNext(): void {
@@ -1347,19 +1413,26 @@ function applyActiveOutsideColor(includeOutgoing = true): void {
   if (includeOutgoing && outgoing) {
     outgoing.mats.projUniforms.uProjGain.value = calibratedGain;
   }
+  if (reverseUnfold) {
+    applyPaperColorsTo(reverseUnfold.nextMats, reverseUnfold.nextRig);
+    reverseUnfold.nextMats.projUniforms.uProjGain.value = calibratedGain;
+    captureReverseTarget(reverseUnfold);
+  }
 }
 
 function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = false): void {
   if (!preservePrevRig) {
     clearOutgoing();
+    clearReverseUnfold();
     if (rig) {
       scene.remove(rig.root);
       rig.dispose();
     }
   }
   const mixKey = getMixCacheKey();
+  const needsCutout = fromSwap || debugReverseFoldEnabled;
   if (
-    fromSwap &&
+    needsCutout &&
     preparedNext &&
     preparedNext.generation === gen &&
     preparedNext.mixKey === mixKey &&
@@ -1370,26 +1443,28 @@ function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = f
   } else {
     const spec = generateHouseSpec(gen, getCurrentMixOptions());
     const net = buildHouseNet(spec);
-    rig = buildOrigamiHouseRig(net, materials, fromSwap);
+    rig = buildOrigamiHouseRig(net, materials, needsCutout);
   }
   applyActiveOutsideColor(!preservePrevRig);
   rig.setWindowOpen(mixWinOpenMode, mixWinOpen);
   const net = rig.net;
   scene.add(rig.root);
 
+  const startFolded = !fromSwap && debugReverseFoldEnabled;
+  const initFold = startFolded ? 1 : 0;
   panelState.clear();
   for (const id of rig.panelIds) {
     panelState.set(id, {
-      fold: 0,
-      target: 0,
-      startFold: 0,
+      fold: initFold,
+      target: initFold,
+      startFold: initFold,
       animElapsed: 0,
       animDuration: 0,
       animating: false,
       peek: 0,
       delay: 0,
     });
-    rig.updatePanelVisual(id, 0, 0, false);
+    rig.updatePanelVisual(id, initFold, 0, false);
   }
   hoveredPanel = null;
 
@@ -1406,12 +1481,16 @@ function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = f
     if (rig.hasCutout) rig.updateCutoutDrop(0);
 
     swapDist = curDist;
+    swapLookX = curLookX;
     swapLookY = curLookY;
+    swapLookZ = curLookZ;
     finalDist = ideal.dist;
     finalLookY = ideal.lookY;
     userZoomDelta = 0;
     targetDist = curDist;
+    targetLookX = curLookX;
     targetLookY = curLookY;
+    targetLookZ = curLookZ;
 
     swapShadowExtent = curShadowExtent;
     finalShadowExtent = ideal.shadowExtent;
@@ -1428,6 +1507,33 @@ function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = f
       slideRollDelta = -targetRoll;
     }
     prevSlideEase = 0;
+  } else if (startFolded) {
+    curPaperRelief = 1;
+    targetPaperRelief = 1;
+    rig.setPaperRelief(1);
+    rig.setFoldLinesVisible(false);
+    cutoutDropState = rig.hasCutout ? 'done' : 'none';
+    cutoutDropElapsed = 0;
+    if (rig.hasCutout) rig.updateCutoutDrop(99);
+
+    swapDist = Math.max(defaultDist, ideal.dist);
+    swapLookX = 0;
+    swapLookY = BASE_LOOK_Y;
+    swapLookZ = 0;
+    finalDist = ideal.dist;
+    finalLookY = ideal.lookY;
+    userZoomDelta = 0;
+    targetDist = curDist = ideal.dist;
+    targetLookX = curLookX = 0;
+    targetLookY = curLookY = ideal.lookY;
+    targetLookZ = curLookZ = 0;
+
+    curShadowExtent = swapShadowExtent = finalShadowExtent = ideal.shadowExtent;
+    applyShadowFrustum(curShadowExtent);
+    slideYawDelta = 0;
+    slidePitchDelta = 0;
+    slideRollDelta = 0;
+    prevSlideEase = 0;
   } else {
     curPaperRelief = 1;
     targetPaperRelief = 1;
@@ -1436,12 +1542,16 @@ function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = f
     cutoutDropElapsed = 0;
 
     swapDist = defaultDist;
+    swapLookX = 0;
     swapLookY = BASE_LOOK_Y;
+    swapLookZ = 0;
     finalDist = ideal.dist;
     finalLookY = ideal.lookY;
     userZoomDelta = 0;
     targetDist = curDist = defaultDist;
+    targetLookX = curLookX = 0;
     targetLookY = curLookY = BASE_LOOK_Y;
+    targetLookZ = curLookZ = 0;
 
     curShadowExtent = swapShadowExtent = finalShadowExtent = ideal.shadowExtent;
     applyShadowFrustum(curShadowExtent);
@@ -1498,6 +1608,9 @@ function ensureProjTargetsSized(): { tw: number; th: number } {
   }
   if (resized) {
     clearOutgoing();
+    if (reverseUnfold) {
+      captureReverseTarget(reverseUnfold);
+    }
   }
   return { tw, th };
 }
@@ -1573,10 +1686,11 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
   }
   const targetRT = rtPool[nextIdx];
 
-  // 1. Capture the EXACT current pixels on screen from Camera A!
+  // 1. Capture the EXACT current pixels on screen from Camera A + sample its exact 2D silhouette!
   syncCameraFromOrbit();
   camera.updateMatrixWorld(true);
   rig.root.updateMatrixWorld(true);
+  const silA = sampleFoldedHouseSilhouetteNDC(rig, camera);
 
   rig.setFoldLinesVisible(false);
 
@@ -1612,10 +1726,14 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
       pitch: curPitch,
       roll: curRoll,
       dist: curDist,
+      lookX: curLookX,
       lookY: curLookY,
+      lookZ: curLookZ,
       swapDist,
       finalDist,
+      swapLookX,
       swapLookY,
+      swapLookZ,
       finalLookY,
       userZoomDelta,
       shadowExtent: curShadowExtent,
@@ -1624,17 +1742,70 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
     };
   }
 
-  // 3. Secretly teleport main camera to Camera B BEFORE computing `snapVP` so t=0 stays 100% pixel-locked!
-  if (trickMode !== 'off') {
-    const jump = computeProjectionJumpView(rig.net, trickMode);
-    curYaw = targetYaw = jump.toYaw;
-    curPitch = targetPitch = jump.toPitch;
-    curRoll = targetRoll = jump.toRoll;
-    curDist = targetDist = jump.toDist;
-    curLookY = targetLookY = BASE_LOOK_Y;
-    syncCameraFromOrbit();
-    camera.updateMatrixWorld(true);
+  // 3. Pre-fetch House B's net on the alternate slot, then fit Camera B's flat-sheet alignment
+  //    (yaw, scale, lookX/Z) directly to House A's 2D silhouette to minimize outer paper cutouts!
+  const nextRigForFit = prepareNextGenerationNow(generation + 1);
+  const baseJump = trickMode !== 'off' ? computeProjectionJumpView(nextRigForFit.net, trickMode) : null;
+  const basePose = baseJump
+    ? {
+        yaw: baseJump.toYaw,
+        pitch: baseJump.toPitch,
+        roll: baseJump.toRoll,
+        dist: baseJump.toDist,
+        lookX: 0,
+        lookY: BASE_LOOK_Y,
+        lookZ: 0,
+      }
+    : {
+        yaw: curYaw,
+        pitch: curPitch,
+        roll: curRoll,
+        dist: curDist,
+        lookX: 0,
+        lookY: curLookY,
+        lookZ: 0,
+      };
+
+  let fitted = fitFlatNetToSilhouetteNDC(silA, nextRigForFit.net, basePose, {
+    fovDeg: camera.fov,
+    aspect: camera.aspect,
+    allowYawSearch: trickMode !== 'off',
+    minScale: 0.54,
+    maxScale: 1.08,
+    maxLookShiftRatio: 0,
+  });
+  // In Balanced mode, if a low 3/4 pitch foreshortens a compact net too much, try a steeper 3/4 pitch
+  if (trickMode === 'balanced' && fitted.coverage < 0.86 && basePose.pitch < 0.68) {
+    const steeper = fitFlatNetToSilhouetteNDC(
+      silA,
+      nextRigForFit.net,
+      { ...basePose, pitch: 0.78 },
+      {
+        fovDeg: camera.fov,
+        aspect: camera.aspect,
+        allowYawSearch: true,
+        minScale: 0.54,
+        maxScale: 1.08,
+        maxLookShiftRatio: 0,
+      },
+    );
+    if (steeper.coverage >= fitted.coverage + 0.08) {
+      fitted = steeper;
+    }
   }
+
+  lastSilhouetteCoverage = fitted.coverage;
+  lastSilhouetteBaseline = fitted.baselineCoverage;
+
+  curYaw = targetYaw = fitted.yaw;
+  curPitch = targetPitch = fitted.pitch;
+  curRoll = targetRoll = fitted.roll;
+  curDist = targetDist = fitted.dist;
+  curLookX = targetLookX = fitted.lookX;
+  curLookY = targetLookY = fitted.lookY;
+  curLookZ = targetLookZ = fitted.lookZ;
+  syncCameraFromOrbit();
+  camera.updateMatrixWorld(true);
 
   const projSide: 1 | -1 = camera.position.y < 0 ? -1 : 1;
   snapVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -1655,6 +1826,331 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
   syncUI();
 }
 
+function captureReverseTarget(rev: ReverseUnfoldState): void {
+  renderer.getDrawingBufferSize(tmpDrawSize);
+  const tw = Math.max(2, Math.round(tmpDrawSize.x));
+  const th = Math.max(2, Math.round(tmpDrawSize.y));
+  if (rev.targetRT.width !== tw || rev.targetRT.height !== th) {
+    rev.targetRT.dispose();
+    const idx = rtPool.indexOf(rev.targetRT);
+    const fresh = makeProjTarget(tw, th);
+    if (idx >= 0) rtPool[idx] = fresh;
+    rev.targetRT = fresh;
+  }
+
+  // Render next folded 3D House B offscreen from `destCam` into `rev.targetRT` (NoToneMapping HalfFloat!)
+  const destCam = camera.clone();
+  destCam.up.set(0, 1, 0);
+  destCam.position.set(
+    rev.destDist * Math.cos(rev.destPitch) * Math.sin(rev.destYaw),
+    rev.destLookY + rev.destDist * Math.sin(rev.destPitch),
+    rev.destDist * Math.cos(rev.destPitch) * Math.cos(rev.destYaw),
+  );
+  destCam.lookAt(0, rev.destLookY, 0);
+  if (Math.abs(rev.destRoll) > 1e-5) destCam.rotateZ(rev.destRoll);
+  destCam.updateProjectionMatrix();
+  destCam.updateMatrixWorld(true);
+
+  const savedRigVis = rig.root.visible;
+  const savedFogNear = studioFog.near;
+  const savedFogFar = studioFog.far;
+  rig.root.visible = false;
+  rev.nextRig.root.visible = true;
+  rev.nextRig.root.updateMatrixWorld(true);
+  studioFog.near = Math.max(44, rev.destDist * 1.25);
+  studioFog.far = Math.max(120, rev.destDist * 3.15);
+  syncTurntableLights(rev.destYaw, rev.destShadowExtent);
+
+  const prevTarget = renderer.getRenderTarget();
+  const prevToneMapping = renderer.toneMapping;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.setRenderTarget(rev.targetRT);
+  renderer.render(scene, destCam);
+  renderer.setRenderTarget(prevTarget);
+  renderer.toneMapping = prevToneMapping;
+
+  rev.nextRig.root.visible = false;
+  rig.root.visible = savedRigVis;
+  studioFog.near = savedFogNear;
+  studioFog.far = savedFogFar;
+  syncTurntableLights(curYaw, curShadowExtent);
+
+  // Compute exact landing VP matrix (`landCam`) onto House A's flat sheet (`aFlatPos`)!
+  const landCam = camera.clone();
+  landCam.up.set(0, 1, 0);
+  landCam.position.set(
+    rev.landLookX + rev.landDist * Math.cos(rev.landPitch) * Math.sin(rev.landYaw),
+    rev.landLookY + rev.landDist * Math.sin(rev.landPitch),
+    rev.landLookZ + rev.landDist * Math.cos(rev.landPitch) * Math.cos(rev.landYaw),
+  );
+  landCam.lookAt(rev.landLookX, rev.landLookY, rev.landLookZ);
+  if (Math.abs(rev.landRoll) > 1e-5) landCam.rotateZ(rev.landRoll);
+  landCam.updateProjectionMatrix();
+  landCam.updateMatrixWorld(true);
+
+  const projSide: 1 | -1 = landCam.position.y < 0 ? -1 : 1;
+  snapVP.multiplyMatrices(landCam.projectionMatrix, landCam.matrixWorldInverse);
+  materials.setProjection(rev.targetRT.texture, snapVP, projSide);
+}
+
+/**
+ * Reverse (Unfold) optical illusion:
+ * 1. Pre-builds & renders the NEXT 3D folded house (House B) offscreen into `targetRT`.
+ * 2. Projects House B onto the INSIDE (`aFlatPos`) of currently folded 3D House A aimed at the
+ *    exact camera pose `landCam` that will be reached when House A lays completely flat (`fold = 0`).
+ * 3. Unfolds House A (`1 -> 0`) while its window chads & outer silhouette cutout fly back into place
+ *    and lock seamlessly -> swaps at `fold = 0` with 0/255 pixel delta directly into real 3D House B!
+ */
+function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): void {
+  if (reverseUnfold) return;
+  clearOutgoing();
+
+  // Ensure active House A has its cutout & window chads built so it can reassemble cleanly on landing!
+  if (!rig.hasCutout) {
+    const curSpec = rig.net.spec;
+    const curNet = buildHouseNet(curSpec);
+    scene.remove(rig.root);
+    rig.dispose();
+    rig = buildOrigamiHouseRig(curNet, materials, true);
+    applyActiveOutsideColor(false);
+    rig.setWindowOpen(mixWinOpenMode, mixWinOpen);
+    scene.add(rig.root);
+    for (const id of rig.panelIds) {
+      const f = panelState.get(id)?.fold ?? 1;
+      rig.updatePanelVisual(id, f, 0, false);
+    }
+    rig.updateCutoutDrop(99);
+  }
+
+  const nextGen = generation + 1;
+  const nextMatIdx: 0 | 1 = activeMatIdx === 0 ? 1 : 0;
+  const nextMats = materialsPool[nextMatIdx];
+  const mixKey = getMixCacheKey();
+  let nextRig: OrigamiHouseRig;
+  if (
+    preparedNext &&
+    preparedNext.generation === nextGen &&
+    preparedNext.mixKey === mixKey &&
+    preparedNext.matIdx === nextMatIdx
+  ) {
+    nextRig = preparedNext.rig;
+    preparedNext = null;
+  } else {
+    clearPreparedNext();
+    const spec = generateHouseSpec(nextGen, getCurrentMixOptions());
+    const net = buildHouseNet(spec);
+    nextRig = buildOrigamiHouseRig(net, nextMats, true);
+  }
+
+  // Put House B into crisp folded 3D pose on the alternate material slot (hidden from main pass until swap!)
+  nextMats.setProjection(null);
+  applyPaperColorsTo(nextMats, nextRig);
+  nextMats.projUniforms.uProjGain.value = materials.projUniforms.uProjGain.value;
+  nextRig.setWindowOpen(mixWinOpenMode, mixWinOpen);
+  for (const id of nextRig.panelIds) {
+    nextRig.updatePanelVisual(id, 1, 0, false);
+  }
+  nextRig.setFoldLinesVisible(false);
+  nextRig.setPaperRelief(1);
+  if (nextRig.hasCutout) nextRig.updateCutoutDrop(99);
+  nextRig.root.visible = false;
+  scene.add(nextRig.root);
+
+  const totalSec = FOLD_HOUSE_SEC;
+  const realSec = totalSec / Math.max(0.25, autoSpeed);
+  const spinSpan = debugSpinEnabled ? AUTO_SPIN_RAD_PER_SEC * realSec : 0;
+  const idealA = computeIdealFraming(rig.net);
+  const idealB = computeIdealFraming(nextRig.net);
+
+  // Smooth landing camera for flat House A (`landPitch >= 0.34` guarantees 100% flat-sheet coverage of House B!)
+  const baseLandYaw = debugGlideOnFoldEnabled
+    ? curYaw + spinSpan + (generation % 2 === 0 ? 0.58 : -0.58)
+    : curYaw + spinSpan;
+  const baseLandPitch = debugGlideOnFoldEnabled
+    ? Math.max(0.42, Math.min(1.08, 0.62 + ((generation * 7) % 3) * 0.14))
+    : Math.max(0.34, Math.min(1.42, curPitch));
+  const baseLandRoll = debugGlideOnFoldEnabled ? 0 : curRoll;
+  const baseLandDist = Math.max(defaultDist, curDist, idealA.dist * 0.96);
+  const landShadowExtent = Math.max(curShadowExtent, idealA.shadowExtent);
+
+  // Target 3D viewing camera for House B (`destCam`)
+  let destYaw = baseLandYaw;
+  let destPitch = Math.max(0.26, Math.min(1.15, baseLandPitch));
+  let destRoll = baseLandRoll;
+  if (debugCameraTrick !== 'off') {
+    const savedYaw = curYaw;
+    curYaw = baseLandYaw;
+    const jump = computeProjectionJumpView(nextRig.net, debugCameraTrick);
+    curYaw = savedYaw;
+    destYaw = jump.toYaw;
+    destPitch = debugCameraTrick === 'drastic' ? jump.toPitch : Math.max(0.14, Math.min(1.48, jump.toPitch));
+    destRoll = jump.toRoll;
+  }
+
+  // Fit flat House A's landing camera (`landDist`, `landLookX/Z`, subtle `landYaw`) directly to 3D House B's
+  // silhouette so House A's unfolding walls & roofs cover House B with minimal outer cutout!
+  const sampleDestCam = camera.clone();
+  sampleDestCam.up.set(0, 1, 0);
+  sampleDestCam.position.set(
+    idealB.dist * Math.cos(destPitch) * Math.sin(destYaw),
+    idealB.lookY + idealB.dist * Math.sin(destPitch),
+    idealB.dist * Math.cos(destPitch) * Math.cos(destYaw),
+  );
+  sampleDestCam.lookAt(0, idealB.lookY, 0);
+  if (Math.abs(destRoll) > 1e-5) sampleDestCam.rotateZ(destRoll);
+  sampleDestCam.updateProjectionMatrix();
+  sampleDestCam.updateMatrixWorld(true);
+  const silB = sampleFoldedHouseSilhouetteNDC(nextRig, sampleDestCam);
+
+  const landFit = fitFlatNetToSilhouetteNDC(
+    silB,
+    rig.net,
+    {
+      yaw: baseLandYaw,
+      pitch: baseLandPitch,
+      roll: baseLandRoll,
+      dist: baseLandDist,
+      lookX: 0,
+      lookY: BASE_LOOK_Y,
+      lookZ: 0,
+    },
+    {
+      fovDeg: camera.fov,
+      aspect: camera.aspect,
+      allowYawSearch: debugGlideOnFoldEnabled,
+      maxYawDeltaRad: debugGlideOnFoldEnabled ? undefined : 0.36,
+      minScale: 0.54,
+      maxScale: 1.08,
+      maxLookShiftRatio: 0,
+    },
+  );
+  lastSilhouetteCoverage = landFit.coverage;
+  lastSilhouetteBaseline = landFit.baselineCoverage;
+
+  const nextRTIdx = (activeRTIndex + 1) % rtPool.length;
+  activeRTIndex = nextRTIdx;
+  const targetRT = rtPool[nextRTIdx];
+
+  reverseUnfold = {
+    nextGen,
+    nextRig,
+    nextMats,
+    nextMatIdx,
+    targetRT,
+    startYaw: curYaw,
+    startPitch: curPitch,
+    startRoll: curRoll,
+    startDist: curDist,
+    startLookX: curLookX,
+    startLookY: curLookY,
+    startLookZ: curLookZ,
+    startShadowExtent: curShadowExtent,
+    landYaw: landFit.yaw,
+    landPitch: landFit.pitch,
+    landRoll: landFit.roll,
+    landDist: landFit.dist,
+    landLookX: landFit.lookX,
+    landLookY: landFit.lookY,
+    landLookZ: landFit.lookZ,
+    landShadowExtent,
+    destYaw,
+    destPitch,
+    destRoll,
+    destDist: idealB.dist,
+    destLookY: idealB.lookY,
+    destShadowExtent: idealB.shadowExtent,
+    elapsedSec: 0,
+    totalSec,
+    swapReady: false,
+    holdBeforeSwap,
+  };
+
+  captureReverseTarget(reverseUnfold);
+  materials.setProjectionFade(0);
+  rig.setFoldLinesVisible(true);
+  rig.updateCutoutReassemble(totalSec, Math.min(0.32, cutoutDropDelay * 0.5));
+  launchStaggeredFold(0, 0, totalSec);
+
+  if (continuousAuto) {
+    autoBeatElapsed = 0;
+    autoBeatRunning = true;
+  }
+  syncUI();
+}
+
+function completeReverseUnfoldSwap(): void {
+  const rev = reverseUnfold;
+  if (!rev) return;
+  reverseUnfold = null;
+
+  // Dispose old flat House A and seamlessly promote real 3D House B (0/255 pixel delta!)
+  scene.remove(rig.root);
+  rig.dispose();
+
+  activeMatIdx = rev.nextMatIdx;
+  materials = rev.nextMats;
+  materials.setProjection(null);
+  rig = rev.nextRig;
+  rig.root.visible = true;
+  generation = rev.nextGen;
+  justProjected = false;
+
+  panelState.clear();
+  for (const id of rig.panelIds) {
+    panelState.set(id, {
+      fold: 1,
+      target: 1,
+      startFold: 1,
+      animElapsed: 0,
+      animDuration: 0,
+      animating: false,
+      peek: 0,
+      delay: 0,
+    });
+    rig.updatePanelVisual(id, 1, 0, false);
+  }
+  rig.setFoldLinesVisible(false);
+  curPaperRelief = targetPaperRelief = 1;
+  rig.setPaperRelief(1);
+  cutoutDropState = rig.hasCutout ? 'done' : 'none';
+  cutoutDropElapsed = 0;
+  if (rig.hasCutout) rig.updateCutoutDrop(99);
+
+  curYaw = targetYaw = rev.destYaw;
+  curPitch = targetPitch = rev.destPitch;
+  curRoll = targetRoll = rev.destRoll;
+  swapDist = Math.max(defaultDist, rev.destDist);
+  swapLookX = 0;
+  swapLookY = BASE_LOOK_Y;
+  swapLookZ = 0;
+  finalDist = curDist = targetDist = rev.destDist;
+  curLookX = targetLookX = 0;
+  finalLookY = curLookY = targetLookY = rev.destLookY;
+  curLookZ = targetLookZ = 0;
+  curShadowExtent = swapShadowExtent = finalShadowExtent = rev.destShadowExtent;
+  userZoomDelta = 0;
+  applyActiveOutsideColor(false);
+  syncCameraFromOrbit();
+
+  schedulePrepareNext(generation + 1, 80);
+  syncUI();
+
+  if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
+    autoBeatElapsed = 0;
+    autoBeatRunning = true;
+    if (autoHandoff <= 100) {
+      startReverseUnfold(true);
+    }
+  }
+}
+
+function allPanelsSettledUnfolded(): boolean {
+  return rig.panelIds.every((id) => {
+    const ps = panelState.get(id);
+    return ps && !ps.animating && ps.delay <= 0 && ps.fold <= 0.001 && ps.target <= 0.01;
+  });
+}
+
 function triggerCutoutDrop(): void {
   revealCreasesAfterSwap();
   if (cutoutDropState === 'waiting') {
@@ -1671,18 +2167,26 @@ function getZoomBounds(): { minDist: number; maxDist: number } {
   return { minDist: 11, maxDist: Math.max(135, finalDist * 1.9) };
 }
 
-function computeAutoZoom(foldProg: number): { autoDist: number; autoLookY: number; shadowExtent: number } {
+function computeAutoZoom(foldProg: number): {
+  autoDist: number;
+  autoLookX: number;
+  autoLookY: number;
+  autoLookZ: number;
+  shadowExtent: number;
+} {
   // Smooth cosine breath synced across the full 115 BPM folding bar (100% locked at fold=0 for zero-transition swap!)
   const zRaw = clamp01((foldProg - 0.03) / 0.94);
   const zoomEase = 0.5 - 0.5 * Math.cos(Math.PI * zRaw);
   const autoDist = swapDist + (finalDist - swapDist) * zoomEase;
+  const autoLookX = swapLookX * (1 - zoomEase);
   const autoLookY = swapLookY + (finalLookY - swapLookY) * zoomEase;
+  const autoLookZ = swapLookZ * (1 - zoomEase);
 
   // Expand shadow box ahead of tall walls rising so cast shadows never clip mid-fold!
   const sRaw = clamp01(foldProg / 0.42);
   const sEase = sRaw * sRaw * (3 - 2 * sRaw);
   const shadowExtent = swapShadowExtent + (finalShadowExtent - swapShadowExtent) * sEase;
-  return { autoDist, autoLookY, shadowExtent };
+  return { autoDist, autoLookX, autoLookY, autoLookZ, shadowExtent };
 }
 
 function revealCreasesAfterSwap(interactiveHover = false): void {
@@ -2054,12 +2558,32 @@ function resetAll(): void {
   autoBeatElapsed = 0;
   autoBeatRunning = false;
   clearPreparedNext();
+  clearReverseUnfold();
   materials.setProjection(null);
   targetYaw = curYaw = defaultYaw;
   targetPitch = curPitch = defaultPitch;
   targetRoll = curRoll = 0;
   mountHouseGeneration(1, false);
   schedulePrepareNext(2, 120);
+  syncUI();
+}
+
+function setReverseMode(enabled: boolean, persist = true): void {
+  const next = Boolean(enabled);
+  if (debugReverseFoldEnabled === next) return;
+  debugReverseFoldEnabled = next;
+  clearOutgoing();
+  clearReverseUnfold();
+  clearPreparedNext();
+  justProjected = false;
+  autoBeatElapsed = 0;
+  autoBeatRunning = false;
+  materials.setProjection(null);
+  mountHouseGeneration(generation, false);
+  syncCameraFromOrbit();
+  schedulePrepareNext(generation + 1, 80);
+  syncDebugControls();
+  if (persist) saveDebugSettings();
   syncUI();
 }
 
@@ -2087,6 +2611,7 @@ function resetToFactory(): void {
   mixSeed = FACTORY_SETTINGS.seed;
   debugColorEnabled = FACTORY_SETTINGS.color;
   debugSpinEnabled = FACTORY_SETTINGS.spin;
+  debugReverseFoldEnabled = FACTORY_SETTINGS.reverseFold;
   debugCameraTrick = FACTORY_SETTINGS.cameraTrick;
   debugGlideOnFoldEnabled = FACTORY_SETTINGS.glideOnFold;
   debugFadeProjEnabled = FACTORY_SETTINGS.fadeProjOnFold;
@@ -2112,6 +2637,11 @@ function resetToFactory(): void {
 }
 
 function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
+  if (debugReverseFoldEnabled) {
+    if (reverseUnfold) return;
+    startReverseUnfold(continuousAuto);
+    return;
+  }
   const leadSec = continuousAuto ? 0 : MANUAL_LEAD_DELAY_SEC;
   const houseDur = Math.max(0.5, FOLD_HOUSE_SEC - (continuousAuto ? phaseCarrySec : 0));
   const foldProg = computeFoldProgress();
@@ -2178,6 +2708,15 @@ function syncUI(): void {
         ? `${seedTag}${houseName} · `
         : '';
 
+  if (debugReverseFoldEnabled) {
+    btnAction.textContent = 'Unfold';
+    if (reverseUnfold) {
+      statusEl.textContent = `${prefix}Unfolding`;
+    } else {
+      statusEl.textContent = `${prefix}Click anywhere to unfold`;
+    }
+    return;
+  }
   btnAction.textContent = 'Fold';
   if (!allTargetFolded) {
     statusEl.textContent = `${prefix}Click anywhere to fold`;
@@ -2345,7 +2884,20 @@ chkAuto.addEventListener('change', () => {
   autoFoldEnabled = chkAuto.checked;
   saveDebugSettings();
   if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
-    if (!allPanelsFoldedTarget() || allPanelsSettledFolded()) {
+    if (debugReverseFoldEnabled) {
+      if (!reverseUnfold) triggerStepAction(true);
+    } else if (!allPanelsFoldedTarget() || allPanelsSettledFolded()) {
+      triggerStepAction(true);
+    }
+  }
+});
+
+chkReverse.addEventListener('change', () => {
+  setReverseMode(chkReverse.checked, true);
+  if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
+    if (debugReverseFoldEnabled && !reverseUnfold) {
+      triggerStepAction(true);
+    } else if (!debugReverseFoldEnabled && (!allPanelsFoldedTarget() || allPanelsSettledFolded())) {
       triggerStepAction(true);
     }
   }
@@ -2364,7 +2916,9 @@ function remountWithCurrentMix(persist = true): void {
     const z = computeAutoZoom(1);
     const { minDist, maxDist } = getZoomBounds();
     targetDist = curDist = Math.max(minDist, Math.min(maxDist, z.autoDist + userZoomDelta));
+    targetLookX = curLookX = z.autoLookX;
     targetLookY = curLookY = z.autoLookY;
+    targetLookZ = curLookZ = z.autoLookZ;
     curShadowExtent = z.shadowExtent;
     applyShadowFrustum(curShadowExtent);
   }
@@ -3451,6 +4005,9 @@ if (isDebugMode && params.has('city')) {
       cityTouch: (wx: number, wz: number, radius?: number, isClick?: boolean) => number;
       cityInfo: () => CityViewStats | null;
       setSpin: (enabled: boolean) => void;
+      setReverse: (enabled: boolean) => void;
+      unfoldNow: (holdBeforeSwap?: boolean) => void;
+      reverseSwapNow: () => void;
       setCameraTrick: (mode: CameraTrickMode) => void;
       setPerspectiveCut: (enabled: boolean) => void;
       setGlideOnFold: (enabled: boolean) => void;
@@ -3497,6 +4054,9 @@ if (isDebugMode && params.has('city')) {
         autoHandoff: number;
         cutoutDropDelay: number;
         cameraTrick: CameraTrickMode;
+        reverseFold: boolean;
+        reverseUnfolding: boolean;
+        reverseSwapReady: boolean;
         glideOnFold: boolean;
         fadePrint: boolean;
         shadowStrength: number;
@@ -3507,6 +4067,8 @@ if (isDebugMode && params.has('city')) {
         overlapActive: boolean;
         outgoingFoldProgress: number;
         outgoingLiveFrames: number;
+        silhouetteCoverage: number;
+        silhouetteBaseline: number;
       };
     };
   }
@@ -3526,7 +4088,9 @@ if (isDebugMode && params.has('city')) {
     const z = computeAutoZoom(fp);
     const { minDist, maxDist } = getZoomBounds();
     targetDist = curDist = Math.max(minDist, Math.min(maxDist, z.autoDist + userZoomDelta));
+    targetLookX = curLookX = z.autoLookX;
     targetLookY = curLookY = z.autoLookY;
+    targetLookZ = curLookZ = z.autoLookZ;
     curShadowExtent = z.shadowExtent;
     applyShadowFrustum(curShadowExtent);
     syncCameraFromOrbit();
@@ -3643,6 +4207,16 @@ if (isDebugMode && params.has('city')) {
     syncDebugControls();
     saveDebugSettings();
   },
+  setReverse(enabled: boolean) {
+    setReverseMode(enabled, true);
+  },
+  unfoldNow(holdBeforeSwap = false) {
+    if (!debugReverseFoldEnabled) setReverseMode(true, false);
+    startReverseUnfold(false, holdBeforeSwap);
+  },
+  reverseSwapNow() {
+    if (reverseUnfold) completeReverseUnfoldSwap();
+  },
   setCameraTrick(mode: CameraTrickMode) {
     debugCameraTrick = mode;
     syncDebugControls();
@@ -3737,6 +4311,8 @@ if (isDebugMode && params.has('city')) {
     targetPitch = curPitch = pitch;
     targetRoll = curRoll = roll;
     swapDist = finalDist = targetDist = curDist = dist;
+    swapLookX = targetLookX = curLookX = 0;
+    swapLookZ = targetLookZ = curLookZ = 0;
     userZoomDelta = 0;
     syncCameraFromOrbit();
   },
@@ -3770,6 +4346,9 @@ if (isDebugMode && params.has('city')) {
       autoHandoff,
       cutoutDropDelay,
       cameraTrick: debugCameraTrick,
+      reverseFold: debugReverseFoldEnabled,
+      reverseUnfolding: Boolean(reverseUnfold),
+      reverseSwapReady: Boolean(reverseUnfold?.swapReady),
       glideOnFold: debugGlideOnFoldEnabled,
       fadePrint: debugFadeProjEnabled,
       shadowStrength,
@@ -3786,6 +4365,8 @@ if (isDebugMode && params.has('city')) {
           ) / 1000
         : 1,
       outgoingLiveFrames: outgoing ? outgoing.liveFramesRendered : 0,
+      silhouetteCoverage: Math.round(lastSilhouetteCoverage * 1000) / 1000,
+      silhouetteBaseline: Math.round(lastSilhouetteBaseline * 1000) / 1000,
     };
   },
 };
@@ -3867,6 +4448,105 @@ function animate(now: number): void {
   updateCurvePlayhead(activeAnimMaxU, anyPanelAnimating, generation, outgoingPlayheadU, outgoing ? outgoing.generation : null);
 
   const foldProg = computeFoldProgress();
+
+  // ---- Reverse (Unfold) Mode Frame Update: smooth unfold + chad/cutout reassembly + pixel-exact swap! ----
+  if (reverseUnfold) {
+    if (reverseUnfold.swapReady && !reverseUnfold.holdBeforeSwap && drag.kind === 'none') {
+      completeReverseUnfoldSwap();
+      renderer.render(scene, camera);
+      return;
+    }
+
+    reverseUnfold.elapsedSec += foldDt;
+    const uUnfold = clamp01(reverseUnfold.elapsedSec / Math.max(0.05, reverseUnfold.totalSec));
+    const camEase = uUnfold * uUnfold * (3 - 2 * uUnfold);
+    const fadeInU = clamp01(reverseUnfold.elapsedSec / Math.max(0.18, reverseUnfold.totalSec * 0.14));
+    materials.setProjectionFade(fadeInU * fadeInU * (3 - 2 * fadeInU));
+
+    // Smoothly melt blank outer corners into `#f5f4f0` as walls lay flat (`foldProg: 0.88 -> 0.42`)
+    const relU = clamp01((foldProg - 0.42) / 0.46);
+    curPaperRelief = targetPaperRelief = relU * relU * (3 - 2 * relU);
+    rig.setPaperRelief(curPaperRelief);
+
+    const remainSec = Math.max(0, reverseUnfold.totalSec - reverseUnfold.elapsedSec);
+    if (rig.hasCutout) {
+      rig.updateCutoutReassemble(remainSec, Math.min(0.32, cutoutDropDelay * 0.5));
+    }
+
+    // Drive camera smoothly onto exact `landCam` so at `fold = 0` flat projection aligns 0/255 with House B!
+    const desiredYaw = reverseUnfold.startYaw + (reverseUnfold.landYaw - reverseUnfold.startYaw) * camEase;
+    const desiredPitch = reverseUnfold.startPitch + (reverseUnfold.landPitch - reverseUnfold.startPitch) * camEase;
+    const desiredRoll = reverseUnfold.startRoll + (reverseUnfold.landRoll - reverseUnfold.startRoll) * camEase;
+    const desiredDist = reverseUnfold.startDist + (reverseUnfold.landDist - reverseUnfold.startDist) * camEase;
+    const desiredLookX = reverseUnfold.startLookX + (reverseUnfold.landLookX - reverseUnfold.startLookX) * camEase;
+    const desiredLookY = reverseUnfold.startLookY + (reverseUnfold.landLookY - reverseUnfold.startLookY) * camEase;
+    const desiredLookZ = reverseUnfold.startLookZ + (reverseUnfold.landLookZ - reverseUnfold.startLookZ) * camEase;
+    const desiredShadow =
+      reverseUnfold.startShadowExtent + (reverseUnfold.landShadowExtent - reverseUnfold.startShadowExtent) * camEase;
+
+    if (drag.kind === 'none') {
+      const lockBoost = clamp01((uUnfold - 0.80) / 0.18);
+      const a = Math.min(1, 1 - Math.exp(-dt * 9.0) + lockBoost * lockBoost);
+      targetYaw = desiredYaw;
+      targetPitch = desiredPitch;
+      targetRoll = desiredRoll;
+      targetDist = desiredDist;
+      targetLookX = desiredLookX;
+      targetLookY = desiredLookY;
+      targetLookZ = desiredLookZ;
+      curYaw += (desiredYaw - curYaw) * a;
+      curPitch += (desiredPitch - curPitch) * a;
+      curRoll += (desiredRoll - curRoll) * a;
+      curDist += (desiredDist - curDist) * a;
+      curLookX += (desiredLookX - curLookX) * a;
+      curLookY += (desiredLookY - curLookY) * a;
+      curLookZ += (desiredLookZ - curLookZ) * a;
+      curShadowExtent += (desiredShadow - curShadowExtent) * a;
+      if (uUnfold >= 0.999) {
+        curYaw = targetYaw = reverseUnfold.landYaw;
+        curPitch = targetPitch = reverseUnfold.landPitch;
+        curRoll = targetRoll = reverseUnfold.landRoll;
+        curDist = targetDist = reverseUnfold.landDist;
+        curLookX = targetLookX = reverseUnfold.landLookX;
+        curLookY = targetLookY = reverseUnfold.landLookY;
+        curLookZ = targetLookZ = reverseUnfold.landLookZ;
+        curShadowExtent = reverseUnfold.landShadowExtent;
+      }
+    } else {
+      const camAlpha = 1 - Math.exp(-dt * 5.6);
+      curYaw += (targetYaw - curYaw) * camAlpha;
+      curPitch += (targetPitch - curPitch) * camAlpha;
+      curRoll += (targetRoll - curRoll) * camAlpha;
+      curDist += (targetDist - curDist) * camAlpha;
+      curLookX += (targetLookX - curLookX) * camAlpha;
+      curLookY += (targetLookY - curLookY) * camAlpha;
+      curLookZ += (targetLookZ - curLookZ) * camAlpha;
+    }
+    syncCameraFromOrbit();
+
+    if (allPanelsSettledUnfolded() && reverseUnfold.elapsedSec >= reverseUnfold.totalSec && drag.kind === 'none') {
+      curYaw = targetYaw = reverseUnfold.landYaw;
+      curPitch = targetPitch = reverseUnfold.landPitch;
+      curRoll = targetRoll = reverseUnfold.landRoll;
+      curDist = targetDist = reverseUnfold.landDist;
+      curLookX = targetLookX = reverseUnfold.landLookX;
+      curLookY = targetLookY = reverseUnfold.landLookY;
+      curLookZ = targetLookZ = reverseUnfold.landLookZ;
+      curShadowExtent = reverseUnfold.landShadowExtent;
+      curPaperRelief = targetPaperRelief = 0;
+      rig.setPaperRelief(0);
+      rig.setFoldLinesVisible(false);
+      materials.setProjectionFade(1);
+      if (rig.hasCutout) rig.updateCutoutReassemble(0, 0);
+      syncCameraFromOrbit();
+      // Render 1 exact settled flat frame (`swapReady = true`), then seamlessly swap to real 3D House B on next frame!
+      reverseUnfold.swapReady = true;
+    }
+
+    renderer.render(scene, camera);
+    return;
+  }
+
   materials.setProjectionFade(computeProjectionFade(foldProg));
 
   // 2. Animate outer paper cutout (per Cutout delay timer) & per-wall window chads (released when each wall moves!)
@@ -3896,17 +4576,21 @@ function animate(now: number): void {
   }
   prevSlideEase = slideEase;
 
-  const { autoDist, autoLookY, shadowExtent } = computeAutoZoom(foldProg);
+  const { autoDist, autoLookX, autoLookY, autoLookZ, shadowExtent } = computeAutoZoom(foldProg);
   const { minDist, maxDist } = getZoomBounds();
   targetDist = Math.max(minDist, Math.min(maxDist, autoDist + userZoomDelta));
+  targetLookX = autoLookX;
   targetLookY = autoLookY;
+  targetLookZ = autoLookZ;
 
   const camAlpha = 1 - Math.exp(-dt * 5.6);
   curYaw += (targetYaw - curYaw) * camAlpha;
   curPitch += (targetPitch - curPitch) * camAlpha;
   curRoll += (targetRoll - curRoll) * camAlpha;
   curDist += (targetDist - curDist) * camAlpha;
+  curLookX += (targetLookX - curLookX) * camAlpha;
   curLookY += (targetLookY - curLookY) * camAlpha;
+  curLookZ += (targetLookZ - curLookZ) * camAlpha;
   syncCameraFromOrbit();
 
   // Per-wall blank paper & shadow reveal: individual lifting walls reveal naturally via `projSheetLift`
@@ -3954,7 +4638,19 @@ function animate(now: number): void {
   //   <100% launches House 2 while House 1 is still finishing (live dual-house projection overlap!)
   //    100% hands off cleanly back-to-back, >100% holds briefly on the finished house before next fold.
   if (autoFoldEnabled && drag.kind === 'none' && helpModal.hidden && catalogModal.hidden) {
-    if (!autoBeatRunning) {
+    if (debugReverseFoldEnabled) {
+      if (!autoBeatRunning) {
+        autoBeatRunning = true;
+        autoBeatElapsed = 0;
+        if (!reverseUnfold) startReverseUnfold(true);
+      } else if (!reverseUnfold) {
+        autoBeatElapsed += foldDt;
+        const holdSec = Math.max(0, (autoHandoff / 100 - 1) * FOLD_HOUSE_SEC);
+        if (autoBeatElapsed >= holdSec) {
+          startReverseUnfold(true);
+        }
+      }
+    } else if (!autoBeatRunning) {
       autoBeatRunning = true;
       autoBeatElapsed = 0;
       if (!foldChanged || allPanelsSettledFolded() || !allPanelsFoldedTarget()) {
@@ -4008,18 +4704,22 @@ function animate(now: number): void {
     const ozRaw = clamp01((outFoldProg - 0.03) / 0.94);
     const ozEase = 0.5 - 0.5 * Math.cos(Math.PI * ozRaw);
     const outTargetDist = outgoing.swapDist + (outgoing.finalDist - outgoing.swapDist) * ozEase + outgoing.userZoomDelta;
+    const outTargetLookX = outgoing.swapLookX * (1 - ozEase);
     const outTargetLookY = outgoing.swapLookY + (outgoing.finalLookY - outgoing.swapLookY) * ozEase;
+    const outTargetLookZ = outgoing.swapLookZ * (1 - ozEase);
     const outAlpha = 1 - Math.exp(-dt * 5.6);
     outgoing.dist += (outTargetDist - outgoing.dist) * outAlpha;
+    outgoing.lookX += (outTargetLookX - outgoing.lookX) * outAlpha;
     outgoing.lookY += (outTargetLookY - outgoing.lookY) * outAlpha;
+    outgoing.lookZ += (outTargetLookZ - outgoing.lookZ) * outAlpha;
 
     outgoing.camera.up.set(0, 1, 0);
     outgoing.camera.position.set(
-      outgoing.dist * Math.cos(outgoing.pitch) * Math.sin(outgoing.yaw),
+      outgoing.lookX + outgoing.dist * Math.cos(outgoing.pitch) * Math.sin(outgoing.yaw),
       outgoing.lookY + outgoing.dist * Math.sin(outgoing.pitch),
-      outgoing.dist * Math.cos(outgoing.pitch) * Math.cos(outgoing.yaw),
+      outgoing.lookZ + outgoing.dist * Math.cos(outgoing.pitch) * Math.cos(outgoing.yaw),
     );
-    outgoing.camera.lookAt(0, outgoing.lookY, 0);
+    outgoing.camera.lookAt(outgoing.lookX, outgoing.lookY, outgoing.lookZ);
     if (Math.abs(outgoing.roll) > 1e-5) outgoing.camera.rotateZ(outgoing.roll);
     outgoing.camera.updateMatrixWorld(true);
 
