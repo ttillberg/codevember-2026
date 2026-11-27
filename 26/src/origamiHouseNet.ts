@@ -4710,3 +4710,112 @@ export function polygonsOverlap(A: V2[], B: V2[], eps = 1e-3): boolean {
   }
   return false;
 }
+
+export interface FoldScheduleItem {
+  id: FoldablePanelId;
+  delaySec: number;
+  durationSec: number;
+  scrubStart: number;
+  scrubSpan: number;
+}
+
+/**
+ * Collision-free fold schedule for multi-house compound villages (`topology === 'village'`).
+ *
+ * Each ribbon building sits flush wall-to-wall against its neighbors (`[b2] | [b0] | [b1] | [b3]`).
+ * If `back` stood up first while `left`/`right`/`front` were still flat, those side wings would sweep
+ * straight through adjacent buildings. Instead, each house curls `front`, `right`, and `left` INWARD
+ * to 90° FIRST while `back` stays flat in its own disjoint half-space, forming a compact prism strictly
+ * inside `[xMin, xMax]` — and ONLY THEN lifts `back` upright and closes its roof, cascading sequentially
+ * across `b0 → b1 → b2 → b3`! Reversed unfolding naturally lays `back` flat before uncurling the wings.
+ */
+export function computeVillageFoldSchedule(net: BuiltHouseNet): FoldScheduleItem[] {
+  const panelDelay = new Map<FoldablePanelId, number>();
+  const panelScrub = new Map<FoldablePanelId, number>();
+  const items: FoldScheduleItem[] = [];
+
+  const pushItem = (
+    id: FoldablePanelId,
+    delaySec: number,
+    durationSec: number,
+    scrubStart: number,
+    scrubSpan: number,
+  ) => {
+    const sClamped = Math.min(scrubStart, Math.max(0.05, 1 - scrubSpan));
+    panelDelay.set(id, delaySec);
+    panelScrub.set(id, sClamped);
+    items.push({ id, delaySec, durationSec, scrubStart: sClamped, scrubSpan });
+  };
+
+  // Phase 1 & 2: per-building sequential curl-in (`front -> right -> left`), then stand upright (`back`)!
+  const localWallTiming: Record<string, { d: number; dur: number; s: number; span: number }> = {
+    front: { d: 0.0, dur: 0.56, s: 0.0, span: 0.18 },
+    right: { d: 0.05, dur: 0.56, s: 0.02, span: 0.18 },
+    left: { d: 0.07, dur: 0.56, s: 0.03, span: 0.18 },
+    back: { d: 0.65, dur: 0.78, s: 0.22, span: 0.26 },
+  };
+
+  for (const id of net.foldableIds) {
+    const def = net.panelMap.get(id)!;
+    if (def.stage !== 'wall') continue;
+    const idx = def.islandIndex ?? 0;
+    const t = localWallTiming[def.localId ?? 'back'] ?? localWallTiming.back;
+    pushItem(id, idx * 0.34 + t.d, t.dur, idx * 0.11 + t.s, t.span);
+  }
+
+  // Phase 3: roofs close smoothly as each building's compact prism lifts upright.
+  // Chained roof segments (sawtooth accordion, stepped 3x ladder, gambrel 2x, barrel 3x) pre-pleat
+  // slightly AHEAD of their root slope so they stay compacted strictly inside `[xMin, xMax]` and
+  // never poke across the flush seam into a neighboring house (and in Reverse, the root lifts up first!).
+  let maxRoofDelay = 0;
+  for (const id of net.foldableIds) {
+    const def = net.panelMap.get(id)!;
+    if (def.stage !== 'roof') continue;
+    const idx = def.islandIndex ?? 0;
+    const pId = (def.parent as FoldablePanelId) ?? id;
+    const parentIsRoof = net.panelMap.get(pId)?.stage === 'roof';
+    let d: number;
+    let s: number;
+    let dur: number;
+    let span: number;
+    if (parentIsRoof) {
+      const baseD = panelDelay.get(pId) ?? idx * 0.34 + 0.78;
+      const baseS = panelScrub.get(pId) ?? idx * 0.11 + 0.28;
+      d = Math.max(idx * 0.34 + 0.54, baseD - 0.12);
+      s = Math.max(idx * 0.11 + 0.19, baseS - 0.04);
+      dur = 0.64;
+      span = 0.20;
+    } else {
+      d = idx * 0.34 + 0.78;
+      s = idx * 0.11 + 0.28;
+      const localId = def.localId ?? id;
+      const bSpec = def.panelSpec ?? net.spec;
+      if (
+        ((bSpec.roofType === 'shed' || bSpec.roofType === 'flat') && localId === 'roofL') ||
+        (bSpec.roofType === 'sawtooth' && localId === 'roofS0')
+      ) {
+        const prefix = id.slice(0, id.length - localId.length);
+        const oppD = panelDelay.get(`${prefix}right`) ?? 0;
+        const oppS = panelScrub.get(`${prefix}right`) ?? 0;
+        d = Math.max(d, oppD + 0.68);
+        s = Math.max(s, oppS + 0.24);
+      }
+      dur = 0.72;
+      span = 0.24;
+    }
+    if (d > maxRoofDelay) maxRoofDelay = d;
+    pushItem(id, d, dur, s, span);
+  }
+
+  // Phase 4: mansard/pavilion roof caps settle right behind their parent roof slope
+  for (const id of net.foldableIds) {
+    const def = net.panelMap.get(id)!;
+    if (def.stage !== 'cap') continue;
+    const pId = def.parent as FoldablePanelId;
+    const pDelay = panelDelay.get(pId) ?? maxRoofDelay;
+    const pScrub = panelScrub.get(pId) ?? 0.56;
+    pushItem(id, pDelay + 0.22, 0.66, pScrub + 0.08, 0.20);
+  }
+
+  return items;
+}

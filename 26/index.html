@@ -41,7 +41,7 @@
     <div class="toolbar" role="toolbar" aria-label="Fold controls">
       <button id="btn-action" class="action-btn" type="button">Fold</button>
       <label class="auto-check" for="chk-auto" title="Continuously fold and project through houses (A)">
-        <input id="chk-auto" class="auto-check-input" type="checkbox" />
+        <input id="chk-auto" class="auto-check-input" type="checkbox" checked />
         <span class="auto-check-box" aria-hidden="true">
           <svg viewBox="0 0 12 12"><path d="M2.4 6.2 4.9 8.7 9.6 3.4" /></svg>
         </span>
@@ -254,6 +254,14 @@
           <span>Glide on fold</span>
           <input id="dbg-glide-fold" class="debug-switch" type="checkbox" />
         </label>
+        <div class="debug-row debug-row-stack" title="How folds anchor onto a random wall, roof, or floor">
+          <span>Fold anchor</span>
+          <div id="dbg-anchor-mode" class="debug-seg" role="group" aria-label="Fold anchor mode">
+            <button type="button" class="debug-seg-btn active" data-anchor-mode="subtle" title="Start crease wave from a random wall/roof with a gentle upright rock">Subtle</button>
+            <button type="button" class="debug-seg-btn" data-anchor-mode="floor" title="Always anchor on the base floor">Floor</button>
+            <button type="button" class="debug-seg-btn" data-anchor-mode="rest" title="Stay resting flat on the anchored wall, roof, or floor">Rest</button>
+          </div>
+        </div>
         <label class="debug-row" for="dbg-fade-proj" title="Fade out the projected previous-house texture after 50% folded">
           <span>Fade print (50%)</span>
           <input id="dbg-fade-proj" class="debug-switch" type="checkbox" />

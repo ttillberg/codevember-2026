@@ -4,13 +4,18 @@ import {
   MODEL_PRESETS,
   buildHouseNet,
   computeNetOuterPerimeter,
+  computeVillageFoldSchedule,
   evaluateFoldedPoint,
   generateHouseSpec,
   polygonsOverlap,
   signedArea,
   type RoofType,
 } from '../src/origamiHouseNet';
-import { buildOrigamiHouseRig, type OrigamiMaterials } from '../src/origamiPaperMesh';
+import {
+  buildOrigamiHouseRig,
+  chooseFoldAnchorPanel,
+  type OrigamiMaterials,
+} from '../src/origamiPaperMesh';
 
 describe('Parametric flat-net paper houses (cross, ribbon, hex, oct, setback, L-wing & village)', () => {
   it('generates distinct valid non-overlapping flat nets across generations 1..20 (all 7 topologies & 8 roof types)', () => {
@@ -761,5 +766,339 @@ describe('Parametric flat-net paper houses (cross, ribbon, hex, oct, setback, L-
     expect(v1).toBeGreaterThan(500);
     expect(v6).toBeGreaterThan(v1 * 1.8);
     expect(v12).toBeGreaterThan(v6 * 1.4);
+  });
+
+  it('chooses varied floor/wall/roof fold anchors and pins anchored wall or roof flat on y=0 mid-fold while settling upright at 0 and 1', () => {
+    const m = new THREE.MeshStandardMaterial();
+    const l = new THREE.LineDashedMaterial();
+    const la = new THREE.LineBasicMaterial();
+    const mats: OrigamiMaterials = {
+      inside: m,
+      outside: m,
+      outsideSlots: [m, m, m, m],
+      roofSlots: [m, m, m, m],
+      windowSlots: [m, m, m, m],
+      windowInsideSlots: [m, m, m, m],
+      doorSlots: [m, m, m, m],
+      doorInsideSlots: [m, m, m, m],
+      edge: m,
+      cutoutInside: m,
+      cutoutOutside: m,
+      cutoutEdge: m,
+      chadInside: m,
+      chadOutside: m,
+      chadEdge: m,
+      foldLine: l,
+      foldLineMountain: l,
+      foldLineActive: la,
+      projUniforms: {
+        uHasProj: { value: 0 },
+        uProjTex: { value: null },
+        uProjMatrix: { value: new THREE.Matrix4() },
+        uPaperReveal: { value: 1 },
+        uProjGain: { value: 1 },
+        uProjFade: { value: 1 },
+        uProjSide: { value: 1 },
+        uColorGrad: { value: 0 },
+        uGradHeight: { value: 7.5 },
+      },
+      setOutsideColor() {},
+      setOutsideColors() {},
+      setColorSchemes() {},
+      setProjection() {},
+      setProjectionFade() {},
+      setCutoutOpacity() {},
+      dispose() {},
+    };
+
+    // 1. Across generations 1..30, chooseFoldAnchorPanel hits floor, wall, and roof anchors!
+    const seenKinds = new Set<string>();
+    for (let gen = 1; gen <= 30; gen++) {
+      const net = buildHouseNet(generateHouseSpec(gen, { seed: 42 }));
+      const sel = chooseFoldAnchorPanel(net, gen, 42);
+      expect(net.panelMap.has(sel.panelId)).toBe(true);
+      seenKinds.add(sel.kind);
+    }
+    expect(seenKinds.has('floor')).toBe(true);
+    expect(seenKinds.has('wall')).toBe(true);
+    expect(seenKinds.has('roof')).toBe(true);
+
+    // 2. Pinning a wall ('front') and a roof ('roofL') keeps that panel strictly flat in root space
+    //    mid-fold (fold = 0.35), while returning houseGroup to exact identity at fold = 0 and fold = 1!
+    const spec = generateHouseSpec(1, { topology: 'cross', roofType: 'gable', seed: 7 });
+    const net = buildHouseNet(spec);
+    const rig = buildOrigamiHouseRig(net, mats, false);
+    const invRoot = new THREE.Matrix4();
+    const panelInRoot = new THREE.Matrix4();
+
+    for (const targetAnchor of ['front', 'roofL'] as const) {
+      // Option 1 (`rest`): stays flat on y=0 through the entire fold (0.35 AND 1.0) with zero flip-back!
+      rig.setFoldAnchor(targetAnchor, 'rest');
+      expect(rig.anchorPanelId).toBe(targetAnchor);
+      expect(rig.anchorKind).toBe(targetAnchor === 'front' ? 'wall' : 'roof');
+
+      // fold = 0 -> exact identity (0/255 flat swap preserved!)
+      for (const id of rig.panelIds) rig.updatePanelVisual(id, 0, 0, false);
+      rig.syncAnchorPose(0);
+      expect(rig.houseGroup.position.length()).toBeLessThan(1e-6);
+      expect(rig.houseGroup.quaternion.angleTo(new THREE.Quaternion())).toBeLessThan(1e-6);
+
+      // fold = 0.35 & 1.0 -> anchored wall/roof stays flat at y=0 (normal.y === 1, pos.y === 0) while base lifts!
+      for (const fp of [0.35, 1.0]) {
+        for (const id of rig.panelIds) rig.updatePanelVisual(id, fp, 0, false);
+        rig.syncAnchorPose(fp);
+        rig.root.updateMatrixWorld(true);
+        invRoot.copy(rig.root.matrixWorld).invert();
+
+        const anchorPv = rig.panels.get(targetAnchor)!;
+        panelInRoot.multiplyMatrices(invRoot, anchorPv.pivot.matrixWorld);
+        expect(panelInRoot.elements[5]).toBeCloseTo(1, 5); // flat normal.y === +1
+        expect(panelInRoot.elements[13]).toBeCloseTo(0, 5); // flat pivot y === 0
+
+        panelInRoot.multiplyMatrices(invRoot, rig.baseMesh.matrixWorld);
+        expect(panelInRoot.elements[5]).toBeLessThan(0.95);
+        expect(rig.baseMesh.castShadow).toBe(true);
+      }
+
+      // Option 3 (`subtle`): gentle rock (<= 17°) mid-fold, exact upright identity at 0 and 1!
+      rig.setFoldAnchor(targetAnchor, 'subtle');
+      for (const id of rig.panelIds) rig.updatePanelVisual(id, 0.5, 0, false);
+      rig.syncAnchorPose(0.5);
+      const midTilt = rig.houseGroup.quaternion.angleTo(new THREE.Quaternion());
+      expect(midTilt).toBeGreaterThan(0.05);
+      expect(midTilt).toBeLessThanOrEqual(0.30);
+
+      for (const id of rig.panelIds) rig.updatePanelVisual(id, 1, 0, false);
+      rig.syncAnchorPose(1);
+      expect(rig.houseGroup.position.length()).toBeLessThan(1e-6);
+      expect(rig.houseGroup.quaternion.angleTo(new THREE.Quaternion())).toBeLessThan(1e-6);
+    }
+
+    rig.dispose();
+  });
+
+  it('folds 2-, 3-, and 4-house compound villages with ZERO inter-building wall/roof intersections in forward & reverse', () => {
+    type V3 = [number, number, number];
+    const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const cross = (a: V3, b: V3): V3 => [
+      a[1] * b[2] - a[2] * b[1],
+      a[2] * b[0] - a[0] * b[2],
+      a[0] * b[1] - a[1] * b[0],
+    ];
+    const dot = (a: V3, b: V3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+    // Exact Möller–Trumbore interior segment-vs-triangle test (strict interior margin excludes touching edges)
+    const segHitsTriStrict = (p0: V3, p1: V3, a: V3, b: V3, c: V3): boolean => {
+      const dir = sub(p1, p0);
+      const e1 = sub(b, a);
+      const e2 = sub(c, a);
+      const pvec = cross(dir, e2);
+      const det = dot(e1, pvec);
+      if (Math.abs(det) < 1e-6) return false;
+      const invDet = 1 / det;
+      const tvec = sub(p0, a);
+      const u = dot(tvec, pvec) * invDet;
+      if (u <= 0.02 || u >= 0.98) return false;
+      const qvec = cross(tvec, e1);
+      const v = dot(dir, qvec) * invDet;
+      if (v <= 0.02 || u + v >= 0.98) return false;
+      const t = dot(e2, qvec) * invDet;
+      return t > 0.02 && t < 0.98;
+    };
+
+    const trisIntersectStrict = (t1: [V3, V3, V3], t2: [V3, V3, V3]): boolean => {
+      const edges1: [V3, V3][] = [
+        [t1[0], t1[1]],
+        [t1[1], t1[2]],
+        [t1[2], t1[0]],
+      ];
+      for (const [p0, p1] of edges1) {
+        if (segHitsTriStrict(p0, p1, t2[0], t2[1], t2[2])) return true;
+      }
+      const edges2: [V3, V3][] = [
+        [t2[0], t2[1]],
+        [t2[1], t2[2]],
+        [t2[2], t2[0]],
+      ];
+      for (const [p0, p1] of edges2) {
+        if (segHitsTriStrict(p0, p1, t1[0], t1[1], t1[2])) return true;
+      }
+      return false;
+    };
+
+    const cases: Array<Parameters<typeof generateHouseSpec>> = [
+      [1, { slot: 10 }], // Curated 3-house manor
+      [1, { slot: 14 }], // Curated 4-house estate
+      [1, { topology: 'village', houses: 2, seed: 7 }],
+      [2, { topology: 'village', houses: 2, seed: 19 }],
+      [1, { topology: 'village', houses: 3, seed: 11 }],
+      [2, { topology: 'village', houses: 3, seed: 42 }],
+      [1, { topology: 'village', houses: 4, seed: 5 }],
+      [2, { topology: 'village', houses: 4, seed: 23 }],
+      [3, { topology: 'village', houses: 4, seed: 91 }],
+    ];
+
+    for (const [gen, opts] of cases) {
+      const net = buildHouseNet(generateHouseSpec(gen, opts));
+      const sched = computeVillageFoldSchedule(net);
+      const schedMap = new Map(sched.map((s) => [s.id, s]));
+      const maxDelay = sched.reduce((m, s) => Math.max(m, s.delaySec), 0);
+      const totalSpan = sched.reduce((m, s) => Math.max(m, s.delaySec + s.durationSec), 0.1);
+      const activePanels = net.panels.filter((p) => p.stage !== 'base');
+
+      for (const direction of ['forward', 'reverse'] as const) {
+        for (let step = 1; step <= 11; step++) {
+          const tSec = (step / 12) * totalSpan;
+          const foldOf = (id: string): number => {
+            const s = schedMap.get(id);
+            if (!s) return 0;
+            const d = direction === 'forward' ? s.delaySec : Math.max(0, maxDelay - s.delaySec);
+            const u = Math.max(0, Math.min(1, (tSec - d) / s.durationSec));
+            const eased = u * u * (3 - 2 * u);
+            return direction === 'forward' ? eased : 1 - eased;
+          };
+
+          // Evaluate 3D triangles + AABB for every non-base panel
+          const evaluated = activePanels.map((p) => {
+            const pts3: V3[] = p.poly.map((pt) => evaluateFoldedPoint(net, p.id, pt, foldOf));
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            for (const [x, y, z] of pts3) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+              if (z < minZ) minZ = z;
+              if (z > maxZ) maxZ = z;
+            }
+            const tris: [V3, V3, V3][] = [];
+            for (let k = 1; k + 1 < pts3.length; k++) {
+              tris.push([pts3[0], pts3[k], pts3[k + 1]]);
+            }
+            return { p, minX, maxX, minY, maxY, minZ, maxZ, tris };
+          });
+
+          for (let i = 0; i < evaluated.length; i++) {
+            const A = evaluated[i];
+            for (let j = i + 1; j < evaluated.length; j++) {
+              const B = evaluated[j];
+              if (A.p.islandIndex === B.p.islandIndex) continue;
+              if (
+                A.maxX <= B.minX + 0.05 ||
+                B.maxX <= A.minX + 0.05 ||
+                A.maxY <= B.minY + 0.05 ||
+                B.maxY <= A.minY + 0.05 ||
+                A.maxZ <= B.minZ + 0.05 ||
+                B.maxZ <= A.minZ + 0.05
+              ) {
+                continue;
+              }
+              for (const tA of A.tris) {
+                for (const tB of B.tris) {
+                  expect(
+                    trisIntersectStrict(tA, tB),
+                    `Inter-building collision in ${JSON.stringify(opts)} (${direction}, step ${step}): ${A.p.id} vs ${B.p.id}`,
+                  ).toBe(false);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('gently animates open windows, awnings, dormers/chimneys, and settled roofs in a breeze while keeping closed windows & flat sheets strictly still', () => {
+    const m = new THREE.MeshStandardMaterial();
+    const l = new THREE.LineDashedMaterial();
+    const la = new THREE.LineBasicMaterial();
+    const mats: OrigamiMaterials = {
+      inside: m,
+      outside: m,
+      outsideSlots: [m, m, m, m],
+      roofSlots: [m, m, m, m],
+      windowSlots: [m, m, m, m],
+      windowInsideSlots: [m, m, m, m],
+      doorSlots: [m, m, m, m],
+      doorInsideSlots: [m, m, m, m],
+      edge: m,
+      cutoutInside: m,
+      cutoutOutside: m,
+      cutoutEdge: m,
+      chadInside: m,
+      chadOutside: m,
+      chadEdge: m,
+      foldLine: l,
+      foldLineMountain: l,
+      foldLineActive: la,
+      projUniforms: {
+        uHasProj: { value: 0 },
+        uProjTex: { value: null },
+        uProjMatrix: { value: new THREE.Matrix4() },
+        uPaperReveal: { value: 1 },
+        uProjGain: { value: 1 },
+        uProjFade: { value: 1 },
+        uProjSide: { value: 1 },
+        uColorGrad: { value: 0 },
+        uGradHeight: { value: 7.5 },
+      },
+      setOutsideColor() {},
+      setOutsideColors() {},
+      setColorSchemes() {},
+      setProjection() {},
+      setProjectionFade() {},
+      setCutoutOpacity() {},
+      dispose() {},
+    };
+
+    const spec = generateHouseSpec(2, {
+      topology: 'cross',
+      roofType: 'gable',
+      windowStyle: 'rect',
+      windowOpening: 'shutters',
+      windowCount: 3,
+      levels: 2,
+      seed: 12,
+    });
+    const rig = buildOrigamiHouseRig(buildHouseNet(spec), mats, false);
+
+    // 1. At fold = 0 (flat swap frame), even with full wind enabled, every detail & roof stays strictly at 0!
+    for (const id of rig.panelIds) rig.updatePanelVisual(id, 0, 0, false);
+    rig.setWindowOpen('open', 1);
+    rig.setWind(4.2, 1);
+    for (const det of rig.details) {
+      expect(det.pivot.rotation.x).toBeCloseTo(0, 6);
+      expect(det.pivot.rotation.z).toBeCloseTo(0, 6);
+    }
+
+    // 2. Folded (fold = 1) with windows OPEN: open windows & roof flaps gently breathe between t=1.0s and t=3.2s
+    for (const id of rig.panelIds) rig.updatePanelVisual(id, 1, 0, false);
+    rig.setWindowOpen('open', 1);
+    rig.setWind(1.0, 1);
+    const openWin = rig.details.find((d) => d.kind === 'window')!;
+    const roofPv = Array.from(rig.panels.values()).find((p) => p.stage === 'roof' && !p.isMountain)!;
+    const winAng1 = openWin.axis === 'x' ? openWin.pivot.rotation.x : openWin.pivot.rotation.z;
+    const roofQ1 = roofPv.pivot.quaternion.clone();
+
+    rig.setWind(3.2, 1);
+    const winAng2 = openWin.axis === 'x' ? openWin.pivot.rotation.x : openWin.pivot.rotation.z;
+    const roofQ2 = roofPv.pivot.quaternion.clone();
+
+    expect(Math.abs(winAng2 - winAng1)).toBeGreaterThan(0.004);
+    expect(Math.abs(winAng2 - winAng1)).toBeLessThan(0.25); // gentle, never wild!
+    expect(roofQ1.angleTo(roofQ2)).toBeGreaterThan(0.0005);
+    expect(roofQ1.angleTo(roofQ2)).toBeLessThan(0.03); // delicate paper breath!
+
+    // 3. Closed windows stay strictly shut (0 rad) even in full breeze!
+    rig.setWindowOpen('closed', 0);
+    rig.setWind(2.4, 1);
+    for (const det of rig.details) {
+      if (det.kind !== 'window') continue;
+      expect(det.pivot.rotation.x).toBeCloseTo(0, 6);
+      expect(det.pivot.rotation.z).toBeCloseTo(0, 6);
+    }
+
+    rig.dispose();
   });
 });

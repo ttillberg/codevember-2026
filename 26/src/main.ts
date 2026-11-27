@@ -10,6 +10,8 @@ import {
   MM,
   MODEL_PRESETS,
   buildHouseNet,
+  computeVillageFoldSchedule,
+  evaluateFoldedPoint,
   generateHouseSpec,
   getColorSchemesForHouse,
   type BuildingLevels,
@@ -20,6 +22,7 @@ import {
   type HouseMixOptions,
   type HouseNetSpec,
   type NetTopology,
+  type PanelId,
   type RoofType,
   type WindowDetail,
   type WindowOpenMode,
@@ -28,8 +31,11 @@ import {
 } from './origamiHouseNet';
 import {
   buildOrigamiHouseRig,
+  chooseFoldAnchorPanel,
   createOrigamiMaterials,
   createWashiFiberTextures,
+  type FoldAnchorKind,
+  type FoldAnchorMode,
   type OrigamiHouseRig,
   type OrigamiMaterials,
 } from './origamiPaperMesh';
@@ -103,6 +109,8 @@ const dbgColor = document.getElementById('dbg-color') as HTMLInputElement;
 const dbgSpin = document.getElementById('dbg-spin') as HTMLInputElement;
 const dbgCameraTrick = document.getElementById('dbg-camera-trick') as HTMLSelectElement;
 const dbgGlideFold = document.getElementById('dbg-glide-fold') as HTMLInputElement;
+const dbgAnchorModeGroup = document.getElementById('dbg-anchor-mode') as HTMLDivElement;
+const dbgAnchorModeBtns = Array.from(dbgAnchorModeGroup.querySelectorAll<HTMLButtonElement>('.debug-seg-btn'));
 const dbgFadeProj = document.getElementById('dbg-fade-proj') as HTMLInputElement;
 const dbgAutoBpm = document.getElementById('dbg-auto-bpm') as HTMLElement;
 const dbgCurveBox = document.getElementById('dbg-curve-box') as HTMLDivElement;
@@ -230,6 +238,7 @@ interface DebugSettings {
   reverseFold: boolean;
   cameraTrick: CameraTrickMode;
   glideOnFold: boolean;
+  anchorMode: FoldAnchorMode;
   fadeProjOnFold: boolean;
   autoFold: boolean;
   autoSpeed: number;
@@ -269,8 +278,9 @@ const FACTORY_SETTINGS: DebugSettings = {
   reverseFold: false,
   cameraTrick: 'balanced',
   glideOnFold: false,
+  anchorMode: 'subtle',
   fadeProjOnFold: false,
-  autoFold: false,
+  autoFold: true,
   autoSpeed: DEFAULT_AUTO_FOLD_CURVE.speed,
   autoEaseIn: DEFAULT_AUTO_FOLD_CURVE.inPct,
   autoEaseOut: DEFAULT_AUTO_FOLD_CURVE.outPct,
@@ -363,6 +373,9 @@ function loadSavedSettings(): DebugSettings {
         s.cameraTrick = parsed.cameraTrick as CameraTrickMode;
       }
       if (typeof parsed.glideOnFold === 'boolean') s.glideOnFold = parsed.glideOnFold;
+      if (parsed.anchorMode === 'rest' || parsed.anchorMode === 'subtle' || parsed.anchorMode === 'floor') {
+        s.anchorMode = parsed.anchorMode;
+      }
       if (typeof parsed.fadeProjOnFold === 'boolean') s.fadeProjOnFold = parsed.fadeProjOnFold;
       if (typeof parsed.autoFold === 'boolean') s.autoFold = parsed.autoFold;
       if (typeof parsed.autoSpeed === 'number' && Number.isFinite(parsed.autoSpeed)) {
@@ -533,6 +546,11 @@ let debugGlideOnFoldEnabled =
     : params.get('shiftView') !== null
       ? params.get('shiftView') === '1'
       : initialSettings.glideOnFold;
+const pAnchorMode = params.get('anchorMode');
+let debugAnchorMode: FoldAnchorMode =
+  pAnchorMode === 'rest' || pAnchorMode === 'subtle' || pAnchorMode === 'floor'
+    ? pAnchorMode
+    : initialSettings.anchorMode;
 let debugFadeProjEnabled =
   params.get('fadePrint') !== null
     ? params.get('fadePrint') !== '0'
@@ -611,7 +629,12 @@ const FOLD_BPM = 115;
 const FOLD_BEAT_SEC = 60 / FOLD_BPM; // ~0.52174s per quarter-note beat
 const FOLD_BAR_SEC = FOLD_BEAT_SEC * 4; // ~2.08696s bar cadence @ 115 BPM (launches next house around ~74–78%!)
 const FOLD_HOUSE_SEC = FOLD_BEAT_SEC * 6.4; // ~3.33913s smooth full fold curve (2.4-beat live texture overlap!)
-const MANUAL_LEAD_DELAY_SEC = 0.08;
+const MANUAL_FOLD_HOUSE_SEC = 1.85; // Snappy reactive fold duration on manual tap (without Auto)
+const MANUAL_LEAD_DELAY_SEC = 0; // Immediate zero-lag start when tapping the house manually
+// Single smooth cubic-bezier (curvePct <= 50 avoids double-composition velocity cliffs!):
+// ultra-short 8% feather prevents staggered panels from slamming from 0 -> max speed while staying instant on tap!
+const MANUAL_TAP_FOLD_CURVE: FoldCurveShape = { inPct: 8, outPct: 68, curvePct: 48 };
+let activeFoldIsManual = false;
 let autoBeatElapsed = 0;
 let autoBeatRunning = false;
 
@@ -722,6 +745,10 @@ function getFoldCurve2(): FoldCurveShape {
 
 function getCurveForGeneration(gen: number): FoldCurveShape {
   return gen % 2 === 1 ? getFoldCurve1() : getFoldCurve2();
+}
+
+function getActiveFoldCurve(): FoldCurveShape {
+  return activeFoldIsManual ? MANUAL_TAP_FOLD_CURVE : getCurveForGeneration(generation);
 }
 
 function updateCurvePreview(): void {
@@ -845,6 +872,9 @@ function syncDebugControls(): void {
   chkReverse.checked = debugReverseFoldEnabled;
   dbgCameraTrick.value = debugCameraTrick;
   dbgGlideFold.checked = debugGlideOnFoldEnabled;
+  for (const btn of dbgAnchorModeBtns) {
+    btn.classList.toggle('active', btn.dataset.anchorMode === debugAnchorMode);
+  }
   dbgFadeProj.checked = debugFadeProjEnabled;
   chkAuto.checked = autoFoldEnabled;
 
@@ -894,6 +924,7 @@ function saveDebugSettings(): void {
       reverseFold: debugReverseFoldEnabled,
       cameraTrick: debugCameraTrick,
       glideOnFold: debugGlideOnFoldEnabled,
+      anchorMode: debugAnchorMode,
       fadeProjOnFold: debugFadeProjEnabled,
       autoFold: autoFoldEnabled,
       autoSpeed,
@@ -1359,7 +1390,7 @@ interface ReverseUnfoldState {
 }
 
 let generation = 1;
-let rig: OrigamiHouseRig;
+let rig!: OrigamiHouseRig;
 let outgoing: OutgoingLiveHouse | null = null;
 let reverseUnfold: ReverseUnfoldState | null = null;
 /** Pre-calculated Reverse target (House B) ALREADY projected onto active House A's interior before unfolding! */
@@ -1376,6 +1407,8 @@ let curPaperRelief = 1;
 let targetPaperRelief = 1;
 let cutoutDropState: 'none' | 'waiting' | 'falling' | 'done' = 'none';
 let cutoutDropElapsed = 0;
+let windClockSec = 0;
+let rigWindStrength = 1;
 
 function clearOutgoing(): void {
   if (!outgoing) return;
@@ -1591,6 +1624,13 @@ function mountHouseGeneration(
   applyActiveOutsideColor(!preservePrevRig);
   rig.setWindowOpen(mixWinOpenMode, mixWinOpen);
   const net = rig.net;
+  // Keep Layer 1 startup upright on its floor (`base`); from Layer 2 onward (or live swaps),
+  // apply the active anchor mode (`rest` = Option 1, `subtle` = Option 3, `floor` = base-only).
+  const useBaseOnly = debugAnchorMode === 'floor' || (!fromSwap && gen <= 1);
+  const anchorPanelId: PanelId = useBaseOnly
+    ? (net.panels.find((p) => p.parent === null)?.id ?? 'base')
+    : chooseFoldAnchorPanel(net, gen, mixSeed).panelId;
+  rig.setFoldAnchor(anchorPanelId, debugAnchorMode);
   scene.add(rig.root);
 
   const initFold = !fromSwap && startFolded ? 1 : 0;
@@ -1608,6 +1648,7 @@ function mountHouseGeneration(
     });
     rig.updatePanelVisual(id, initFold, 0, false);
   }
+  rig.syncAnchorPose(initFold);
   hoveredPanel = null;
 
   const ideal = computeIdealFraming(net);
@@ -1858,7 +1899,7 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
     rig.root.visible = false;
     outgoing = {
       generation,
-      curve: getCurveForGeneration(generation),
+      curve: getActiveFoldCurve(),
       rig,
       mats: materials,
       panelState: clonedPanels,
@@ -2108,9 +2149,15 @@ function buildReversePlan(
   applyPaperColorsTo(nextMats, nextRig);
   nextMats.projUniforms.uProjGain.value = materials.projUniforms.uProjGain.value;
   nextRig.setWindowOpen(mixWinOpenMode, mixWinOpen);
+  const nextAnchorId =
+    debugAnchorMode === 'floor'
+      ? (nextRig.net.panels.find((p) => p.parent === null)?.id ?? 'base')
+      : chooseFoldAnchorPanel(nextRig.net, nextGen, mixSeed).panelId;
+  nextRig.setFoldAnchor(nextAnchorId, debugAnchorMode);
   for (const id of nextRig.panelIds) {
     nextRig.updatePanelVisual(id, 1, 0, false);
   }
+  nextRig.syncAnchorPose(1);
   nextRig.setFoldLinesVisible(false);
   nextRig.setPaperRelief(1);
   if (nextRig.hasCutout) nextRig.updateCutoutDrop(99);
@@ -2253,17 +2300,20 @@ function prepareReverseChain(): void {
   // Ensure active House A has its cutout & window chads built so it can reassemble cleanly on landing!
   if (!rig.hasCutout) {
     const curSpec = rig.net.spec;
+    const prevAnchor = rig.anchorPanelId;
     const curNet = buildHouseNet(curSpec);
     scene.remove(rig.root);
     rig.dispose();
     rig = buildOrigamiHouseRig(curNet, materials, true);
     applyActiveOutsideColor(false, false);
     rig.setWindowOpen(mixWinOpenMode, mixWinOpen);
+    rig.setFoldAnchor(prevAnchor, debugAnchorMode);
     scene.add(rig.root);
     for (const id of rig.panelIds) {
       const f = panelState.get(id)?.fold ?? 1;
       rig.updatePanelVisual(id, f, 0, false);
     }
+    rig.syncAnchorPose(computeFoldProgress());
     rig.setFoldLinesVisible(false);
     rig.setPaperRelief(curPaperRelief);
     rig.updateCutoutDrop(99);
@@ -2327,6 +2377,11 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
   if (!rev) return;
   pendingReverse = null;
 
+  const isManual = !continuousAuto && !autoFoldEnabled;
+  activeFoldIsManual = isManual;
+  const revTotalSec = isManual ? MANUAL_FOLD_HOUSE_SEC : FOLD_HOUSE_SEC;
+  const revPadSec = isManual ? Math.min(0.16, cutoutDropDelay * 0.35) : Math.min(0.32, cutoutDropDelay * 0.5);
+
   // Snapshot live camera pose (in case the user orbited or turntable spun before clicking Unfold)
   // and wrap `landYaw` by 2π to the nearest equivalent angle to `curYaw` (exact same `snapVP`!).
   rev.startYaw = curYaw;
@@ -2339,7 +2394,7 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
   rev.startShadowExtent = curShadowExtent;
   rev.landYaw = curYaw + wrapAnglePi(rev.landYaw - curYaw);
   rev.elapsedSec = 0;
-  rev.totalSec = FOLD_HOUSE_SEC;
+  rev.totalSec = revTotalSec;
   rev.swapReady = false;
   rev.holdBeforeSwap = holdBeforeSwap;
 
@@ -2349,7 +2404,7 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
 
   materials.setProjectionFade(1);
   rig.setFoldLinesVisible(true);
-  rig.updateCutoutReassemble(rev.totalSec, Math.min(0.32, cutoutDropDelay * 0.5));
+  rig.updateCutoutReassemble(rev.totalSec, revPadSec);
   launchStaggeredFold(0, 0, rev.totalSec);
   soundtrack.triggerFoldLayer(rev.nextGen, true, rev.totalSec / Math.max(0.25, autoSpeed));
 
@@ -2400,6 +2455,9 @@ function completeReverseUnfoldSwap(): void {
   rig.setFoldLinesVisible(false);
   curPaperRelief = targetPaperRelief = 1;
   rig.setPaperRelief(1);
+  // Start promoted Reverse house calm (`0`) on the exact 0/255 swap frame, then gently breathe into the breeze!
+  rigWindStrength = 0;
+  rig.setWind(windClockSec, 0);
   cutoutDropState = rig.hasCutout ? 'done' : 'none';
   cutoutDropElapsed = 0;
   if (rig.hasCutout) rig.updateCutoutDrop(99);
@@ -2510,7 +2568,7 @@ function computeFoldProgress(): number {
  * lifts promptly on Beat 1 (so the incoming house starts raising early during the overlap!)
  * then decelerates gracefully through 75% -> 100% into a soft seamless finish.
  */
-function easePaperFold(x: number, curve: FoldCurveShape = getCurveForGeneration(generation)): number {
+function easePaperFold(x: number, curve: FoldCurveShape = getActiveFoldCurve()): number {
   return evaluateFoldCurve(x, curve.inPct, curve.outPct, curve.curvePct);
 }
 
@@ -2566,15 +2624,68 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
   };
 
   const wallIds = rig.panelIds.filter((id) => rig.net.panelMap.get(id)?.stage === 'wall');
-  // Sort ascending by outward dot product: most negative = furthest away from camera -> folds FIRST!
-  const sortedWalls = [...wallIds].sort((a, b) => wallOutwardDot(a) - wallOutwardDot(b));
+  const anchorDef = rig.net.panelMap.get(rig.anchorPanelId);
+  const useAdjacentAnchorOrder = Boolean(rig.anchorMode !== 'floor' && anchorDef && anchorDef.parent !== null);
+
+  // Compute each panel's folded 3D centroid so anchor-rooted folds radiate smoothly outward from the
+  // chosen wall/roof into its immediately ADJACENT faces (parent walls always leading their attached roofs!)
+  const panel3DCentroid = (pid: PanelId): [number, number, number] => {
+    const def = rig.net.panelMap.get(pid);
+    if (!def || def.poly.length === 0) return [0, 0, 0];
+    let sx = 0;
+    let sy = 0;
+    for (const [px, py] of def.poly) {
+      sx += px;
+      sy += py;
+    }
+    return evaluateFoldedPoint(rig.net, pid, [sx / def.poly.length, sy / def.poly.length], 1);
+  };
+
+  let sortedWalls: FoldablePanelId[];
+  let wallNormPos: Map<FoldablePanelId, number> | null = null;
+  if (useAdjacentAnchorOrder) {
+    const [ax, ay, az] = panel3DCentroid(rig.anchorPanelId);
+    const distByWall = new Map<FoldablePanelId, number>();
+    let minD = Infinity;
+    let maxD = -Infinity;
+    for (const id of wallIds) {
+      const [wx, wy, wz] = panel3DCentroid(id);
+      // Horizontal + vertical 3D distance puts the anchor face (or supporting wall of an anchor roof) at 0,
+      // immediately adjacent flank faces next, and opposite faces last!
+      const d = Math.hypot(wx - ax, (wy - ay) * 0.45, wz - az);
+      distByWall.set(id, d);
+      if (d < minD) minD = d;
+      if (d > maxD) maxD = d;
+    }
+    const spanD = Math.max(1e-3, maxD - minD);
+    wallNormPos = new Map<FoldablePanelId, number>();
+    for (const id of wallIds) {
+      wallNormPos.set(id, ((distByWall.get(id) ?? minD) - minD) / spanD);
+    }
+    sortedWalls = [...wallIds].sort((a, b) => {
+      const da = distByWall.get(a) ?? 0;
+      const db = distByWall.get(b) ?? 0;
+      if (Math.abs(da - db) > 1.5) return da - db;
+      return wallOutwardDot(a) - wallOutwardDot(b);
+    });
+  } else {
+    // Sort ascending by outward dot product: most negative = furthest away from camera -> folds FIRST!
+    sortedWalls = [...wallIds].sort((a, b) => wallOutwardDot(a) - wallOutwardDot(b));
+  }
 
   const wallRank = new Map<FoldablePanelId, number>();
   sortedWalls.forEach((id, i) => wallRank.set(id, i));
 
   // Curved progressive spacing across walls (0.00 -> ... -> 1.00)
   const wallCount = Math.max(1, sortedWalls.length - 1);
-  const wallCurve = (rank: number) => Math.pow(rank / wallCount, 1.28);
+  const wallCurve = (rank: number, id?: FoldablePanelId) => {
+    if (wallNormPos && id !== undefined) {
+      // Blend true 3D adjacency distance with subtle tie-break rank so adjacent faces start smoothly together!
+      const nd = wallNormPos.get(id) ?? rank / wallCount;
+      return Math.pow(nd * 0.85 + (rank / wallCount) * 0.15, 1.15);
+    }
+    return Math.pow(rank / wallCount, 1.28);
+  };
 
   const hasCap = rig.panels.has('roofCap') || rig.panelIds.some((id) => rig.net.panelMap.get(id)?.stage === 'cap');
   const isSingleSpanRoof = rig.net.spec.roofType === 'shed' || rig.net.spec.roofType === 'flat';
@@ -2608,29 +2719,23 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
     items.push({ id, delaySec, durationSec, scrubStart: sClamped, scrubSpan });
   };
 
+  // Multi-house compound villages always use their collision-free sequential curl-in-then-stand schedule
+  // (`front -> right -> left` curl tightly into each building's own slab BEFORE `back` stands upright!)
   if (isVillage) {
-    // Village bloom wave: main house rises first, followed by annexes & harbor tower rippling around the plaza!
-    const localOffsets: Record<string, { d: number; s: number }> = {
-      back: { d: 0.0, s: 0.0 },
-      left: { d: 0.18, s: 0.07 },
-      right: { d: 0.26, s: 0.10 },
-      front: { d: 0.42, s: 0.17 },
-    };
-    for (const id of wallIds) {
-      const def = rig.net.panelMap.get(id)!;
-      const idx = def.islandIndex ?? 0;
-      const lo = localOffsets[def.localId ?? 'back'] ?? { d: 0.2, s: 0.08 };
-      pushItem(id, idx * 0.26 + lo.d, 1.18, idx * 0.09 + lo.s, 0.36);
-    }
-  } else if (isRibbon) {
+    return computeVillageFoldSchedule(rig.net);
+  }
+
+  if (isRibbon) {
     // Wrap-around ribbon dance: `back` lifts the entire strip off the paper first, then `left` & `right`
-    // curl inward like embracing arms (farther wing slightly ahead), and `front` wraps smoothly around the front!
-    const leftFurther = wallOutwardDot('left') <= wallOutwardDot('right');
+    // curl inward like embracing arms (closer wing to anchor / farther from camera slightly ahead), and `front` closes!
+    const leftLeads = wallNormPos
+      ? (wallNormPos.get('left') ?? 0.5) <= (wallNormPos.get('right') ?? 0.5)
+      : wallOutwardDot('left') <= wallOutwardDot('right');
     const ribbonTiming: Record<string, { d: number; s: number; dur: number }> = {
       back: { d: 0.0, s: 0.0, dur: 1.32 },
-      left: { d: leftFurther ? 0.22 : 0.40, s: leftFurther ? 0.10 : 0.18, dur: 1.28 },
-      right: { d: leftFurther ? 0.40 : 0.22, s: leftFurther ? 0.18 : 0.10, dur: 1.28 },
-      front: { d: (leftFurther ? 0.40 : 0.22) + 0.30, s: (leftFurther ? 0.18 : 0.10) + 0.16, dur: 1.28 },
+      left: { d: leftLeads ? 0.18 : 0.34, s: leftLeads ? 0.08 : 0.16, dur: 1.28 },
+      right: { d: leftLeads ? 0.34 : 0.18, s: leftLeads ? 0.16 : 0.08, dur: 1.28 },
+      front: { d: (leftLeads ? 0.34 : 0.18) + 0.24, s: (leftLeads ? 0.16 : 0.08) + 0.14, dur: 1.28 },
     };
 
     for (const id of wallIds) {
@@ -2638,12 +2743,11 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
       pushItem(id, t.d, t.dur, t.s, isSawtooth ? 0.36 : hasCap ? 0.42 : 0.46);
     }
   } else if (isSetback) {
-    // Tiered setback Z-pleat rise: ground podium walls rise far-to-near, then the mountain crease (`upperWall`)
-    // leads the valley crease (`terrace`) in a real Z-pleat (`fold(upper) >= fold(terrace)` at every instant!)
-    // so the 4 upper tower walls stay strictly upright/flared in their own quadrants and NEVER intersect!
+    // Tiered setback Z-pleat rise: ground podium walls rise from anchor/adjacent faces outward, then mountain
+    // `upperWall` leads valley `terrace` in a real Z-pleat (`fold(upper) >= fold(terrace)` at every instant!)
     for (const id of sortedWalls) {
       const rank = wallRank.get(id) ?? 0;
-      const c = wallCurve(rank);
+      const c = wallCurve(rank, id);
       pushItem(id, c * 0.44, 1.18, c * 0.16, 0.34);
     }
     for (const id of rig.panelIds) {
@@ -2666,13 +2770,12 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
       pushItem(id, wd + 0.24, 1.04, ws + 0.12, 0.34);
     }
   } else if (isLWing) {
-    // Asymmetric L-wing choreography: base-hinged walls rise far-to-near, then the mountain courtyard crease
-    // (`rightLower`) pre-bends slightly ahead of `wingBack` in a true Z-pleat so it glides cleanly into
-    // the re-entrant L-corner without sweeping through the main house!
+    // Asymmetric L-wing choreography: base-hinged walls rise from anchor/adjacent faces outward, then the mountain
+    // courtyard crease (`rightLower`) pre-bends slightly ahead of `wingBack` in a true Z-pleat!
     const rootWalls = sortedWalls.filter((id) => rig.net.panelMap.get(id)?.parent === 'base');
     const rootCount = Math.max(1, rootWalls.length - 1);
     rootWalls.forEach((id, i) => {
-      const c = Math.pow(i / rootCount, 1.25);
+      const c = Math.pow(i / rootCount, 1.2);
       pushItem(id, c * 0.48, 1.24, c * 0.20, 0.38);
     });
     const wingEndD = panelDelay.get('wingEnd') ?? 0.32;
@@ -2684,18 +2787,17 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
       pushItem('rightLower', wingEndD + 0.24, 1.06, wingEndS + 0.12, 0.34);
     }
   } else if (isPolygon) {
-    // Radial lotus-bloom choreography: furthest petals rise first around both flanks with a gentle shimmer,
-    // blooming upward around the projected interior before the front entrance petal closes last!
+    // Radial lotus-bloom choreography: starts from anchor + immediately adjacent flank petals, blooming smoothly around!
     for (const id of sortedWalls) {
       const rank = wallRank.get(id) ?? 0;
-      const c = wallCurve(rank);
-      pushItem(id, c * 0.78, 1.26, c * 0.30, hasCap ? 0.42 : 0.46);
+      const c = wallCurve(rank, id);
+      pushItem(id, c * 0.68, 1.26, c * 0.28, hasCap ? 0.42 : 0.46);
     }
   } else {
     for (const id of sortedWalls) {
       const rank = wallRank.get(id) ?? 0;
-      const c = wallCurve(rank);
-      pushItem(id, c * 0.62, 1.28, c * 0.26, isSawtooth ? 0.38 : hasCap ? 0.44 : 0.48);
+      const c = wallCurve(rank, id);
+      pushItem(id, c * 0.56, 1.28, c * 0.24, isSawtooth ? 0.38 : hasCap ? 0.44 : 0.48);
     }
   }
 
@@ -2707,30 +2809,7 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
     const parentIsRoof = rig.net.panelMap.get(pId)?.stage === 'roof';
     let d: number;
     let s: number;
-    if (isVillage) {
-      if (parentIsRoof) {
-        // Z-pleat lockstep: mountain risers match their valley parent (`0` offset) so stepped/sawtooth roofs never collide!
-        const stepD = def.isMountain ? 0 : 0.14;
-        const stepS = def.isMountain ? 0 : 0.05;
-        d = (panelDelay.get(pId) ?? 0.6) + stepD;
-        s = Math.min(0.66, (panelScrub.get(pId) ?? 0.30) + stepS);
-      } else {
-        d = (panelDelay.get(pId) ?? 0.45) + 0.34;
-        s = (panelScrub.get(pId) ?? 0.22) + 0.16;
-        const localId = def.localId ?? id;
-        const bSpec = def.panelSpec ?? rig.net.spec;
-        if (
-          ((bSpec.roofType === 'shed' || bSpec.roofType === 'flat') && localId === 'roofL') ||
-          (bSpec.roofType === 'sawtooth' && localId === 'roofS0')
-        ) {
-          const prefix = id.slice(0, id.length - localId.length);
-          const oppD = panelDelay.get(`${prefix}right`) ?? 0;
-          const oppS = panelScrub.get(`${prefix}right`) ?? 0;
-          d = Math.max(d, oppD + 0.22);
-          s = Math.max(s, oppS + 0.12);
-        }
-      }
-    } else if (parentIsRoof) {
+    if (parentIsRoof) {
       // Multi-segment chained roofs (`sawtooth`, `gambrel` 2×, `barrel` 3×, `stepped` 3× ladder):
       // Mountain creases fold in exact Z-pleat lockstep (`stepD = 0, stepS = 0`) with their parent valley crease
       // so vertical risers stay upright with zero interior sweep!
@@ -2746,8 +2825,9 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
       d = td + 0.46;
       s = ts + 0.24;
     } else {
-      d = (panelDelay.get(pId) ?? 0.35) + 0.42;
-      s = (panelScrub.get(pId) ?? 0.14) + 0.20;
+      const isAnchorRoof = useAdjacentAnchorOrder && id === rig.anchorPanelId;
+      d = (panelDelay.get(pId) ?? 0.35) + (isAnchorRoof ? 0.24 : 0.42);
+      s = (panelScrub.get(pId) ?? 0.14) + (isAnchorRoof ? 0.12 : 0.20);
     }
     if ((isSingleSpanRoof && id === 'roofL') || (isSawtooth && id === 'roofS0')) {
       const oppD = panelDelay.get('right') ?? 0;
@@ -2907,6 +2987,7 @@ function resetToFactory(): void {
   debugReverseFoldEnabled = FACTORY_SETTINGS.reverseFold;
   debugCameraTrick = FACTORY_SETTINGS.cameraTrick;
   debugGlideOnFoldEnabled = FACTORY_SETTINGS.glideOnFold;
+  debugAnchorMode = FACTORY_SETTINGS.anchorMode;
   debugFadeProjEnabled = FACTORY_SETTINGS.fadeProjOnFold;
   autoFoldEnabled = FACTORY_SETTINGS.autoFold;
   autoSpeed = FACTORY_SETTINGS.autoSpeed;
@@ -2935,16 +3016,20 @@ function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
     startReverseUnfold(continuousAuto);
     return;
   }
+  const isManual = !continuousAuto && !autoFoldEnabled;
   const leadSec = continuousAuto ? 0 : MANUAL_LEAD_DELAY_SEC;
-  const houseDur = Math.max(0.5, FOLD_HOUSE_SEC - (continuousAuto ? phaseCarrySec : 0));
+  const baseDur = isManual ? MANUAL_FOLD_HOUSE_SEC : FOLD_HOUSE_SEC;
+  const houseDur = Math.max(0.5, baseDur - (continuousAuto ? phaseCarrySec : 0));
   const foldProg = computeFoldProgress();
+  const retriggerThreshold = isManual ? 0.42 : 0.65;
 
   // Trigger overlapping live handoff when:
   // - Current house is settled, OR
-  // - Auto 115 BPM downbeat hits while current house is finishing (~77% -> 100%!), OR
-  // - Manual Space/Fold click while current house is already >= 72% folded!
-  if (allPanelsSettledFolded() || (allPanelsFoldedTarget() && (continuousAuto || foldProg >= 0.65))) {
+  // - Auto 115 BPM downbeat hits while current house is finishing, OR
+  // - Manual tap while current house is already >= 42% folded (instant reactive chaining!)
+  if (allPanelsSettledFolded() || (allPanelsFoldedTarget() && (continuousAuto || foldProg >= retriggerThreshold))) {
     projectAndSpawnUnderneath(debugCameraTrick, true);
+    activeFoldIsManual = isManual;
     triggerCutoutDrop();
     launchStaggeredFold(1, leadSec, houseDur);
     soundtrack.triggerFoldLayer(generation, false, houseDur / Math.max(0.25, autoSpeed));
@@ -2955,6 +3040,7 @@ function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
     return;
   }
   if (!allPanelsFoldedTarget()) {
+    activeFoldIsManual = isManual;
     const lead = cutoutDropState === 'waiting' ? leadSec : 0;
     if (cutoutDropState === 'waiting') triggerCutoutDrop();
     launchStaggeredFold(1, lead, houseDur);
@@ -2967,12 +3053,15 @@ function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
 }
 
 function toggleFoldAll(): void {
+  const isManual = !autoFoldEnabled;
+  activeFoldIsManual = isManual;
+  const dur = isManual ? MANUAL_FOLD_HOUSE_SEC : FOLD_HOUSE_SEC;
   if (!allPanelsFoldedTarget() && cutoutDropState === 'waiting') {
     triggerCutoutDrop();
-    launchStaggeredFold(1, MANUAL_LEAD_DELAY_SEC, FOLD_HOUSE_SEC);
+    launchStaggeredFold(1, MANUAL_LEAD_DELAY_SEC, dur);
     return;
   }
-  launchStaggeredFold(allPanelsFoldedTarget() ? 0 : 1, 0, FOLD_HOUSE_SEC);
+  launchStaggeredFold(allPanelsFoldedTarget() ? 0 : 1, 0, dur);
 }
 
 function syncUI(): void {
@@ -4063,6 +4152,24 @@ dbgGlideFold.addEventListener('change', () => {
   debugGlideOnFoldEnabled = dbgGlideFold.checked;
   saveDebugSettings();
 });
+for (const btn of dbgAnchorModeBtns) {
+  btn.addEventListener('click', () => {
+    const mode = btn.dataset.anchorMode;
+    if (mode !== 'rest' && mode !== 'subtle' && mode !== 'floor') return;
+    debugAnchorMode = mode;
+    if (rig) {
+      if (mode === 'floor') {
+        const baseId = rig.net.panels.find((p) => p.parent === null)?.id ?? 'base';
+        rig.setFoldAnchor(baseId, 'floor');
+      } else {
+        rig.setAnchorMode(mode);
+      }
+      rig.syncAnchorPose(computeFoldProgress());
+    }
+    syncDebugControls();
+    saveDebugSettings();
+  });
+}
 dbgFadeProj.addEventListener('change', () => {
   debugFadeProjEnabled = dbgFadeProj.checked;
   materials.setProjectionFade(computeProjectionFade(computeFoldProgress()));
@@ -4288,7 +4395,12 @@ resize();
 // Apply optional ?fold=0..1 preset
 if (params.has('fold')) {
   applyFoldScrub(Number(params.get('fold')) || 0, true);
-  const z = computeAutoZoom(computeFoldProgress());
+  const fp = computeFoldProgress();
+  for (const id of rig.panelIds) {
+    rig.updatePanelVisual(id, panelState.get(id)?.fold ?? 0, 0, false);
+  }
+  rig.syncAnchorPose(fp);
+  const z = computeAutoZoom(fp);
   targetDist = curDist = z.autoDist;
   targetLookY = curLookY = z.autoLookY;
   curShadowExtent = z.shadowExtent;
@@ -4352,6 +4464,8 @@ if (isDebugMode && params.has('city')) {
         cutoutDelaySec?: number;
       }) => void;
       setLighting: (opts: { shadowStrength?: number; shadowBlur?: number; sunAzimuth?: number; sunElevation?: number }) => void;
+      setFoldAnchor: (panelId: PanelId, mode?: FoldAnchorMode) => void;
+      setAnchorMode: (mode: FoldAnchorMode) => void;
       view: (yaw: number, pitch: number, dist: number, roll?: number) => void;
       info: () => {
         generation: number;
@@ -4360,6 +4474,10 @@ if (isDebugMode && params.has('city')) {
         label: string;
         topology: string;
         roofType: string;
+        anchorPanel: PanelId;
+        anchorKind: FoldAnchorKind;
+        anchorMode: FoldAnchorMode;
+        manualReactive: boolean;
         W: number;
         D: number;
         H: number;
@@ -4402,6 +4520,11 @@ if (isDebugMode && params.has('city')) {
 ).__origami = {
   progress(v: number) {
     applyFoldScrub(v, true);
+    for (const id of rig.panelIds) {
+      rig.updatePanelVisual(id, panelState.get(id)?.fold ?? 0, 0, false);
+    }
+    const fp = computeFoldProgress();
+    rig.syncAnchorPose(fp);
     if (v > 0.001) {
       curPaperRelief = targetPaperRelief = 1;
       rig.setPaperRelief(1);
@@ -4410,7 +4533,6 @@ if (isDebugMode && params.has('city')) {
         rig.updateCutoutDrop(99);
       }
     }
-    const fp = computeFoldProgress();
     materials.setProjectionFade(computeProjectionFade(fp));
     const z = computeAutoZoom(fp);
     const { minDist, maxDist } = getZoomBounds();
@@ -4435,6 +4557,8 @@ if (isDebugMode && params.has('city')) {
       ps.fold = v;
       ps.startFold = v;
       ps.target = v;
+      rig.updatePanelVisual(pid, v, 0, false);
+      rig.syncAnchorPose(computeFoldProgress());
       syncUI();
     }
   },
@@ -4567,6 +4691,7 @@ if (isDebugMode && params.has('city')) {
   },
   setAuto(enabled: boolean) {
     autoFoldEnabled = Boolean(enabled);
+    if (autoFoldEnabled) activeFoldIsManual = false;
     syncDebugControls();
     saveDebugSettings();
     if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
@@ -4639,6 +4764,24 @@ if (isDebugMode && params.has('city')) {
     syncDebugControls();
     saveDebugSettings();
   },
+  setFoldAnchor(panelId: PanelId, mode?: FoldAnchorMode) {
+    if (mode !== undefined) debugAnchorMode = mode;
+    rig.setFoldAnchor(panelId, mode ?? debugAnchorMode);
+    rig.syncAnchorPose(computeFoldProgress());
+    syncDebugControls();
+  },
+  setAnchorMode(mode: FoldAnchorMode) {
+    debugAnchorMode = mode;
+    if (mode === 'floor') {
+      const baseId = rig.net.panels.find((p) => p.parent === null)?.id ?? 'base';
+      rig.setFoldAnchor(baseId, 'floor');
+    } else {
+      rig.setAnchorMode(mode);
+    }
+    rig.syncAnchorPose(computeFoldProgress());
+    syncDebugControls();
+    saveDebugSettings();
+  },
   view(yaw: number, pitch: number, dist: number, roll = 0) {
     targetYaw = curYaw = yaw;
     targetPitch = curPitch = pitch;
@@ -4658,6 +4801,10 @@ if (isDebugMode && params.has('city')) {
       label: s.label,
       topology: s.topology,
       roofType: s.roofType,
+      anchorPanel: rig.anchorPanelId,
+      anchorKind: rig.anchorKind,
+      anchorMode: rig.anchorMode,
+      manualReactive: activeFoldIsManual,
       W: Math.round(s.W * 10) / 10,
       D: Math.round(s.D * 10) / 10,
       H: Math.round(s.H * 10) / 10,
@@ -4731,7 +4878,16 @@ function animate(now: number): void {
     renderer.shadowMap.needsUpdate = true;
   }
 
-  // 1. Update panel folds (live speed-scaled parameterized cubic-bezier wave + gentle scrub follow!)
+  // 1. Update gentle ambient breeze + panel folds (live speed-scaled parameterized cubic-bezier wave!)
+  windClockSec += dt;
+  const targetWind = reverseUnfold ? 0 : 1;
+  if (rigWindStrength < targetWind) {
+    rigWindStrength = Math.min(targetWind, rigWindStrength + dt * 1.1);
+  } else if (rigWindStrength > targetWind) {
+    rigWindStrength = Math.max(targetWind, rigWindStrength - dt * 2.5);
+  }
+  rig.setWind(windClockSec, rigWindStrength, false);
+
   const foldDt = dt * autoSpeed;
   let foldChanged = false;
   let activeAnimMaxU = 0;
@@ -4781,6 +4937,7 @@ function animate(now: number): void {
   updateCurvePlayhead(activeAnimMaxU, anyPanelAnimating, generation, outgoingPlayheadU, outgoing ? outgoing.generation : null);
 
   const foldProg = computeFoldProgress();
+  rig.syncAnchorPose(foldProg);
   soundtrack.update();
 
   // Quietly fill the 1-step Reverse lookahead AFTER the exact 0/255 swap frame has rendered!
@@ -4798,7 +4955,9 @@ function animate(now: number): void {
 
     reverseUnfold.elapsedSec += foldDt;
     const uUnfold = clamp01(reverseUnfold.elapsedSec / Math.max(0.05, reverseUnfold.totalSec));
-    const camEase = uUnfold * uUnfold * (3 - 2 * uUnfold);
+    const camEase = activeFoldIsManual
+      ? 1 - (1 - uUnfold) * (1 - uUnfold)
+      : uUnfold * uUnfold * (3 - 2 * uUnfold);
     // Next house was pre-calculated onto the interior before unfolding — zero fade-in pop!
     materials.setProjectionFade(1);
 
@@ -4809,7 +4968,10 @@ function animate(now: number): void {
 
     const remainSec = Math.max(0, reverseUnfold.totalSec - reverseUnfold.elapsedSec);
     if (rig.hasCutout) {
-      rig.updateCutoutReassemble(remainSec, Math.min(0.32, cutoutDropDelay * 0.5));
+      const revPadSec = activeFoldIsManual
+        ? Math.min(0.16, cutoutDropDelay * 0.35)
+        : Math.min(0.32, cutoutDropDelay * 0.5);
+      rig.updateCutoutReassemble(remainSec, revPadSec);
     }
 
     // Drive camera smoothly onto exact `landCam` so at `fold = 0` flat projection aligns 0/255 with House B!
@@ -4893,7 +5055,8 @@ function animate(now: number): void {
     if (cutoutDropState === 'falling') {
       cutoutDropElapsed += foldDt;
     }
-    const outerDropTime = cutoutDropState === 'falling' ? cutoutDropElapsed - cutoutDropDelay : 0;
+    const effectiveCutoutDelay = activeFoldIsManual ? Math.min(cutoutDropDelay, 0.16) : cutoutDropDelay;
+    const outerDropTime = cutoutDropState === 'falling' ? cutoutDropElapsed - effectiveCutoutDelay : 0;
     const stillFalling = rig.updateCutoutDrop(outerDropTime, foldDt);
     if (!stillFalling && cutoutDropState === 'falling') {
       cutoutDropState = 'done';
@@ -4957,12 +5120,11 @@ function animate(now: number): void {
     applyShadowFrustum(curShadowExtent);
   }
 
-  // Pre-build next house early during the bar so handoffs stay 100% hitch-free even at aggressive early overlap!
+  // Pre-build next house early during EVERY fold (both Auto AND manual taps!) so rapid tapping never hitches on rig creation!
   const handoffSec = getAutoHandoffSec();
   if (
-    autoFoldEnabled &&
     !debugReverseFoldEnabled &&
-    (foldProg > 0.18 || autoBeatElapsed > handoffSec * 0.42) &&
+    (foldProg > 0.22 || (autoFoldEnabled && autoBeatElapsed > handoffSec * 0.42)) &&
     (!preparedNext || preparedNext.generation !== generation + 1)
   ) {
     schedulePrepareNext(generation + 1, 20);
@@ -5036,6 +5198,7 @@ function animate(now: number): void {
     }
 
     const outFoldProg = outgoing.rig.panelIds.length > 0 ? outFoldSum / outgoing.rig.panelIds.length : 1;
+    outgoing.rig.syncAnchorPose(outFoldProg);
     outgoing.mats.setProjectionFade(computeProjectionFade(outFoldProg));
 
     if (outgoing.spinEnabled) {

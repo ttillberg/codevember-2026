@@ -1513,18 +1513,102 @@ export interface KirigamiDetailRig {
   openRank?: number;
   /** Classification for window kinematics (`top-hung` capped to 20-30%, `side-hung`, or `door`) */
   windowType?: 'top-hung' | 'side-hung' | 'door';
+  /** Architectural role for gentle breeze stiffness tuning on non-window pop-up parts */
+  windRole?: 'awning' | 'dormer' | 'chimney' | 'sill';
+  /** Deterministic phase offset so leaves & detached parts breathe organically out of phase */
+  windPhase?: number;
+}
+
+export type FoldAnchorKind = 'floor' | 'wall' | 'roof';
+export type FoldAnchorMode = 'rest' | 'subtle' | 'floor';
+
+export interface FoldAnchorSelection {
+  panelId: PanelId;
+  kind: FoldAnchorKind;
+}
+
+function classifyAnchorKind(def: PanelNetDef | undefined): FoldAnchorKind {
+  if (!def || def.parent === null || def.stage === 'base') return 'floor';
+  if (def.stage === 'roof' || def.stage === 'cap') return 'roof';
+  return 'wall';
+}
+
+function mixAnchorHash(x: number): number {
+  let h = x >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * Deterministically picks a varied fold anchor panel (floor `base`, a ground wall, or a main roof slope)
+ * so houses fold up off walls and roofs instead of always hinging from the base floor!
+ */
+export function chooseFoldAnchorPanel(
+  net: BuiltHouseNet,
+  generation: number,
+  seed: number,
+): FoldAnchorSelection {
+  const baseDef = net.panels.find((p) => p.parent === null) ?? net.panels[0];
+  const baseId: PanelId = baseDef?.id ?? 'base';
+
+  // Multi-house compound villages stay anchored on their shared floor so their sequential
+  // curl-in-then-stand choreography keeps every adjacent wall strictly collision-free!
+  if (net.spec.topology === 'village') {
+    return { panelId: baseId, kind: 'floor' };
+  }
+
+  const wallCandidates = net.panels.filter((p) => p.parent !== null && p.stage === 'wall' && !p.isMountain);
+  const directRoofCandidates = net.panels.filter(
+    (p) =>
+      p.parent !== null &&
+      p.stage === 'roof' &&
+      !p.isMountain &&
+      net.panelMap.get(p.parent)?.stage === 'wall',
+  );
+  const roofCandidates =
+    directRoofCandidates.length > 0
+      ? directRoofCandidates
+      : net.panels.filter((p) => p.parent !== null && p.stage === 'roof' && !p.isMountain);
+
+  const h1 = mixAnchorHash(
+    Math.imul(generation + 17, 0x9e3779b1) ^
+      Math.imul((seed | 0) + 31, 0x85ebca77) ^
+      Math.imul(net.panels.length + 7, 0xc2b2ae3d),
+  );
+  const h2 = mixAnchorHash(h1 ^ 0x27d4eb2d);
+  const r = h1 / 4294967296;
+
+  // ~22% floor, ~46% wall, ~32% roof (with clean fallbacks if a net lacks a category)
+  if (r < 0.22 || (wallCandidates.length === 0 && roofCandidates.length === 0)) {
+    return { panelId: baseId, kind: 'floor' };
+  }
+  if ((r < 0.68 && wallCandidates.length > 0) || roofCandidates.length === 0) {
+    const picked = wallCandidates[h2 % wallCandidates.length];
+    return { panelId: picked.id, kind: 'wall' };
+  }
+  const picked = roofCandidates[h2 % roofCandidates.length];
+  return { panelId: picked.id, kind: 'roof' };
 }
 
 export interface OrigamiHouseRig {
   net: BuiltHouseNet;
   root: THREE.Group;
+  houseGroup: THREE.Group;
   baseMesh: THREE.Mesh;
   panelIds: FoldablePanelId[];
   panels: Map<FoldablePanelId, PanelVisual>;
   details: KirigamiDetailRig[];
   hasCutout: boolean;
+  readonly anchorPanelId: PanelId;
+  readonly anchorKind: FoldAnchorKind;
+  readonly anchorMode: FoldAnchorMode;
+  setFoldAnchor(panelId: PanelId, mode?: FoldAnchorMode): void;
+  setAnchorMode(mode: FoldAnchorMode): void;
+  syncAnchorPose(foldProg: number): void;
   updatePanelVisual(id: FoldablePanelId, fold01: number, peekRad: number, hovered: boolean): void;
   setWindowOpen(mode: WindowOpenMode, ratio?: number): void;
+  setWind(timeSec: number, strength?: number, applyNow?: boolean): void;
   updateCutoutDrop(outerElapsedSec: number, dtSec?: number): boolean;
   updateCutoutReassemble(remainSec: number, arrivePadSec?: number): void;
   setFoldLinesVisible(visible: boolean): void;
@@ -1547,6 +1631,10 @@ export function buildOrigamiHouseRig(
   const root = new THREE.Group();
   root.position.y = PAPER_THICK;
   root.rotation.y = spec.yawOffset;
+  // Intermediate rigid-body frame so ANY wall, floor, or roof slope can be pinned flat at `y = 0`
+  // during folding while the outer cutout remains strictly locked on `root`!
+  const houseGroup = new THREE.Group();
+  root.add(houseGroup);
 
   const cutoutMats = [mats.cutoutInside, mats.cutoutEdge, mats.cutoutOutside];
   const chadMats = [mats.chadInside, mats.chadEdge, mats.chadOutside];
@@ -1705,7 +1793,7 @@ export function buildOrigamiHouseRig(
       const baseGroup = new THREE.Group();
       baseGroup.position.set(flatOriginX, 0, flatOriginZ);
       baseGroup.add(mesh);
-      root.add(baseGroup);
+      houseGroup.add(baseGroup);
       groupByPanel.set(def.id, baseGroup);
       if (!baseMesh || def.id === 'base') baseMesh = mesh;
       hostGroup = baseGroup;
@@ -2262,6 +2350,7 @@ export function buildOrigamiHouseRig(
         kind: 'fixed' | 'window',
         matsArr: THREE.Material[],
         windowType?: 'top-hung' | 'side-hung' | 'door',
+        windRole?: 'awning' | 'dormer' | 'chimney' | 'sill',
       ): KirigamiDetailRig => {
         const lPivot = new THREE.Group();
         lPivot.position.set(px, py, pz);
@@ -2279,6 +2368,8 @@ export function buildOrigamiHouseRig(
           driverPanel: panelId,
           kind,
           windowType,
+          windRole,
+          windPhase: details.length * 1.6180339 + (spec.generation ?? 1) * 0.73,
         };
         details.push(entry);
         return entry;
@@ -2287,7 +2378,7 @@ export function buildOrigamiHouseRig(
       if (f.mode === 'sill') {
         const sillD = Math.min(2.6, Math.max(1.5, f.w * 0.24)) * MM;
         const sShape = makeLeafShape(-hw, hw, -sillD, 0, 'rect');
-        mountLeaf(0, -PAPER_THICK, -hh, sShape, 'x', 1.57, 'fixed', windowDetailMats);
+        mountLeaf(0, -PAPER_THICK, -hh, sShape, 'x', 1.57, 'fixed', windowDetailMats, undefined, 'sill');
         continue;
       }
 
@@ -2438,6 +2529,8 @@ export function buildOrigamiHouseRig(
       axis: 'x',
       targetAngle: 1.72,
       driverPanel: frontDef.id,
+      windRole: 'awning',
+      windPhase: details.length * 1.41 + 0.5,
     });
   }
 
@@ -2548,12 +2641,16 @@ export function buildOrigamiHouseRig(
         axis: 'z',
         targetAngle: bSpec.roofType === 'flat' ? -Math.PI * 0.5 : -(Math.PI * 0.5 - bSpec.pitch),
         driverPanel: chimneyDef.id,
+        windRole: 'chimney',
+        windPhase: details.length * 1.27 + 1.1,
       });
       details.push({
         pivot: cheekPivot,
         axis: 'x',
         targetAngle: -Math.PI * 0.5,
         driverPanel: chimneyDef.id,
+        windRole: 'chimney',
+        windPhase: details.length * 1.27 + 1.4,
       });
     }
 
@@ -2620,6 +2717,8 @@ export function buildOrigamiHouseRig(
           axis: 'z',
           targetAngle: -(Math.PI * 0.5 - bSpec.pitch),
           driverPanel: roofRDef.id,
+          windRole: 'dormer',
+          windPhase: details.length * 1.53 + 2.0,
         });
       }
     }
@@ -2632,24 +2731,201 @@ export function buildOrigamiHouseRig(
   let windowOpenRatio = 0.35;
   const lastPanelFold = new Map<FoldablePanelId, number>();
 
+  // Rigid-body fold anchor state (allows pinning any wall, floor, or roof slope flat at `y = 0`
+  // while the rest of the house peels up off it, then smoothly righting upright onto the base!)
+  const rootBaseId: PanelId = net.panels.find((p) => p.parent === null)?.id ?? 'base';
+  let anchorPanelId: PanelId = rootBaseId;
+  let anchorKind: FoldAnchorKind = 'floor';
+  let anchorMode: FoldAnchorMode = 'subtle';
+  let anchorChain: THREE.Group[] = [];
+  let anchorFlatX = 0;
+  let anchorFlatZ = 0;
+  let anchorPoseSynced = false;
+  const panelRootMat = new Map<PanelId, THREE.Matrix4>();
+  const panelPhysicalLift = new Map<PanelId, number>();
+  for (const def of net.panels) {
+    panelRootMat.set(def.id, new THREE.Matrix4());
+    panelPhysicalLift.set(def.id, 0);
+  }
+  const tmpAnchorMat = new THREE.Matrix4();
+  const tmpAnchorInv = new THREE.Matrix4();
+  const tmpPinMat = new THREE.Matrix4();
+  const tmpPinPos = new THREE.Vector3();
+  const tmpPinQuat = new THREE.Quaternion();
+  const tmpPinScale = new THREE.Vector3();
+  const tmpCenter = new THREE.Vector3();
+  const anchorRockAxis = new THREE.Vector3(1, 0, 0);
+  let anchorRockSign = 1;
+  const houseCenterY = net.foldedHeightMm * MM * 0.42;
+
+  const setAnchorMode = (mode: FoldAnchorMode) => {
+    anchorMode = mode;
+    if (anchorMode === 'floor' || anchorPanelId === rootBaseId) {
+      houseGroup.position.set(0, 0, 0);
+      houseGroup.quaternion.identity();
+    }
+  };
+
+  const setFoldAnchor = (panelId: PanelId, mode?: FoldAnchorMode) => {
+    if (mode !== undefined) anchorMode = mode;
+    const def = net.panelMap.get(panelId);
+    const resolvedId = def && groupByPanel.has(panelId) ? panelId : rootBaseId;
+    const resolvedDef = net.panelMap.get(resolvedId);
+    anchorPanelId = resolvedId;
+    anchorKind = classifyAnchorKind(resolvedDef);
+    anchorFlatX = (resolvedDef?.hingeOrigin[0] ?? 0) * MM;
+    anchorFlatZ = -(resolvedDef?.hingeOrigin[1] ?? 0) * MM;
+
+    // Constant single rock axis for `subtle` mode (derived from the anchor panel's own hinge axis
+    // so the rock NEVER changes axis or kinks mid-fold as child hinges move!)
+    if (resolvedDef && resolvedDef.parent !== null) {
+      const len = Math.hypot(resolvedDef.hingeAxis[0], resolvedDef.hingeAxis[1]) || 1;
+      anchorRockAxis.set(resolvedDef.hingeAxis[0] / len, 0, -resolvedDef.hingeAxis[1] / len).normalize();
+      anchorRockSign = resolvedDef.targetAngle >= 0 ? -1 : 1;
+    } else {
+      anchorRockAxis.set(1, 0, 0);
+      anchorRockSign = 1;
+    }
+
+    const chain: THREE.Group[] = [];
+    let cur: PanelId | null = resolvedId;
+    while (cur !== null) {
+      const grp = groupByPanel.get(cur);
+      if (grp) chain.push(grp);
+      cur = net.panelMap.get(cur)?.parent ?? null;
+    }
+    chain.reverse();
+    anchorChain = chain;
+
+    if (anchorPanelId === rootBaseId || anchorMode === 'floor') {
+      houseGroup.position.set(0, 0, 0);
+      houseGroup.quaternion.identity();
+    }
+  };
+  setFoldAnchor(rootBaseId);
+
+  const getPanelLiftForGating = (pid: PanelId): number => {
+    if (anchorPoseSynced) {
+      return panelPhysicalLift.get(pid) ?? 0;
+    }
+    let cur: PanelId | null = pid;
+    let maxF = 0;
+    while (cur) {
+      const f = lastPanelFold.get(cur) ?? 0;
+      if (f > maxF) maxF = f;
+      cur = net.panelMap.get(cur)?.parent ?? null;
+    }
+    return maxF;
+  };
+
   const syncShadowsForPanels = () => {
     let anyRaised = false;
     panels.forEach((pv, pid) => {
-      const f = lastPanelFold.get(pid) ?? 0;
-      const raised = forceFlatShadows || f > 0.065;
+      const lift = getPanelLiftForGating(pid);
+      const raised = forceFlatShadows || lift > 0.065;
       if (raised) anyRaised = true;
       pv.mesh.castShadow = raised;
     });
     for (const det of details) {
-      const f = lastPanelFold.get(det.driverPanel) ?? 0;
-      const raised = forceFlatShadows || f > 0.065;
+      const lift = getPanelLiftForGating(det.driverPanel);
+      const raised = forceFlatShadows || lift > 0.065;
       det.pivot.traverse((obj) => {
         if (obj instanceof THREE.Mesh) obj.castShadow = raised;
       });
     }
     if (baseMesh) {
-      baseMesh.castShadow = forceFlatShadows || (anyRaised && curRelief > 0.45);
+      const baseLift = anchorPoseSynced ? (panelPhysicalLift.get(rootBaseId) ?? 0) : 0;
+      baseMesh.castShadow = forceFlatShadows || baseLift > 0.065 || (anyRaised && curRelief > 0.45);
     }
+  };
+
+  const syncAnchorPose = (foldProg: number) => {
+    const fp = Math.max(0, Math.min(1, foldProg));
+    if (anchorPanelId === rootBaseId || anchorChain.length <= 1 || anchorMode === 'floor' || fp <= 0.0001) {
+      houseGroup.position.set(0, 0, 0);
+      houseGroup.quaternion.identity();
+    } else {
+      if (anchorMode === 'rest') {
+        // Option 1: stay resting flat on the anchored wall/roof through the ENTIRE fold (`0 -> 1`)!
+        // ZERO flip-back, ZERO direction reversal — just one silky cosine glide keeping the resting house centered.
+        tmpAnchorMat.identity();
+        for (const grp of anchorChain) {
+          grp.updateMatrix();
+          tmpAnchorMat.multiply(grp.matrix);
+        }
+        tmpAnchorInv.copy(tmpAnchorMat).invert();
+        tmpPinMat.makeTranslation(anchorFlatX, 0, anchorFlatZ).multiply(tmpAnchorInv);
+        tmpPinMat.decompose(tmpPinPos, tmpPinQuat, tmpPinScale);
+        tmpCenter.set(0, houseCenterY, 0).applyQuaternion(tmpPinQuat).add(tmpPinPos);
+        const centerEase = 0.5 - 0.5 * Math.cos(Math.PI * fp);
+        houseGroup.position.set(
+          tmpPinPos.x - tmpCenter.x * centerEase,
+          tmpPinPos.y,
+          tmpPinPos.z - tmpCenter.z * centerEase,
+        );
+        houseGroup.quaternion.copy(tmpPinQuat);
+      } else {
+        // Option 3 (`subtle`): single C∞ smooth bell (`sin²(π·fp)`) around the anchor panel's FIXED
+        // hinge axis — zero axis wobble, zero `Math.min` kink, always lands 100% upright on the floor!
+        const s = Math.sin(Math.PI * fp);
+        const bell = s * s;
+        const rockRad = (anchorKind === 'roof' ? 0.16 : 0.20) * bell * anchorRockSign;
+        houseGroup.quaternion.setFromAxisAngle(anchorRockAxis, rockRad);
+        houseGroup.position.set(0, 0.18 * bell, 0);
+      }
+    }
+
+    // Single topological pass computes real physical lift (tilt + elevation in `root` space) for every panel!
+    houseGroup.updateMatrix();
+    for (const def of net.panels) {
+      const grp = groupByPanel.get(def.id);
+      const m = panelRootMat.get(def.id);
+      if (!grp || !m) continue;
+      grp.updateMatrix();
+      if (def.parent === null) {
+        m.multiplyMatrices(houseGroup.matrix, grp.matrix);
+      } else {
+        const pm = panelRootMat.get(def.parent);
+        if (pm) m.multiplyMatrices(pm, grp.matrix);
+        else m.copy(grp.matrix);
+      }
+      const ny = Math.max(-1, Math.min(1, m.elements[5]));
+      const tiltLift = Math.acos(ny) / (Math.PI * 0.5);
+      const heightLift = Math.abs(m.elements[13]) / 1.4;
+      panelPhysicalLift.set(def.id, Math.min(1, Math.max(tiltLift, heightLift)));
+    }
+    anchorPoseSynced = true;
+    syncShadowsForPanels();
+  };
+
+  let windTimeSec = 0;
+  let windStrength = 0;
+  const panelWindPhase = new Map<FoldablePanelId, number>();
+  net.foldableIds.forEach((pid, idx) => {
+    panelWindPhase.set(pid, idx * 1.73205 + (spec.generation ?? 1) * 0.61);
+  });
+
+  // Gentle organic paper breeze: slow gust envelope modulating dual-harmonic drift (never twitchy!)
+  const sampleWindWave = (t: number, phase: number, speed = 1): number => {
+    const gust = 0.56 + 0.44 * Math.sin(t * 0.42 + 0.7);
+    const sway =
+      0.62 * Math.sin(t * (1.08 * speed) + phase) +
+      0.38 * Math.sin(t * (1.78 * speed) + phase * 1.67 + 0.85);
+    return gust * sway;
+  };
+
+  const computePanelWindOffset = (pv: PanelVisual, fold01: number): number => {
+    if (windStrength <= 0.001 || fold01 <= 0.88 || pv.isMountain) return 0;
+    if (pv.stage !== 'roof' && pv.stage !== 'cap') return 0;
+    const u = Math.max(0, Math.min(1, (fold01 - 0.88) / 0.12));
+    const gate = u * u * (3 - 2 * u) * windStrength;
+    const phase = panelWindPhase.get(pv.id) ?? 0;
+    // Strictly outward/upward micro-lift (`0..maxLift`) so opposing paper roof slopes breathe softly
+    // apart in a breeze without ever clipping through each other!
+    const breath = 0.5 + 0.5 * sampleWindWave(windTimeSec, phase, pv.stage === 'cap' ? 0.75 : 0.62);
+    const maxLift = pv.stage === 'cap' ? 0.026 : 0.018;
+    const sign = pv.targetAngle >= 0 ? 1 : -1;
+    return -sign * breath * maxLift * gate;
   };
 
   const applyDetailAngle = (det: KirigamiDetailRig, fold01: number) => {
@@ -2666,7 +2942,31 @@ export function buildOrigamiHouseRig(
         scale = (det.openRank ?? 0) < windowOpenRatio ? 1 : 0;
       }
     }
-    const ang = det.targetAngle * eased * scale;
+    let ang = det.targetAngle * eased * scale;
+
+    // Gentle breeze flutter on open hinged windows/doors & detached kirigami pop-ups (awnings, dormers, chimneys, sills)
+    if (windStrength > 0.001 && eased > 0.05) {
+      const gate = windStrength * eased * eased;
+      const phase = det.windPhase ?? 0;
+      if (det.kind === 'window') {
+        if (scale > 0) {
+          const isDoor = det.windowType === 'door';
+          const amp = det.windowType === 'side-hung' ? 0.105 : isDoor ? 0.072 : 0.064;
+          const wave = sampleWindWave(windTimeSec, phase, isDoor ? 0.76 : 0.96);
+          ang += wave * amp * gate;
+          // Keep open leaves strictly on the exterior side of the wall opening (never clip inward!)
+          const minMag = Math.abs(det.targetAngle) * 0.08 * eased;
+          if (det.targetAngle > 0) ang = Math.max(minMag, ang);
+          else if (det.targetAngle < 0) ang = Math.min(-minMag, ang);
+        }
+      } else {
+        const role = det.windRole ?? 'awning';
+        const amp = role === 'awning' ? 0.056 : role === 'dormer' ? 0.036 : role === 'chimney' ? 0.024 : 0.018;
+        const speed = role === 'awning' ? 0.92 : 0.68;
+        ang += sampleWindWave(windTimeSec, phase, speed) * amp * gate;
+      }
+    }
+
     if (det.axis === 'x') det.pivot.rotation.x = ang;
     else det.pivot.rotation.z = ang;
   };
@@ -2680,8 +2980,10 @@ export function buildOrigamiHouseRig(
     const pv = panels.get(id);
     if (!pv) return;
     lastPanelFold.set(id, fold01);
-    const baseAngle = Math.max(0, Math.min(1, fold01)) * pv.targetAngle;
-    const effective = Math.max(0, Math.min(pv.targetAngle + 0.04, baseAngle + peekRad));
+    const clampedFold = Math.max(0, Math.min(1, fold01));
+    const baseAngle = clampedFold * pv.targetAngle;
+    const windOffset = computePanelWindOffset(pv, clampedFold);
+    const effective = Math.max(0, Math.min(pv.targetAngle + 0.04, baseAngle + peekRad + windOffset));
     pv.pivot.quaternion.setFromAxisAngle(pv.hingeAxis3D, effective);
 
     if (pv.foldLine) {
@@ -2718,6 +3020,22 @@ export function buildOrigamiHouseRig(
     }
   };
 
+  const setWind = (timeSec: number, strength = 1, applyNow = true) => {
+    windTimeSec = Number.isFinite(timeSec) ? timeSec : 0;
+    windStrength = Math.max(0, Math.min(1, Number.isFinite(strength) ? strength : 1));
+    if (!applyNow) return;
+    panels.forEach((pv, pid) => {
+      if (pv.stage !== 'roof' && pv.stage !== 'cap') return;
+      const f = Math.max(0, Math.min(1, lastPanelFold.get(pid) ?? 0));
+      if (f <= 0.88) return;
+      const effective = Math.max(0, Math.min(pv.targetAngle + 0.04, f * pv.targetAngle + computePanelWindOffset(pv, f)));
+      pv.pivot.quaternion.setFromAxisAngle(pv.hingeAxis3D, effective);
+    });
+    for (const det of details) {
+      applyDetailAngle(det, lastPanelFold.get(det.driverPanel) ?? 0);
+    }
+  };
+
   const setFoldLinesVisible = (visible: boolean) => {
     linesAllowed = visible;
     panels.forEach((pv) => {
@@ -2741,14 +3059,7 @@ export function buildOrigamiHouseRig(
   };
 
   const effectivePanelLift = (pid: PanelId): number => {
-    let cur: PanelId | null = pid;
-    let maxF = 0;
-    while (cur) {
-      const f = lastPanelFold.get(cur) ?? 0;
-      if (f > maxF) maxF = f;
-      cur = net.panelMap.get(cur)?.parent ?? null;
-    }
-    return maxF;
+    return getPanelLiftForGating(pid);
   };
 
   // Animate the die-cut outer paper sheet (driven by `outerElapsedSec` / Cutout timer) AND each
@@ -3018,13 +3329,27 @@ export function buildOrigamiHouseRig(
   return {
     net,
     root,
+    houseGroup,
     baseMesh,
     panelIds: net.foldableIds,
     panels,
     details,
     hasCutout: Boolean(cutoutRoot),
+    get anchorPanelId() {
+      return anchorPanelId;
+    },
+    get anchorKind() {
+      return anchorKind;
+    },
+    get anchorMode() {
+      return anchorMode;
+    },
+    setFoldAnchor,
+    setAnchorMode,
+    syncAnchorPose,
     updatePanelVisual,
     setWindowOpen,
+    setWind,
     updateCutoutDrop,
     updateCutoutReassemble,
     setFoldLinesVisible,
