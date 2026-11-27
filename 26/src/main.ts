@@ -675,6 +675,7 @@ const FOLD_BPM = 115;
 const FOLD_BEAT_SEC = 60 / FOLD_BPM; // ~0.52174s per quarter-note beat
 const FOLD_BAR_SEC = FOLD_BEAT_SEC * 4; // ~2.08696s bar cadence @ 115 BPM (launches next house around ~74–78%!)
 const FOLD_HOUSE_SEC = FOLD_BEAT_SEC * 6.4; // ~3.33913s smooth full fold curve (2.4-beat live texture overlap!)
+const SLOW_FOLD_HOUSE_SEC = 2.0; // Crisp 2s fold transition in Slow mode (with 3s pause between slides)
 const MANUAL_FOLD_HOUSE_SEC = 1.85; // Snappy reactive fold duration on manual tap (without Auto)
 const MANUAL_LEAD_DELAY_SEC = 0; // Immediate zero-lag start when tapping the house manually
 // Single smooth cubic-bezier (curvePct <= 50 avoids double-composition velocity cliffs!):
@@ -724,13 +725,13 @@ const soundtrack = createFoldAmbientSynth();
 let soundWanted = params.get('sound') !== '0' && !params.has('mute');
 let soundPausedByBlur = false;
 
-function setSoundEnabled(next: boolean, fromBlurPause = false): Promise<boolean> {
+function setSoundEnabled(next: boolean, fromBlurPause = false, fadeInSec?: number): Promise<boolean> {
   if (!fromBlurPause) {
     soundWanted = Boolean(next);
     soundPausedByBlur = false;
   }
   btnSound.setAttribute('aria-pressed', next ? 'true' : 'false');
-  return soundtrack.setEnabled(next).then((active) => {
+  return soundtrack.setEnabled(next, fadeInSec).then((active) => {
     btnSound.setAttribute('aria-pressed', active ? 'true' : 'false');
     return active;
   });
@@ -3149,14 +3150,19 @@ function startFromIntro(targetMode: PlayMode = 'slow'): void {
   syncDebugControls();
 
   if (soundWanted && !document.hidden) {
-    void setSoundEnabled(true);
+    void setSoundEnabled(true, false, 4.2);
   }
 
   if (targetMode === 'reverse') {
     setReverseMode(true, false);
     if (!reverseUnfold) startReverseUnfold(true);
   } else {
-    const dur = targetMode === 'manual' ? MANUAL_FOLD_HOUSE_SEC : FOLD_HOUSE_SEC;
+    const dur =
+      targetMode === 'manual'
+        ? MANUAL_FOLD_HOUSE_SEC
+        : targetMode === 'slow'
+          ? SLOW_FOLD_HOUSE_SEC
+          : FOLD_HOUSE_SEC;
     launchStaggeredFold(1, 0, dur);
     if (autoFoldEnabled) {
       autoBeatElapsed = 0;
@@ -3237,7 +3243,11 @@ function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
   }
   const isManual = !continuousAuto && !autoFoldEnabled;
   const leadSec = continuousAuto ? 0 : MANUAL_LEAD_DELAY_SEC;
-  const baseDur = isManual ? MANUAL_FOLD_HOUSE_SEC : FOLD_HOUSE_SEC;
+  const baseDur = isManual
+    ? MANUAL_FOLD_HOUSE_SEC
+    : playMode === 'slow'
+      ? SLOW_FOLD_HOUSE_SEC
+      : FOLD_HOUSE_SEC;
   const houseDur = Math.max(0.5, baseDur - (continuousAuto ? phaseCarrySec : 0));
   const foldProg = computeFoldProgress();
   const retriggerThreshold = isManual ? 0.42 : 0.65;
@@ -5294,7 +5304,11 @@ function animate(now: number): void {
     if (cutoutDropState === 'falling') {
       cutoutDropElapsed += foldDt;
     }
-    const effectiveCutoutDelay = activeFoldIsManual ? Math.min(cutoutDropDelay, 0.16) : cutoutDropDelay;
+    const effectiveCutoutDelay = activeFoldIsManual
+      ? Math.min(cutoutDropDelay, 0.16)
+      : playMode === 'slow'
+        ? Math.min(cutoutDropDelay, 0.25)
+        : cutoutDropDelay;
     const outerDropTime = cutoutDropState === 'falling' ? cutoutDropElapsed - effectiveCutoutDelay : 0;
     const stillFalling = rig.updateCutoutDrop(outerDropTime, foldDt);
     if (!stillFalling && cutoutDropState === 'falling') {

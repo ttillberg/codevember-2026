@@ -102,7 +102,7 @@ export interface SoundtrackState {
 }
 
 export interface SoundtrackController {
-  setEnabled(enabled: boolean): Promise<boolean>;
+  setEnabled(enabled: boolean, fadeInSec?: number): Promise<boolean>;
   resumeIfNeeded(): void;
   triggerFoldLayer(generation: number, isReverse?: boolean, foldDurationSec?: number): void;
   update(nowSec?: number): void;
@@ -628,7 +628,7 @@ export function createFoldAmbientSynth(opts: FoldSynthOptions = {}): SoundtrackC
     }
   };
 
-  const setEnabled = async (next: boolean): Promise<boolean> => {
+  const setEnabled = async (next: boolean, fadeInSec = 0.7): Promise<boolean> => {
     enabled = Boolean(next);
 
     if (!enabled) {
@@ -674,15 +674,24 @@ export function createFoldAmbientSynth(opts: FoldSynthOptions = {}): SoundtrackC
     }
 
     const now = audioCtx.currentTime;
-    holdParamAtTime(masterGain.gain, now, Math.max(0.0001, masterGain.gain.value));
-    masterGain.gain.linearRampToValueAtTime(0.82, now + 0.7);
+    const fadeSec = Math.max(0.15, fadeInSec);
+    const startVal = Math.max(0.0001, masterGain.gain.value);
+    holdParamAtTime(masterGain.gain, now, startVal);
+    if (fadeSec > 1.2 && startVal < 0.05) {
+      // Perceptually smooth slow bloom out of silence (exponential rise then linear settle)
+      masterGain.gain.exponentialRampToValueAtTime(0.08, now + fadeSec * 0.36);
+      masterGain.gain.linearRampToValueAtTime(0.82, now + fadeSec);
+    } else {
+      masterGain.gain.linearRampToValueAtTime(0.82, now + fadeSec);
+    }
 
     if (!currentPadBed && activeLayers.length === 0) {
       const v = selectVoicingForStep(layerStep);
       layerStep += 1;
       lastTriggerMs = performance.now();
-      transitionPadBed(v, false, 3.0, now);
-      spawnTexturalLayer(v, false, 3.0, now);
+      const introDur = Math.max(3.0, fadeSec);
+      transitionPadBed(v, false, introDur, now);
+      spawnTexturalLayer(v, false, introDur, now);
     }
     return true;
   };
