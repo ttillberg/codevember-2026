@@ -23,8 +23,14 @@ export interface SilhouetteFitOptions {
   minScale?: number;
   /** Maximum camera distance multiplier relative to `basePose.dist` (default `1.08`) */
   maxScale?: number;
-  /** Max horizontal pan offset as a fraction of the net's half-size (default `0.52`) */
+  /** Max horizontal pan offset as a fraction of the net's half-size (default `0`) */
   maxLookShiftRatio?: number;
+  /**
+   * Accepted coverage ratio `[0, 1]` (default `1.0`).
+   * When `< 1.0`, if `basePose` already meets or exceeds `targetCoverage`, `basePose` is returned
+   * untouched; otherwise the solver prefers the minimal zoom/yaw adjustment needed to reach it.
+   */
+  targetCoverage?: number;
 }
 
 export interface SilhouetteFitResult extends SilhouetteCameraPose {
@@ -358,7 +364,19 @@ export function fitFlatNetToSilhouetteNDC(
   // Measure baseline coverage at the unoptimized `basePose`
   const baseCam = buildTempCamera(basePose, opts.fovDeg, opts.aspect);
   const baseFootprint = unprojectNdcToPlaneY(silhouetteNdc, baseCam, planeY);
-  const baselineCoverage = baseFootprint ? evalPoints(baseFootprint).coverage : 0;
+  const baseEval = baseFootprint ? evalPoints(baseFootprint) : { coverage: 0, foldableRatio: 0 };
+  const baselineCoverage = baseEval.coverage;
+  const targetCoverage = Math.max(0.1, Math.min(1.0, opts.targetCoverage ?? 1.0));
+
+  // If natural pose already meets the accepted coverage threshold (e.g. 75% in Forward mode), keep it untouched!
+  if (targetCoverage < 0.999 && baselineCoverage >= targetCoverage) {
+    return {
+      ...basePose,
+      coverage: baselineCoverage,
+      foldableRatio: baseEval.foldableRatio,
+      baselineCoverage,
+    };
+  }
 
   // Canonical unprojection at `yaw = 0`, `look = (0, planeY, 0)`, `dist = basePose.dist`:
   // Changing `(yaw, scale, lx, lz)` is an EXACT 2D rotation + uniform scale + translation on `y = planeY`!
@@ -445,10 +463,18 @@ export function fitFlatNetToSilhouetteNDC(
 
     const coverage = hitAny / n;
     const foldableRatio = hitFoldable / n;
-    // Gentle preference against excessive zoom-in or pan when coverage is already high
-    const zoomCost = scale < 0.86 ? (0.86 - scale) * 16 : (scale - 1.0) * 6;
+    const isThresholdMode = targetCoverage < 0.999;
+    const cappedCov = isThresholdMode ? Math.min(coverage, targetCoverage) : coverage;
+    const bonusCov = isThresholdMode ? coverage * 5 : 0;
+    // In accepted-ratio mode (e.g. 75% forward), strongly prefer minimal zoom away from 1.0;
+    // in 100% mode (reverse), push all the way to full coverage while gently avoiding needless over-zoom.
+    const zoomCost = isThresholdMode
+      ? Math.abs(1.0 - scale) * 28
+      : scale < 0.86
+        ? (0.86 - scale) * 12
+        : (scale - 1.0) * 6;
     const shiftCost = (Math.hypot(lx, lz) / sheetHalfWorld) * 5.5;
-    const score = coverage * 100 + foldableRatio * 10 - zoomCost - shiftCost;
+    const score = cappedCov * 100 + bonusCov + foldableRatio * (isThresholdMode ? 6 : 10) - zoomCost - shiftCost;
     return { score, coverage, foldableRatio };
   };
 

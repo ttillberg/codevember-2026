@@ -100,4 +100,33 @@ describe('silhouette-to-flat-net projective matcher', () => {
     expect(meanOpt).toBeGreaterThan(meanBase + 0.10);
     expect(meanOpt).toBeGreaterThan(0.84);
   });
+
+  it('leaves pose untouched when baseline already meets targetCoverage (75% accepted ratio)', () => {
+    const sil: V2[] = [];
+    for (let ix = -3; ix <= 3; ix++) {
+      for (let iy = -3; iy <= 3; iy++) {
+        sil.push([(ix / 3) * 0.12, (iy / 3) * 0.14]);
+      }
+    }
+    const net = buildHouseNet(generateHouseSpec(1));
+    const basePose: SilhouetteCameraPose = {
+      yaw: 0.44,
+      pitch: 0.82,
+      roll: 0.15,
+      dist: 31,
+      lookX: 0,
+      lookY: 1.2,
+      lookZ: 0,
+    };
+    const fit = fitFlatNetToSilhouetteNDC(sil, net, basePose, {
+      fovDeg: 28,
+      aspect: 1.6,
+      allowYawSearch: true,
+      targetCoverage: 0.75,
+    });
+    expect(fit.baselineCoverage).toBeGreaterThanOrEqual(0.75);
+    expect(fit.yaw).toBe(basePose.yaw);
+    expect(fit.dist).toBe(basePose.dist);
+    expect(fit.lookY).toBe(basePose.lookY);
+  });
 });

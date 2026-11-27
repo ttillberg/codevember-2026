@@ -1766,16 +1766,20 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
         lookZ: 0,
       };
 
+  // Forward (non-reverse) accepted coverage ratio = 75%:
+  // leave natural framing untouched whenever >= 75%, only nudging orientation/scale when really off!
+  const FORWARD_ACCEPTED_RATIO = 0.75;
   let fitted = fitFlatNetToSilhouetteNDC(silA, nextRigForFit.net, basePose, {
     fovDeg: camera.fov,
     aspect: camera.aspect,
     allowYawSearch: trickMode !== 'off',
-    minScale: 0.54,
+    minScale: 0.62,
     maxScale: 1.08,
     maxLookShiftRatio: 0,
+    targetCoverage: FORWARD_ACCEPTED_RATIO,
   });
-  // In Balanced mode, if a low 3/4 pitch foreshortens a compact net too much, try a steeper 3/4 pitch
-  if (trickMode === 'balanced' && fitted.coverage < 0.86 && basePose.pitch < 0.68) {
+  // In Balanced mode, only try a steeper 3/4 pitch if coverage is STILL below the 75% threshold
+  if (trickMode === 'balanced' && fitted.coverage < FORWARD_ACCEPTED_RATIO && basePose.pitch < 0.68) {
     const steeper = fitFlatNetToSilhouetteNDC(
       silA,
       nextRigForFit.net,
@@ -1784,12 +1788,13 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
         fovDeg: camera.fov,
         aspect: camera.aspect,
         allowYawSearch: true,
-        minScale: 0.54,
+        minScale: 0.62,
         maxScale: 1.08,
         maxLookShiftRatio: 0,
+        targetCoverage: FORWARD_ACCEPTED_RATIO,
       },
     );
-    if (steeper.coverage >= fitted.coverage + 0.08) {
+    if (steeper.coverage > fitted.coverage + 0.04) {
       fitted = steeper;
     }
   }
@@ -2002,28 +2007,45 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
   sampleDestCam.updateMatrixWorld(true);
   const silB = sampleFoldedHouseSilhouetteNDC(nextRig, sampleDestCam);
 
-  const landFit = fitFlatNetToSilhouetteNDC(
-    silB,
-    rig.net,
-    {
-      yaw: baseLandYaw,
-      pitch: baseLandPitch,
-      roll: baseLandRoll,
-      dist: baseLandDist,
-      lookX: 0,
-      lookY: BASE_LOOK_Y,
-      lookZ: 0,
-    },
-    {
-      fovDeg: camera.fov,
-      aspect: camera.aspect,
-      allowYawSearch: debugGlideOnFoldEnabled,
-      maxYawDeltaRad: debugGlideOnFoldEnabled ? undefined : 0.36,
-      minScale: 0.54,
-      maxScale: 1.08,
-      maxLookShiftRatio: 0,
-    },
-  );
+  // Reverse mode targets 100% paper-to-silhouette match so unfolding walls absorb the next 3D house cleanly!
+  const baseLandPose = {
+    yaw: baseLandYaw,
+    pitch: baseLandPitch,
+    roll: baseLandRoll,
+    dist: baseLandDist,
+    lookX: 0,
+    lookY: BASE_LOOK_Y,
+    lookZ: 0,
+  };
+  let landFit = fitFlatNetToSilhouetteNDC(silB, rig.net, baseLandPose, {
+    fovDeg: camera.fov,
+    aspect: camera.aspect,
+    allowYawSearch: debugGlideOnFoldEnabled,
+    maxYawDeltaRad: debugGlideOnFoldEnabled ? undefined : 0.45,
+    minScale: 0.48,
+    maxScale: 1.08,
+    maxLookShiftRatio: 0,
+    targetCoverage: 1.0,
+  });
+  if (landFit.coverage < 0.98 && baseLandPitch < 0.82) {
+    const steeperLand = fitFlatNetToSilhouetteNDC(
+      silB,
+      rig.net,
+      { ...baseLandPose, pitch: Math.min(1.08, Math.max(0.84, baseLandPitch + 0.24)) },
+      {
+        fovDeg: camera.fov,
+        aspect: camera.aspect,
+        allowYawSearch: true,
+        minScale: 0.48,
+        maxScale: 1.08,
+        maxLookShiftRatio: 0,
+        targetCoverage: 1.0,
+      },
+    );
+    if (steeperLand.coverage > landFit.coverage + 0.03) {
+      landFit = steeperLand;
+    }
+  }
   lastSilhouetteCoverage = landFit.coverage;
   lastSilhouetteBaseline = landFit.baselineCoverage;
 
