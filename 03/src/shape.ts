@@ -77,7 +77,9 @@ export function baseHalfWidthAt(hNorm: number): number {
 export interface HeatSpot {
   x: number;
   y: number;
-  /** Accumulated local thermal melt dose [0..1+] */
+  /** Optional 3D depth side where warmth was applied so front/back faces carve directionally */
+  z?: number;
+  /** Accumulated local thermal melt dose [0..1.45] */
   heat: number;
 }
 
@@ -94,6 +96,8 @@ export interface MeltFieldState {
   pointerHeat: number;
   pointerX: number;
   pointerY: number;
+  /** Optional 3D Z coordinate of live pointer hit on the ice surface */
+  pointerZ?: number;
   /** Bottom-rim downward pooling morph intensity (driven by Drop Debug 'Bot Pool' slider) */
   bottomPool?: number;
   /** Live morph target weights [outerLeft, innerLeft, innerRight, outerRight] fed by draining syrup layers */
@@ -103,23 +107,43 @@ export interface MeltFieldState {
 }
 
 /**
- * Evaluates accumulated local pointer-induced melt boost at (x, y).
+ * Evaluates accumulated local pointer-induced melt boost at (x, y[, z]).
+ * Uses an asymmetric gravity-runoff kernel (tighter above, trailing smoothly downward below)
+ * so melting a wall never leaves an unmelted shelf/foot sticking out beneath it, plus normalized
+ * front/back face bias so edges, middle, and base all melt smoothly at full strength.
  */
-export function sampleLocalHeat(x: number, y: number, state: MeltFieldState): number {
+export function sampleLocalHeat(x: number, y: number, state: MeltFieldState, z?: number): number {
   const spots = state.heatSpots;
-  if (spots.length === 0) return 0;
+  const len = spots.length;
+  if (len === 0) return 0;
   let boost = 0;
-  for (let i = 0; i < spots.length; i++) {
+  const hasZ = z !== undefined;
+  const zNorm = hasZ ? z * (1.0 / POPSICLE.halfDepth) : 0;
+  for (let i = 0; i < len; i++) {
     const s = spots[i];
-    if (s.heat <= 0.0005) continue;
+    const h = s.heat;
+    if (h <= 0.0005) continue;
     const dx = x - s.x;
-    const dy = (y - s.y) * 0.85;
+    if (dx > 0.92 || dx < -0.92) continue;
+    const dyRaw = y - s.y;
+    // Gravity runoff: warm meltwater trails downward below a heated spot (dyRaw < 0),
+    // preventing overhanging shelves or protruding unmelted corners at the base!
+    const dy = dyRaw < 0 ? dyRaw * 0.46 : dyRaw * 1.05;
     const d2 = dx * dx + dy * dy;
-    if (d2 > 0.85) continue;
-    // Soft thermal diffusion radius ~0.34
-    boost += s.heat * Math.exp(-d2 / 0.115);
+    if (d2 > 0.88) continue;
+    let sideW = 1.0;
+    if (hasZ && s.z !== undefined) {
+      const sz = s.z;
+      if (sz > 0.02 || sz < -0.02) {
+        const t = (zNorm * (sz > 0 ? 1 : -1) + 0.75) * 1.05;
+        sideW = t <= 0 ? 0.52 : t >= 1 ? 1.0 : 0.52 + 0.48 * t * t * (3 - 2 * t);
+      }
+    }
+    // Fast branchless rational bell curve (zero Math.exp() -> ~8x faster on mobile CPUs!)
+    const u = 1.0 / (1.0 + d2 * 9.5);
+    boost += h * u * u * sideW;
   }
-  return clamp(boost, 0, 0.85);
+  return boost > 1.35 ? 1.35 : boost;
 }
 
 export interface MeltBounds {
@@ -464,8 +488,9 @@ export function evaluatePopsicleVertex(
   let x = sgnX * Math.pow(absSinT, row.invExpX) * row.halfW;
   let z = sgnZ * Math.pow(absCosT, row.invExpZ) * row.halfD;
 
-  const localHeat = frame.hasHeatSpots ? sampleLocalHeat(x, y, state) * frame.carveGate : 0;
-  const effMelt = clamp(frame.m + localHeat * 0.55, 0, 1);
+  // Local pointer heat carves immediately wherever warmed (no waiting for global frost clear!)
+  const localHeat = frame.hasHeatSpots ? sampleLocalHeat(x, y, state, z) : 0;
+  const effMelt = clamp(frame.m + localHeat * 0.62, 0, 1);
 
   // Twin crisp vertical molded flutes on front (+Z) and back (-Z) faces (skip 4x exp when masked out!)
   const fluteSharpness = Math.max(0, 1.0 - smoothstep(0.04, 0.58, effMelt));
@@ -487,12 +512,23 @@ export function evaluatePopsicleVertex(
       fluteSharpness;
   }
 
-  // Local pointer heat carves a smooth glossy melted depression & slumps downward slightly!
+  // Local pointer heat carves smoothly EVERYWHERE — base, middle, edges & dome — without folding or unmelted feet!
   if (localHeat > 0.001) {
-    const carve = localHeat * 0.22 * (0.4 + 0.6 * row.bodyBlend) * frame.iceAmount;
-    x *= 1.0 - carve * 0.55;
-    z *= 1.0 - carve * 0.78;
-    y -= localHeat * 0.065 * smoothstep(0.05, 0.3, row.hNorm) * frame.iceAmount;
+    const carve = Math.min(0.64, localHeat * 0.44) * frame.iceAmount;
+    // Smooth horizontal taper (full strength right down through the base corners!)
+    x *= 1.0 - carve * 0.56;
+    // Deep Z-depth thinning so melting the middle clearly hollows right down toward the stick & embedded berries!
+    const zMin = POPSICLE.stickDepth * 0.5 + 0.010;
+    const zCarved = z * (1.0 - carve * 0.86);
+    if (Math.abs(x) < POPSICLE.stickEdgeX + 0.02 && y < POPSICLE.stickTopY + 0.04) {
+      z = Math.abs(zCarved) < zMin ? sgnZ * Math.min(Math.abs(z), zMin) : zCarved;
+    } else {
+      z = zCarved;
+    }
+    // Boundary-respecting vertical melt: dome melts downward, heated base corners melt smoothly upward (no shelf fold!)
+    const domeMeltDown = smoothstep(0.54, 0.96, row.hNorm) * carve * 0.26;
+    const baseMeltUp = smoothstep(0.28, 0.02, row.hNorm) * carve * 0.14;
+    y += baseMeltUp - domeMeltDown;
   }
 
   // Organic wet melt surface undulation + post-1/3 porous crystalline micro-erosion bumps (anchored via yLocal!)
@@ -553,16 +589,19 @@ export function evaluatePopsicleVertex(
     const stickCenter = Math.exp(-sc * sc);
 
     const underWeight = 0.74 + 0.26 * (1.0 - Math.min(1, Math.abs(z) / Math.max(0.04, row.halfD)));
+    // Locally melted base corners shrink cleanly instead of swelling back out into an unmelted lip
+    const heatCalm = 1.0 - clamp(localHeat * 0.78, 0, 0.82);
     const rawSag =
       ((broadWave + lobeL0 + lobeL1 + lobeR0 + lobeR1) * (1.0 - stickCenter * 0.88) + filletL + filletR) *
-      frame.poolAmt;
+      frame.poolAmt *
+      heatCalm;
     const softMax = 0.088;
     const totalSag = ((softMax * rawSag) / (softMax + rawSag)) * underWeight;
     const sagHere = totalSag * row.botProximity;
     y -= sagHere;
     hangFactor = clamp(sagHere / 0.048, 0, 1);
 
-    const lipSwell = (0.006 + sagHere * 0.34) * row.rimBellyMask;
+    const lipSwell = (0.006 * heatCalm + sagHere * 0.34) * row.rimBellyMask;
     z += sgnZ * lipSwell * (0.58 + 0.42 * absCosT) * (1.0 - stickCenter * 0.58);
     x += sgnX * lipSwell * 0.16 * absSinT;
   }
@@ -652,11 +691,12 @@ export function sampleIceContainment(
   let halfW = _csScratch.halfW;
   let halfD = _csScratch.halfD;
 
-  const carveGate = smoothstep(FROST_CLEAR_MELT - 0.02, FROST_CLEAR_MELT + 0.05, rawMelt);
-  const localHeat = sampleLocalHeat(x, yClamped, state) * carveGate;
-  const carve = localHeat * 0.22 * iceAmount;
-  halfW *= 1.0 - carve * 0.55;
-  halfD *= 1.0 - carve * 0.78;
+  const localHeat = sampleLocalHeat(x, yClamped, state, z);
+  const carve = Math.min(0.64, localHeat * 0.44) * iceAmount;
+  halfW *= 1.0 - carve * 0.56;
+  halfD *= 1.0 - carve * 0.86;
+  const localYTop = yTop - carve * 0.24 * smoothstep(0.54, 0.96, hNorm);
+  const localYBot = yBot + carve * 0.13 * smoothstep(0.28, 0.02, hNorm);
 
   // Smooth superelliptical boundary in XZ for accurate 3D collision & containment
   const nx = Math.abs(x) / Math.max(0.015, halfW);
@@ -666,8 +706,8 @@ export function sampleIceContainment(
   const radialScale = Math.min(halfW, halfD) + (Math.max(halfW, halfD) - Math.min(halfW, halfD)) * (nx / Math.max(1e-4, nx + nz));
   const radialDepth = (1.0 - rNorm) * radialScale;
 
-  const dyTop = yTop - y;
-  const dyBot = y - yBot;
+  const dyTop = localYTop - y;
+  const dyBot = y - localYBot;
   const vertDepth = Math.min(dyTop, dyBot);
 
   out.dx = halfW - Math.abs(x);

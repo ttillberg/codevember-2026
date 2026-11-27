@@ -56,6 +56,7 @@ export interface LiquidFilmSystem {
     v1: number,
     strength?: number,
     radius?: number,
+    packFilmNow?: boolean,
   ): FrostMeltSample[];
   /** Sync deterministic ambient rime state when melt is scrubbed/set directly */
   syncRimeToMelt(melt: number): void;
@@ -367,6 +368,7 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
     v1: number,
     strength = 0.92,
     radius = 0.068,
+    packFilmNow = true,
   ): FrostMeltSample[] {
     let du = u1 - u0;
     if (du > 0.5) du -= 1;
@@ -390,7 +392,7 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
 
     if (anyChanged) {
       packRimeTexture();
-      packTexture();
+      if (packFilmNow) packTexture();
     }
     return out;
   }
@@ -509,6 +511,21 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
     const halfW = POPSICLE.halfWidthBottom * (1.0 - clamp(state.melt, 0, 1) * 0.45);
     const hasPointer = state.pointerHeat > 0.01;
     const hasHeatSpots = state.heatSpots.length > 0;
+    // Cheap AABB over active heat spots so untouched rows/columns skip sampleLocalHeat in O(1)!
+    let heatMinX = 99;
+    let heatMaxX = -99;
+    let heatMinY = 99;
+    let heatMaxY = -99;
+    if (hasHeatSpots) {
+      for (let i = 0; i < state.heatSpots.length; i++) {
+        const s = state.heatSpots[i];
+        if (s.heat <= 0.0005) continue;
+        if (s.x - 0.92 < heatMinX) heatMinX = s.x - 0.92;
+        if (s.x + 0.92 > heatMaxX) heatMaxX = s.x + 0.92;
+        if (s.y - 1.95 < heatMinY) heatMinY = s.y - 1.95;
+        if (s.y + 0.90 > heatMaxY) heatMaxY = s.y + 0.90;
+      }
+    }
 
     // 1. Source term: pulsing viscous syrup surges along the upper dome & warmed shoulders/ridges
     //    so thick cohesive sticky glaze sheets roll organically down over the sweating ice beneath!
@@ -518,10 +535,11 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
       const wy = yBot + (yTop - yBot) * v;
       const domeFeed = smoothstep(0.42, 0.95, v);
       const row = iv * FILM_U;
+      const rowNearPtr = hasPointer && Math.abs(wy - state.pointerY) < 0.50;
+      const rowNearHeat = hasHeatSpots && wy >= heatMinY && wy <= heatMaxY;
 
       for (let iu = 0; iu < FILM_U; iu++) {
         const idx = row + iu;
-        const isFront = cosFilmU[iu] > -0.15;
 
         let baseFeed = 0.0045;
         if (domeFeed > 0) {
@@ -535,23 +553,32 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
 
         let meltSource = baseFeed * meltRate * (0.68 + 0.64 * (1 - rough[idx]));
 
-        if (isFront && (hasPointer || hasHeatSpots)) {
+        if (rowNearPtr || rowNearHeat) {
           const wx = sinFilmU[iu] * halfW;
-          // Pointer warmth pours freshly melted glossy berry syrup directly into the surface liquid film!
-          if (hasPointer) {
-            const dx = wx - state.pointerX;
-            const dy = wy - state.pointerY;
-            const d2 = dx * dx + dy * dy;
-            if (d2 < 0.28) {
-              const wPtr = Math.exp(-d2 / 0.065) * state.pointerHeat;
-              meltSource += wPtr * 0.42 * meltSpeedMul;
+          // Pointer warmth pours freshly melted glossy syrup & lowers pinning right under the cursor!
+          if (rowNearPtr) {
+            const isPointerSide =
+              state.pointerZ !== undefined && Math.abs(state.pointerZ) > 0.02
+                ? cosFilmU[iu] * state.pointerZ > -0.04
+                : cosFilmU[iu] > -0.15;
+            if (isPointerSide) {
+              const dx = wx - state.pointerX;
+              const dy = wy - state.pointerY;
+              const d2 = dx * dx + dy * dy;
+              if (d2 < 0.24) {
+                const wPtr = Math.exp(-d2 / 0.048) * state.pointerHeat;
+                meltSource += wPtr * 0.82 * meltSpeedMul;
+                wetMem[idx] = Math.min(1.0, wetMem[idx] + wPtr * 1.8 * subDt);
+              }
             }
           }
-          // Persistent warm spots gently keep weeping meltwater
-          if (hasHeatSpots) {
-            const lh = sampleLocalHeat(wx, wy, state);
+          // Persistent warm hollows keep weeping glossy meltwater streams
+          if (rowNearHeat && wx >= heatMinX && wx <= heatMaxX) {
+            const wz = cosFilmU[iu] * POPSICLE.halfDepth;
+            const lh = sampleLocalHeat(wx, wy, state, wz);
             if (lh > 0.02) {
-              meltSource += lh * 0.042 * meltSpeedMul;
+              meltSource += lh * 0.095 * meltSpeedMul;
+              wetMem[idx] = Math.min(1.0, wetMem[idx] + lh * 0.48 * subDt);
             }
           }
         }

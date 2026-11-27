@@ -32,6 +32,8 @@ export interface IceUniforms {
   uSlideY: { value: number };
   uFrost: { value: number };
   uSeedOffset: { value: number };
+  /** Live 3D pointer position (xyz) and heat intensity (w: 0..1) for immediate local melt sheen */
+  uPointer: { value: THREE.Vector4 };
   // Custom base (water vs opaque coconut) & max-2 flavor optical uniforms
   uOpacity: { value: number };
   uIsDual: { value: number };
@@ -124,6 +126,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
     uSlideY: { value: 0 },
     uFrost: { value: 0.58 },
     uSeedOffset: { value: 0 },
+    uPointer: { value: new THREE.Vector4(0, 0, 0, 0) },
     uOpacity: { value: pal.opacity },
     uIsDual: { value: pal.isDual ? 1.0 : 0.0 },
     uKiwiA: { value: pal.kiwiMaskA },
@@ -192,6 +195,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
       uniform float uSlideY;
       uniform float uFrost;
       uniform float uSeedOffset;
+      uniform vec4 uPointer;
       uniform float uOpacity;
       uniform float uIsDual;
       uniform float uKiwiA;
@@ -498,7 +502,10 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec4 rMicro = texture(uNoise3D, (vWorldPos * 235.0 + vec3(-4.2, uSeedOffset * 3.7, 2.8)) * INV_P12);
         float rimeGrain = rFine.a * 0.48 + rMicro.a * 0.52;
         float frostScale = clamp(uFrost / 0.58, 0.25, 1.45);
-        float rimeMaskPre = smoothstep(0.10, 0.64, rimeRaw * (0.86 + 0.26 * frostScale) + (rimeGrain - 0.5) * 0.42);
+        // Focused live pointer warmth zone: instantly clears frost & turns surface glistening wet right under the cursor!
+        vec3 dPtr = vWorldPos - uPointer.xyz;
+        float ptrSpot = uPointer.w * exp(-dot(dPtr, dPtr) / 0.068);
+        float rimeMaskPre = smoothstep(0.10, 0.64, rimeRaw * (0.86 + 0.26 * frostScale) + (rimeGrain - 0.5) * 0.42) * (1.0 - ptrSpot * 0.88);
 
         // Sleek bottom-edge transparency band (keeps glowing cloudy pink rim & rich backlit body above,
         // while the thinning bottom meniscus turns crystal-clear like the drops breaking away from it!)
@@ -512,7 +519,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         // Opaque condensed milk keeps thick opaque cream right down to its melting bottom edge (zero glass clarity!)
         float hangClear = clamp(max(hangTipClear, bottomEdgeClear * 0.95), 0.0, 1.0) * (1.0 - uOpacity * 0.96) * (1.0 - isMilkBase);
 
-        // Thick flowing sticky glaze lobes + accumulated sticky bottom-rim puddles level frost into mirror-glossy syrup!
+        // Thick flowing sticky glaze lobes + accumulated sticky bottom-rim puddles + live pointer melt sheen!
         float sweatMask = (1.0 - rimeMaskPre) * (1.0 - max(hangLiquid, hangClear) * 0.94);
         float bottomPoolZone = max(
           revStep(0.16, 0.015, vUv.y) * (1.0 - smoothstep(0.62, 0.95, uMelt)) * smoothstep(0.04, 0.14, uMelt) * (1.0 - rimeMaskPre * 0.85),
@@ -520,7 +527,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         );
         float glazeWave = smoothstep(0.16, 0.52, filmH) * (1.0 - rimeMaskPre * 0.88);
         float glazeThick = smoothstep(0.30, 0.82, filmH) * (1.0 - rimeMaskPre * 0.88);
-        float glazeCover = max(glazeWave, max(bottomPoolZone * 0.85, max(hangLiquid, hangClear) * 0.98));
+        float glazeCover = max(max(glazeWave, ptrSpot * 0.84), max(bottomPoolZone * 0.85, max(hangLiquid, hangClear) * 0.98));
         float lipSlope = length(filmSlope);
         float glazeEdge = smoothstep(0.06, 0.44, lipSlope) * smoothstep(0.11, 0.36, filmH) * (1.0 - rimeMaskPre * 0.82);
 
@@ -1153,8 +1160,8 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         float fresnel = (0.02 + 0.98 * pow(1.0 - clamp(dot(N_glaze, V), 0.0, 1.0), 4.8)) * edgeMeltFade * (0.35 + 0.65 * thinIceFade);
         float shoulderGlareTame = mix(1.0, 0.48, smoothstep(0.55, 0.95, vWorldPos.y));
         float dryFrostMatte = 1.0 - rimeMask * 0.84;
-        // Keep cold condensed milk truly velvety matte (zero glossy plastic shoulder glare until melting warms the surface!)
-        float milkWetness = smoothstep(0.18, 0.48, uMelt) * 0.74 + glazeCover * smoothstep(0.14, 0.34, uMelt) * 0.26;
+        // Keep cold condensed milk truly velvety matte, turning glistening wet right under the warm pointer or as it melts!
+        float milkWetness = clamp(max(smoothstep(0.18, 0.48, uMelt) * 0.74 + glazeCover * smoothstep(0.14, 0.34, uMelt) * 0.26, ptrSpot * 0.94), 0.0, 1.0);
         float filmRough = mix(mix(0.10, 0.045, glazeCover) + postThirdTex * 0.165, 0.42 - 0.16 * milkWetness, isMilkBase);
         vec3 specWet = evalMacroStudioReflection(R_glazeStudio, filmRough) * shoulderGlareTame;
         vec3 specSatin = evalMacroStudioReflection(R_smoothStudio, 0.32) * shoulderGlareTame;
@@ -1312,7 +1319,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           float tMicro = texture(uNoise3D, (vWorldPos * 88.0 + vec3(-2.1, uSeedOffset * 0.9, 5.7)) * INV_P8).b;
           // Coherent vertical melt streaks + wet liquid film wash the chili-powder dusting away organically!
           float tStreak = texture(uNoise3D, (vWorldPos * vec3(5.6, 1.25, 5.6) + vec3(uSeedOffset * 1.1, 0.0, 2.2)) * INV_P8).g;
-          float meltWash = 1.0 - smoothstep(0.08 + tStreak * 0.24, 0.36 + tStreak * 0.36, uMelt);
+          float meltWash = 1.0 - smoothstep(0.08 + tStreak * 0.24, 0.36 + tStreak * 0.36, uMelt + ptrSpot * 0.32);
           float filmWash = 1.0 - smoothstep(0.06, 0.42, filmH) * 0.70;
           float powderMask = tajinUpper * smoothstep(0.16, 0.70, tClump * 0.70 + tFine * 0.30) * meltWash * filmWash;
 
@@ -1594,13 +1601,24 @@ export function createPopsicleIceSystem(
   let lastPull2 = -999;
   let lastPull3 = -999;
   let lastBubbleMelt = -999;
+  let lastBubbleTime = -999;
   let lastBubbleDensity = -999;
   let visibleBubbleCount = 0;
+  const isMobileMesh =
+    segU <= 56 || (typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches);
+  const minMeshDt = isMobileMesh ? 0.032 : 0.018;
+  const minBubbleDt = isMobileMesh ? 0.055 : 0.032;
 
   function update(state: MeltFieldState, bubbleDensity: number, forceMesh = false) {
     uniforms.uTime.value = state.time;
     uniforms.uMelt.value = state.melt;
     uniforms.uSeedOffset.value = state.seedOffset;
+    uniforms.uPointer.value.set(
+      state.pointerX,
+      state.pointerY,
+      state.pointerZ ?? POPSICLE.halfDepth,
+      state.pointerHeat,
+    );
 
     const { slideY, iceGone } = getMeltBounds(state.melt);
     uniforms.uSlideY.value = slideY;
@@ -1619,18 +1637,18 @@ export function createPopsicleIceSystem(
     const curPull3 = state.pendantPull ? state.pendantPull[3] : 0;
     const curBottomPool = state.bottomPool ?? DEFAULT_BOTTOM_POOL;
 
-    // Smart dirty-skip: rebuild geometry immediately on melt/pull/pool/heat change, or ~35Hz for silky hanging recoil!
-    const needsMesh =
-      forceMesh ||
-      state.seedOffset !== lastMeshSeed ||
+    // Smart dirty-skip: cap mesh rebuild cadence on mobile (~30Hz) & desktop (~55Hz) so 120Hz touch never stalls CPU!
+    const meshDt = Math.abs(state.time - lastMeshTime);
+    const dynamicDirty =
       Math.abs(state.melt - lastMeshMelt) > 0.00025 ||
       Math.abs(curBottomPool - lastMeshPool) > 0.005 ||
       Math.abs(curPull0 - lastPull0) > 0.004 ||
       Math.abs(curPull1 - lastPull1) > 0.004 ||
       Math.abs(curPull2 - lastPull2) > 0.004 ||
       Math.abs(curPull3 - lastPull3) > 0.004 ||
-      Math.abs(state.time - lastMeshTime) > 0.028 ||
+      meshDt > 0.034 ||
       state.pointerHeat > 0.015;
+    const needsMesh = forceMesh || state.seedOffset !== lastMeshSeed || (dynamicDirty && meshDt >= minMeshDt);
 
     if (needsMesh) {
       lastMeshMelt = state.melt;
@@ -1745,16 +1763,17 @@ export function createPopsicleIceSystem(
       }
     }
 
-    // Only re-evaluate internal bubble matrices when melt or pointer heat meaningfully changes!
+    // Only re-evaluate internal bubble matrices when melt or pointer heat meaningfully changes (throttled on mobile!)
     // Compact visible instances into `bubbles.mesh.count` so opaque coconut / melted stages skip dead draws.
+    const bubbleDt = Math.abs(state.time - lastBubbleTime);
     const needsBubbles =
       forceMesh ||
       bubbleDensity !== lastBubbleDensity ||
-      Math.abs(state.melt - lastBubbleMelt) > 0.0018 ||
-      state.pointerHeat > 0.02;
+      (bubbleDt >= minBubbleDt && (Math.abs(state.melt - lastBubbleMelt) > 0.0018 || state.pointerHeat > 0.02));
 
     if (needsBubbles) {
       lastBubbleMelt = state.melt;
+      lastBubbleTime = state.time;
       lastBubbleDensity = bubbleDensity;
 
       const activeCount = Math.floor(bubbles.data.length * clamp(bubbleDensity, 0, 1));

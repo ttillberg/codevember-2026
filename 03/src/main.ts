@@ -717,12 +717,13 @@ const meltState: MeltFieldState = {
   pointerHeat: 0,
   pointerX: 0,
   pointerY: 0,
+  pointerZ: POPSICLE.halfDepth,
   bottomPool: dropDebug.bottomPool,
   bottomLobes: [1, 1, 1, 1],
   pendantPull: [0, 0, 0, 0],
 };
 
-const MAX_HEAT_SPOTS = 24;
+const MAX_HEAT_SPOTS = isMobile ? 12 : 20;
 
 let currentRecipe: PopsicleRecipe = {
   base: DEFAULT_RECIPE.base,
@@ -741,6 +742,9 @@ let rightOrbitPointerId: number | null = null;
 const activeTouchIds = new Set<number>();
 let prevFrostU: number | null = null;
 let prevFrostV: number | null = null;
+let pointerHitU: number | null = null;
+let pointerHitV: number | null = null;
+let stationaryFrostAccum = 0;
 let pendingPointerMove = false;
 let pendingPointerX = 0;
 let pendingPointerY = 0;
@@ -1003,15 +1007,23 @@ function updatePointerWorld(clientX: number, clientY: number) {
 
   // Direct 3D surface raycast on live melting ice: melts freezer hoarfrost right under the pointer
   // while hovering or dragging across the ice cream (paused cleanly during camera orbit!)
+  if (iceHits.length > 0 && iceHits[0].uv) {
+    pointerHitU = iceHits[0].uv.x;
+    pointerHitV = iceHits[0].uv.y;
+  } else {
+    pointerHitU = null;
+    pointerHitV = null;
+  }
+
   if (iceSystem && liquidFilm && waterDrops && !hoveringGrabbable && liquidFilm.avgRime > 0.002) {
-    if (iceHits.length > 0 && iceHits[0].uv) {
-      const u = iceHits[0].uv.x;
-      const v = iceHits[0].uv.y;
+    if (pointerHitU !== null && pointerHitV !== null) {
+      const u = pointerHitU;
+      const v = pointerHitV;
       const seamWrap = prevFrostU !== null && Math.abs(u - prevFrostU) > 0.35;
       const u0 = prevFrostU !== null && !seamWrap ? prevFrostU : u;
       const v0 = prevFrostV !== null && !seamWrap ? prevFrostV : v;
-      const brushRadius = pointerPressed ? 0.072 : 0.046;
-      const brushStrength = pointerPressed ? 1.0 : 0.92;
+      const brushRadius = pointerPressed ? 0.082 : 0.056;
+      const brushStrength = pointerPressed ? 1.0 : 0.94;
       const samples = liquidFilm.meltFrostSegment(u0, v0, u, v, brushStrength, brushRadius);
       if (samples.length > 0) {
         for (let i = 0; i < samples.length; i++) {
@@ -1045,34 +1057,44 @@ function updatePointerWorld(clientX: number, clientY: number) {
   _camPlaneRight.set(_camPlaneNorm.z, 0, -_camPlaneNorm.x);
   zPlane.set(_camPlaneNorm, 0);
 
-  if (raycaster.ray.intersectPlane(zPlane, hitPoint)) {
+  if (iceHits.length > 0) {
+    // Use exact 3D surface hit so pointer carving, wet sheen & syrup weep lock onto the exact cursor point!
+    meltState.pointerX = iceHits[0].point.x;
+    meltState.pointerY = iceHits[0].point.y;
+    meltState.pointerZ = iceHits[0].point.z;
+    pointerActive = true;
+  } else if (raycaster.ray.intersectPlane(zPlane, hitPoint)) {
     meltState.pointerX = hitPoint.x;
     meltState.pointerY = hitPoint.y;
+    meltState.pointerZ = _camPlaneNorm.z * POPSICLE.halfDepth;
     const { yBot, yTop } = getMeltBounds(meltState.melt);
     const horizSpan = Math.abs(hitPoint.x * _camPlaneRight.x + hitPoint.z * _camPlaneRight.z);
     const onPopsicle =
-      horizSpan < POPSICLE.halfWidthBottom * 1.28 &&
-      hitPoint.y > Math.min(POPSICLE.yBottom, yBot) - 0.18 &&
-      hitPoint.y < Math.max(POPSICLE.yTop, yTop) + 0.18;
+      horizSpan < POPSICLE.halfWidthBottom * 1.24 &&
+      hitPoint.y > Math.min(POPSICLE.yBottom, yBot) - 0.16 &&
+      hitPoint.y < Math.max(POPSICLE.yTop, yTop) + 0.16;
     pointerActive = onPopsicle;
   } else {
     pointerActive = false;
   }
 }
 
-function depositHeatSpot(x: number, y: number, dose: number) {
+function depositHeatSpot(x: number, y: number, dose: number, z?: number) {
   const spots = meltState.heatSpots;
-  // Merge into closest existing spot within 0.16 units to keep array compact & smooth
+  const effZ = z ?? POPSICLE.halfDepth;
+  // Merge into closest existing spot on the same face within ~0.145 units so sculpted trails stay crisp!
   for (let i = 0; i < spots.length; i++) {
     const dx = spots[i].x - x;
     const dy = spots[i].y - y;
-    if (dx * dx + dy * dy < 0.026) {
-      spots[i].heat = clamp(spots[i].heat + dose, 0, 0.95);
+    const dz = (spots[i].z ?? effZ) - effZ;
+    if (dx * dx + dy * dy + dz * dz * 0.45 < 0.032) {
+      spots[i].heat = clamp(spots[i].heat + dose, 0, 1.35);
+      spots[i].z = effZ;
       return;
     }
   }
   if (spots.length < MAX_HEAT_SPOTS) {
-    spots.push({ x, y, heat: clamp(dose, 0, 0.95) });
+    spots.push({ x, y, z: effZ, heat: clamp(dose, 0, 1.35) });
   } else {
     // Replace weakest spot
     let minIdx = 0;
@@ -1081,7 +1103,8 @@ function depositHeatSpot(x: number, y: number, dose: number) {
     }
     spots[minIdx].x = x;
     spots[minIdx].y = y;
-    spots[minIdx].heat = clamp(dose, 0, 0.95);
+    spots[minIdx].z = effZ;
+    spots[minIdx].heat = clamp(dose, 0, 1.35);
   }
 }
 
@@ -1114,6 +1137,8 @@ function clearTransientInput() {
   pointerActive = false;
   prevFrostU = null;
   prevFrostV = null;
+  pointerHitU = null;
+  pointerHitV = null;
   pendingPointerMove = false;
   orbit.enabled = true;
   fruitAssembly?.setHoveredFruit(-1);
@@ -1279,6 +1304,8 @@ window.addEventListener('pointerup', (e) => {
   orbit.enabled = activeGrabPointerId === null && meltDragPointerId === null;
   prevFrostU = null;
   prevFrostV = null;
+  pointerHitU = null;
+  pointerHitV = null;
   syncPointerCursor();
 });
 
@@ -1292,6 +1319,8 @@ canvas.addEventListener('pointerleave', () => {
   hoveringOutsideIce = false;
   prevFrostU = null;
   prevFrostV = null;
+  pointerHitU = null;
+  pointerHitV = null;
   pendingPointerMove = false;
   fruitAssembly?.setHoveredFruit(-1);
   syncPointerCursor();
@@ -2525,8 +2554,8 @@ function tick(now: number) {
 
   // Smooth live pointer heat ramp (pause warming while dragging to orbit or before reveal finishes)
   const warmingActive = reveal >= 0.85 && pointerActive && !orbitDragging && !twoFingerOrbiting && rightOrbitPointerId === null;
-  const targetHeat = warmingActive ? (pointerPressed ? 1.0 : 0.42) : 0.0;
-  meltState.pointerHeat += (targetHeat - meltState.pointerHeat) * Math.min(1, rawDt * 8.0);
+  const targetHeat = warmingActive ? (pointerPressed ? 1.0 : 0.62) : 0.0;
+  meltState.pointerHeat += (targetHeat - meltState.pointerHeat) * Math.min(1, rawDt * 10.0);
 
   if (dt > 0 && toppingDebugStage && toppingDebugStage.group.visible && toppingDebugSpin) {
     toppingDebugStage.update(dt, true);
@@ -2541,15 +2570,36 @@ function tick(now: number) {
 
     meltState.time += dtFluid;
 
-    // Slow deterministic ambient melt + pointer-accelerated warmth (never melts down before frost is gone!)
+    // Emphasize LOCAL melt right where the pointer sits with a calm, tactile overall melt pace!
     if (dtMelt > 0) {
-      const pointerGlobalBoost = warmingActive ? (pointerPressed ? 11.5 : 3.2) : 1.0;
+      const pointerGlobalBoost = warmingActive ? (pointerPressed ? 4.8 : 1.85) : 1.0;
       advanceAmbientMelt(dtMelt, pointerGlobalBoost);
 
-      // Deposit structural ice-carving warmth once frost has cleared (before then, pointer melts frost cleanly!)
-      if (warmingActive && (meltState.melt >= FROST_CLEAR_MELT - 0.01 || liquidFilm.avgRime < 0.05)) {
-        const localDose = dtMelt * (pointerPressed ? 0.34 : 0.075) * simParams.speed;
-        depositHeatSpot(meltState.pointerX, meltState.pointerY, localDose);
+      if (warmingActive) {
+        // Throttled (~10Hz) stationary frost thawing right under the cursor (avoids double texture pack every frame!)
+        stationaryFrostAccum += dtMelt;
+        if (stationaryFrostAccum >= 0.10 && pointerHitU !== null && pointerHitV !== null && liquidFilm.avgRime > 0.008) {
+          stationaryFrostAccum = 0;
+          const r = pointerPressed ? 0.088 : 0.064;
+          const samples = liquidFilm.meltFrostSegment(
+            pointerHitU,
+            pointerHitV,
+            pointerHitU,
+            pointerHitV,
+            pointerPressed ? 0.55 : 0.28,
+            r,
+            false,
+          );
+          for (let i = 0; i < samples.length; i++) {
+            const s = samples[i];
+            waterDrops.spawnFrostMeltDrops(s.u, s.v, s.melted, liquidFilm);
+          }
+        }
+        // Deposit progressive localized ice-carving warmth right at the 3D pointer location!
+        const localDose = dtMelt * (pointerPressed ? 0.46 : 0.17) * simParams.speed;
+        depositHeatSpot(meltState.pointerX, meltState.pointerY, localDose, meltState.pointerZ);
+      } else {
+        stationaryFrostAccum = 0;
       }
     }
 

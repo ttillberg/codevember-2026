@@ -3321,9 +3321,16 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
             continue;
           }
           placeClingingGrain(i, g, liveProfileFrame, meltState);
-          const localHeat = sampleLocalHeat(g.px, g.py, meltState);
-          const effMelt = meltState.melt + localHeat * 0.42;
-          if (meltState.melt > 0.06 && effMelt >= g.releaseMelt) {
+          const localHeat = sampleLocalHeat(g.px, g.py, meltState, g.pz);
+          const pdx = g.px - meltState.pointerX;
+          const pdy = g.py - meltState.pointerY;
+          const pdz = g.pz - (meltState.pointerZ ?? POPSICLE.halfDepth);
+          const livePtrHeat =
+            meltState.pointerHeat > 0.01
+              ? meltState.pointerHeat * Math.exp(-(pdx * pdx + pdy * pdy + pdz * pdz) / 0.065)
+              : 0;
+          const effMelt = meltState.melt + localHeat * 0.55 + livePtrHeat * 0.48;
+          if ((meltState.melt > 0.06 || livePtrHeat > 0.12 || localHeat > 0.14) && effMelt >= g.releaseMelt) {
             g.state = 1;
             g.flowTime = 0;
             g.vx = 0;
@@ -3520,8 +3527,15 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
               const pC = clamp(pulse, 0, 1);
               const stickSlip = 0.15 + 1.20 * pC * pC;
               const slopeEase = 0.42 + 0.58 * Math.abs(ty);
-              const warmth = sampleLocalHeat(g.px, g.py, meltState);
-              const baseRunoff = 0.085 + 0.27 * smoothstep(0.10, 0.78, meltState.melt) + warmth * 0.26;
+              const warmth = sampleLocalHeat(g.px, g.py, meltState, g.pz);
+              const pdxF = g.px - meltState.pointerX;
+              const pdyF = g.py - meltState.pointerY;
+              const pdzF = g.pz - (meltState.pointerZ ?? POPSICLE.halfDepth);
+              const livePtrF =
+                meltState.pointerHeat > 0.01
+                  ? meltState.pointerHeat * Math.exp(-(pdxF * pdxF + pdyF * pdyF + pdzF * pdzF) / 0.075)
+                  : 0;
+              const baseRunoff = 0.085 + 0.27 * smoothstep(0.10, 0.78, meltState.melt) + warmth * 0.34 + livePtrF * 0.45;
               const speed = baseRunoff * g.speedBias * slopeEase * startup * stickSlip;
 
               const damp = 1.0 - Math.exp(-stepDt * 7.5);
@@ -4037,8 +4051,15 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
               const stickSlip = 0.16 + 1.18 * pClamped * pClamped;
               const sizeEase = clamp(0.036 / Math.max(0.016, f.radius), 0.58, 1.42);
               const slopeEase = 0.42 + 0.58 * Math.abs(ty);
-              const localWarmth = sampleLocalHeat(px, py, meltState);
-              const baseRunoff = 0.08 + 0.26 * smoothstep(0.14, 0.78, meltState.melt) + localWarmth * 0.24;
+              const localWarmth = sampleLocalHeat(px, py, meltState, pz);
+              const pdxB = px - meltState.pointerX;
+              const pdyB = py - meltState.pointerY;
+              const pdzB = pz - (meltState.pointerZ ?? POPSICLE.halfDepth);
+              const livePtrB =
+                meltState.pointerHeat > 0.01
+                  ? meltState.pointerHeat * Math.exp(-(pdxB * pdxB + pdyB * pdyB + pdzB * pdzB) / 0.075)
+                  : 0;
+              const baseRunoff = 0.08 + 0.26 * smoothstep(0.14, 0.78, meltState.melt) + localWarmth * 0.34 + livePtrB * 0.42;
               const targetSpeed = baseRunoff * f.flowSpeedBias * sizeEase * slopeEase * startupRamp * stickSlip;
 
               const vTargetX = (tx + sx * sideDrift + stickFunnelX) * targetSpeed;
