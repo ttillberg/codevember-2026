@@ -1003,6 +1003,12 @@ function saveDebugSettings(): void {
 
 syncDebugControls();
 
+const isCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+const COLOR_BLACK = new THREE.Color('#000000');
+const introBox = new THREE.Box3();
+const introCenter = new THREE.Vector3();
+const introSize = new THREE.Vector3();
+
 // Renderer (pure white-on-white gallery daylight: paper & ground melt seamlessly, only minimal ridge shadows!)
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -1041,7 +1047,8 @@ const sunDirActive = new THREE.Vector3(10.5, 19.0, 8.2).normalize();
 const sun = new THREE.DirectionalLight('#fffdf9', 1.18);
 sun.position.copy(sunDirActive).multiplyScalar(28);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+const shadowMapRes = isCoarsePointer ? 1024 : 2048;
+sun.shadow.mapSize.set(shadowMapRes, shadowMapRes);
 sun.shadow.camera.near = 2;
 sun.shadow.camera.far = 72;
 sun.shadow.camera.left = -14;
@@ -1081,20 +1088,26 @@ const tmpDrawSize = new THREE.Vector2();
 let curShadowExtent = 14;
 let swapShadowExtent = 14;
 let finalShadowExtent = 14;
+let lastShadowFrustumE = -1;
+let lastShadowFrustumDist = -1;
 
 function applyShadowFrustum(extent: number): void {
   const lowSunSpread = sunDirActive.y < 0.72 ? Math.min(1.65, 0.76 / Math.max(0.28, sunDirActive.y)) : 1;
   const e = Math.max(14, extent * lowSunSpread);
   const sunDist = Math.max(28, e * 1.75);
   sun.position.copy(sunDirActive).multiplyScalar(sunDist);
-  sun.shadow.camera.left = -e;
-  sun.shadow.camera.right = e;
-  sun.shadow.camera.top = e;
-  sun.shadow.camera.bottom = -e;
-  sun.shadow.camera.near = Math.max(2, sunDist - e * 2.2);
-  sun.shadow.camera.far = sunDist + e * 2.6;
-  sun.shadow.normalBias = 0.012 * (e / 14);
-  sun.shadow.camera.updateProjectionMatrix();
+  if (Math.abs(e - lastShadowFrustumE) > 1e-4 || Math.abs(sunDist - lastShadowFrustumDist) > 1e-4) {
+    lastShadowFrustumE = e;
+    lastShadowFrustumDist = sunDist;
+    sun.shadow.camera.left = -e;
+    sun.shadow.camera.right = e;
+    sun.shadow.camera.top = e;
+    sun.shadow.camera.bottom = -e;
+    sun.shadow.camera.near = Math.max(2, sunDist - e * 2.2);
+    sun.shadow.camera.far = sunDist + e * 2.6;
+    sun.shadow.normalBias = 0.012 * (e / 14);
+    sun.shadow.camera.updateProjectionMatrix();
+  }
 }
 applyShadowFrustum(curShadowExtent);
 
@@ -1608,7 +1621,7 @@ function applyActiveOutsideColor(includeOutgoing = true, refreshReverse = true):
     underFill.intensity = baseUnderFill * (1 - boost);
     scene.environmentIntensity = baseEnv * (1 - boost);
     if (boost > 0.001) {
-      hemi.groundColor.lerp(new THREE.Color('#000000'), boost);
+      hemi.groundColor.lerp(COLOR_BLACK, boost);
     }
     const removedHemi = baseHemi - hemi.intensity;
     const removedFill = (baseFill - fill.intensity) * 0.46;
@@ -1838,10 +1851,10 @@ function frameIntroHintPose(): void {
 
   // Frame and center the actual unfolded 3D bounding box with calm gallery margins
   rig.root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(rig.root);
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  const sphereR = Math.max(2, size.length() * 0.5);
+  introBox.setFromObject(rig.root);
+  introBox.getCenter(introCenter);
+  introBox.getSize(introSize);
+  const sphereR = Math.max(2, introSize.length() * 0.5);
   const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
   const aspect = camera.aspect > 0.1 ? camera.aspect : 1.6;
   const tanH = tanV * aspect;
@@ -1856,9 +1869,9 @@ function frameIntroHintPose(): void {
   const zoomEase = 0.5 - 0.5 * Math.cos(Math.PI * zRaw);
   const denom = Math.max(0.25, 1 - zoomEase);
   swapDist = Math.max(finalDist, (fitDist - finalDist * zoomEase) / denom);
-  swapLookX = center.x / denom;
-  swapLookY = Math.max(BASE_LOOK_Y, (center.y - finalLookY * zoomEase) / denom);
-  swapLookZ = center.z / denom;
+  swapLookX = introCenter.x / denom;
+  swapLookY = Math.max(BASE_LOOK_Y, (introCenter.y - finalLookY * zoomEase) / denom);
+  swapLookZ = introCenter.z / denom;
   swapShadowExtent = Math.max(finalShadowExtent, sphereR * 1.45);
 
   const z = computeAutoZoom(fp);
@@ -1908,7 +1921,7 @@ function makeProjTarget(w: number, h: number): THREE.WebGLRenderTarget {
     format: THREE.RGBAFormat,
     type: THREE.HalfFloatType,
     depthBuffer: true,
-    samples: 4,
+    samples: isCoarsePointer ? 2 : 4,
   });
   rt.texture.wrapS = THREE.ClampToEdgeWrapping;
   rt.texture.wrapT = THREE.ClampToEdgeWrapping;
@@ -1948,7 +1961,11 @@ function ensureProjTargetsSized(): { tw: number; th: number } {
  * 2. Pre-builds Gen 2 on the inactive ping-pong material slot and renders one microscopic hidden frame
  *    so WebGL/Metal compiles all material pipelines & uploads Gen 2 VBOs upfront — zero first-cut hitch!
  */
+let warmupDone = false;
+
 function warmupCutoutPipeline(): void {
+  if (warmupDone || document.hidden || cityActive || !catalogModal.hidden || reverseUnfold || outgoing) return;
+  warmupDone = true;
   ensureProjTargetsSized();
   syncCameraFromOrbit();
   camera.updateMatrixWorld(true);
@@ -3066,6 +3083,7 @@ function resetAll(): void {
   justProjected = false;
   autoBeatElapsed = 0;
   autoBeatRunning = false;
+  fastSoundStep = 0;
   clearPreparedNext();
   clearReverseUnfold();
   materials.setProjection(null);
@@ -3235,6 +3253,20 @@ function resetToFactory(): void {
   if (!catalogModal.hidden) rebuildCatalogGrid(true);
 }
 
+let fastSoundStep = 0;
+
+function triggerSoundForFold(houseDur: number): void {
+  const scaledDur = houseDur / Math.max(0.25, autoSpeed);
+  if (playMode === 'fast') {
+    const step = fastSoundStep++;
+    if (step % 2 !== 0) return;
+    soundtrack.triggerFoldLayer(generation, false, scaledDur * 1.8);
+    return;
+  }
+  fastSoundStep = 0;
+  soundtrack.triggerFoldLayer(generation, false, scaledDur);
+}
+
 function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
   if (debugReverseFoldEnabled) {
     if (reverseUnfold) return;
@@ -3261,7 +3293,7 @@ function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
     activeFoldIsManual = isManual;
     triggerCutoutDrop();
     launchStaggeredFold(1, leadSec, houseDur);
-    soundtrack.triggerFoldLayer(generation, false, houseDur / Math.max(0.25, autoSpeed));
+    triggerSoundForFold(houseDur);
     if (continuousAuto) {
       autoBeatElapsed = phaseCarrySec;
       autoBeatRunning = true;
@@ -3273,7 +3305,7 @@ function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
     const lead = cutoutDropState === 'waiting' ? leadSec : 0;
     if (cutoutDropState === 'waiting') triggerCutoutDrop();
     launchStaggeredFold(1, lead, houseDur);
-    soundtrack.triggerFoldLayer(generation, false, houseDur / Math.max(0.25, autoSpeed));
+    triggerSoundForFold(houseDur);
     if (continuousAuto) {
       autoBeatElapsed = phaseCarrySec;
       autoBeatRunning = true;
@@ -4535,9 +4567,9 @@ window.addEventListener('keydown', (e) => {
         updateCityHud(cv.getStats());
       });
     } else if (e.key === 'm' || e.key === 'M') {
-    const next = btnSound.getAttribute('aria-pressed') !== 'true';
-    void setSoundEnabled(next);
-  } else if (e.key === 'r' || e.key === 'R') {
+      const next = btnSound.getAttribute('aria-pressed') !== 'true';
+      void setSoundEnabled(next);
+    } else if (e.key === 'r' || e.key === 'R') {
       e.preventDefault();
       withCityView((cv) => {
         cv.setCityFold(0, false);
@@ -4574,8 +4606,13 @@ window.addEventListener('keydown', (e) => {
     if (introAwaiting) startFromIntro('fast');
     else setPlayMode(playMode === 'fast' ? 'manual' : 'fast');
   } else if (e.key === 'm' || e.key === 'M') {
-    const next = btnSound.getAttribute('aria-pressed') !== 'true';
-    void setSoundEnabled(next);
+    if (introAwaiting) {
+      soundWanted = !soundWanted;
+      btnSound.setAttribute('aria-pressed', soundWanted ? 'true' : 'false');
+    } else {
+      const next = btnSound.getAttribute('aria-pressed') !== 'true';
+      void setSoundEnabled(next);
+    }
   } else if (e.key === 'r' || e.key === 'R') {
     resetAll();
   } else if ((e.key === 'd' || e.key === 'D') && isDebugMode) {
@@ -4637,7 +4674,6 @@ if (params.has('fold')) {
   applyShadowFrustum(curShadowExtent);
 }
 syncCameraFromOrbit();
-warmupCutoutPipeline();
 if (debugReverseFoldEnabled) {
   prepareReverseChain();
 }
@@ -5095,8 +5131,8 @@ function animate(now: number): void {
   const dt = Math.min(0.05, (now - lastTime) * 0.001);
   lastTime = now;
 
-  // Pause background 3D stage rendering while the fullscreen opaque Generations Catalog modal is open!
-  if (!catalogModal.hidden) {
+  // Pause background 3D stage rendering while the tab is hidden or the fullscreen Generations Catalog is open!
+  if (document.hidden || !catalogModal.hidden) {
     return;
   }
 
@@ -5534,4 +5570,43 @@ function animate(now: number): void {
   renderer.render(scene, camera);
 }
 
-requestAnimationFrame(animate);
+let sceneRevealed = false;
+function scheduleDeferredWarmup(): void {
+  const runWarmup = () => {
+    if (!warmupDone && !document.hidden) warmupCutoutPipeline();
+  };
+  const ric = (window as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
+    .requestIdleCallback;
+  if (typeof ric === 'function') {
+    ric(runWarmup, { timeout: 400 });
+  } else {
+    globalThis.setTimeout(runWarmup, 140);
+  }
+}
+
+function revealInitialScene(): void {
+  if (sceneRevealed) return;
+  sceneRevealed = true;
+  renderer.render(scene, camera);
+  document.body.classList.remove('loading');
+  lastTime = performance.now();
+  requestAnimationFrame(animate);
+  if (introAwaiting) {
+    scheduleDeferredWarmup();
+  } else {
+    warmupCutoutPipeline();
+  }
+}
+
+// Compile initial shaders asynchronously (KHR_parallel_shader_compile) while the compositor-driven
+// `Loading …` label breathes under the title plate, then fade in the first crisp frame!
+void (async () => {
+  try {
+    if (typeof renderer.compileAsync === 'function') {
+      await renderer.compileAsync(scene, camera);
+    }
+  } catch {
+    // Fall back to synchronous first render
+  }
+  revealInitialScene();
+})();

@@ -138,7 +138,7 @@ export interface CreateOrigamiMaterialsOptions {
 }
 
 export function createWashiFiberTextures(maxAniso: number): WashiFiberTextures {
-  const size = 512;
+  const size = 256;
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const ctx = c.getContext('2d')!;
@@ -168,11 +168,11 @@ export function createWashiFiberTextures(maxAniso: number): WashiFiberTextures {
   bCtx.putImageData(bImg, 0, 0);
 
   ctx.lineWidth = 0.85;
-  for (let k = 0; k < 640; k++) {
+  for (let k = 0; k < 220; k++) {
     const x = rand() * size;
     const y = rand() * size;
     const a = rand() * Math.PI * 2;
-    const len = 5 + rand() * 18;
+    const len = 4 + rand() * 14;
     ctx.strokeStyle = rand() > 0.5 ? 'rgba(218,212,200,0.14)' : 'rgba(255,255,255,0.22)';
     ctx.beginPath();
     ctx.moveTo(x, y);
@@ -187,13 +187,13 @@ export function createWashiFiberTextures(maxAniso: number): WashiFiberTextures {
 
   const map = new THREE.CanvasTexture(c);
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
-  map.repeat.set(0.16, 0.16);
+  map.repeat.set(0.32, 0.32);
   map.anisotropy = Math.min(16, maxAniso);
   map.colorSpace = THREE.SRGBColorSpace;
 
   const bumpMap = new THREE.CanvasTexture(b);
   bumpMap.wrapS = bumpMap.wrapT = THREE.RepeatWrapping;
-  bumpMap.repeat.set(0.28, 0.28);
+  bumpMap.repeat.set(0.56, 0.56);
 
   return { map, bumpMap };
 }
@@ -2818,6 +2818,33 @@ export function buildOrigamiHouseRig(
     return maxF;
   };
 
+  // Pre-index details by driver panel & cache descendant meshes once at rig build time
+  // so per-frame `updatePanelVisual` and `syncShadowsForPanels` do zero O(P*D) scans or `.traverse()` calls!
+  const detailsByPanel = new Map<FoldablePanelId, KirigamiDetailRig[]>();
+  const detailMeshes = new Map<KirigamiDetailRig, THREE.Mesh[]>();
+  const detailShadowState = new Map<KirigamiDetailRig, boolean>();
+  for (const det of details) {
+    let bucket = detailsByPanel.get(det.driverPanel);
+    if (!bucket) {
+      bucket = [];
+      detailsByPanel.set(det.driverPanel, bucket);
+    }
+    bucket.push(det);
+    const meshes: THREE.Mesh[] = [];
+    det.pivot.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) meshes.push(obj);
+    });
+    detailMeshes.set(det, meshes);
+  }
+  const setDetailCastShadow = (det: KirigamiDetailRig, cast: boolean) => {
+    if (detailShadowState.get(det) === cast) return;
+    detailShadowState.set(det, cast);
+    const meshes = detailMeshes.get(det);
+    if (meshes) {
+      for (let i = 0; i < meshes.length; i++) meshes[i].castShadow = cast;
+    }
+  };
+
   const syncShadowsForPanels = () => {
     let anyRaised = false;
     panels.forEach((pv, pid) => {
@@ -2826,12 +2853,10 @@ export function buildOrigamiHouseRig(
       if (raised) anyRaised = true;
       pv.mesh.castShadow = raised;
     });
-    for (const det of details) {
+    for (let i = 0; i < details.length; i++) {
+      const det = details[i];
       const lift = getPanelLiftForGating(det.driverPanel);
-      const raised = forceFlatShadows || lift > 0.065;
-      det.pivot.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) obj.castShadow = raised;
-      });
+      setDetailCastShadow(det, forceFlatShadows || lift > 0.065);
     }
     if (baseMesh) {
       const baseLift = anchorPoseSynced ? (panelPhysicalLift.get(rootBaseId) ?? 0) : 0;
@@ -3002,12 +3027,13 @@ export function buildOrigamiHouseRig(
     pv.mesh.castShadow = raised;
 
     // Drive any attached kirigami pop-up details & hinged window leaves smoothly as their host panel folds shut!
-    for (const det of details) {
-      if (det.driverPanel !== id) continue;
-      applyDetailAngle(det, fold01);
-      det.pivot.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) obj.castShadow = raised;
-      });
+    const panelDetails = detailsByPanel.get(id);
+    if (panelDetails) {
+      for (let i = 0; i < panelDetails.length; i++) {
+        const det = panelDetails[i];
+        applyDetailAngle(det, fold01);
+        setDetailCastShadow(det, raised);
+      }
     }
   };
 
@@ -3355,9 +3381,14 @@ export function buildOrigamiHouseRig(
     setFoldLinesVisible,
     setPaperRelief,
     dispose() {
+      const seen = new Set<THREE.BufferGeometry>();
       root.traverse((obj) => {
         if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
-          obj.geometry.dispose();
+          const g = obj.geometry;
+          if (g && !seen.has(g)) {
+            seen.add(g);
+            g.dispose();
+          }
         }
       });
     },

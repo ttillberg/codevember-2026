@@ -36,6 +36,16 @@ body {
   display: block;
   touch-action: none;
   cursor: pointer;
+  transition: opacity 280ms ease;
+}
+
+body.loading #c {
+  opacity: 0;
+}
+
+.clean #c {
+  opacity: 1;
+  transition: none;
 }
 
 #c.orbiting {
@@ -123,6 +133,32 @@ body {
 .plate a.home:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* Loading label under the title plate (matches days 12 & 24), breathing on compositor */
+.plate .head > .loading-label {
+  display: none;
+  opacity: 0.65;
+}
+
+body.loading .plate .head > .loading-label {
+  display: block;
+  animation: loading-breathe 1.2s ease-in-out infinite alternate;
+}
+
+.plate .loading-label span {
+  letter-spacing: 0;
+}
+
+@keyframes loading-breathe {
+  from { opacity: 0.72; }
+  to { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.loading .plate .head > .loading-label {
+    animation: none;
+  }
 }
 
 /* Top-right minimal round buttons */
