@@ -3372,11 +3372,12 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
             continue;
           }
 
-          // 2. ON WET BIRCH WOODEN STICK: Cling down the stick & converge tightly around semicircular tip into (0, 0)!
+          // 2. ON WET BIRCH WOODEN STICK: Only hand off once the grain has actually crept to the stick collar,
+          // then hug smoothly with dt-scaled meniscus attraction (zero sudden multi-frame horizontal snap!).
           const onStickBand =
-            g.py <= yBotLive + 0.018 &&
-            Math.abs(g.px) < STICK_HALF_W + 0.075 &&
-            Math.abs(g.pz) < STICK_HALF_D + 0.125;
+            g.py <= yBotLive + 0.014 &&
+            Math.abs(g.px) < STICK_HALF_W + 0.024 &&
+            Math.abs(g.pz) < STICK_HALF_D + 0.036;
 
           if (onStickBand) {
             const dStick = sampleStickSDF(g.px, g.py, g.pz, tStickN);
@@ -3386,16 +3387,16 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
               g.speedBias *
               (0.26 + 0.92 * stickPulse * stickPulse);
             const damp = 1.0 - Math.exp(-stepDt * 8.5);
-            // Smooth semicircular bottom-tip funnel: tightly guide every edge flake into the center V-meniscus collar!
-            const nearArch = smoothstep(STICK_BOT_ARCH_Y + 0.12, POPSICLE.stickBottomY + 0.008, g.py);
+            // Smooth semicircular bottom-tip funnel: glide naturally down the full stick width, converging gently near the tip!
+            const nearArch = smoothstep(STICK_BOT_ARCH_Y + 0.14, POPSICLE.stickBottomY + 0.008, g.py);
             const dyArc = clamp(STICK_BOT_ARCH_Y - g.py, 0, STICK_HALF_W);
             const woodHalfW = Math.sqrt(Math.max(0, STICK_HALF_W * STICK_HALF_W - dyArc * dyArc));
             const maxXAtY = Math.max(0.012, woodHalfW * (1.0 - nearArch * 0.45) + g.rideOut * 0.6);
 
             const targetVx =
-              Math.sin(g.py * 11.5 + g.flowPhase) * 0.012 * (1.0 - nearArch * 0.9) -
-              g.px * (0.55 + nearArch * 6.2) * Math.max(0.14, stickSpeed);
-            const targetVz = -g.pz * (1.4 + nearArch * 5.2) * Math.max(0.14, stickSpeed);
+              Math.sin(g.py * 11.5 + g.flowPhase) * 0.010 * (1.0 - nearArch * 0.9) -
+              g.px * (0.14 + nearArch * 5.6) * Math.max(0.14, stickSpeed);
+            const targetVz = -g.pz * (0.65 + nearArch * 4.8) * Math.max(0.14, stickSpeed);
             g.vx += (targetVx - g.vx) * damp;
             g.vy += (-stickSpeed - g.vy) * damp;
             g.vz += (targetVz - g.vz) * damp;
@@ -3413,7 +3414,9 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
               g.py += tStickN.y * errS;
               g.pz += tStickN.z * errS;
             } else {
-              const pull = Math.max(errS * 0.48, -0.026);
+              // Smooth dt-scaled viscous meniscus hug onto the wood (never teleports across the collar!)
+              const pullAlpha = 1.0 - Math.exp(-stepDt * 5.5);
+              const pull = Math.max(errS * pullAlpha, -0.22 * stepDt);
               g.px += tStickN.x * pull;
               g.py += tStickN.y * pull;
               g.pz += tStickN.z * pull;
@@ -3445,21 +3448,21 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
                 g.pz -= nz * pull;
               }
 
-              // Detect sticky bottom rim / underside pouch (outer corners stay super sticky and creep inward to the stick!)
+              // Detect sticky bottom rim / underside pouch (outer corners stay super sticky and creep smoothly inward to the stick!)
               const onStickyUnderside = g.py <= yBotLive + 0.032 || ny <= -0.62;
               if (onStickyUnderside) {
-                const targetX = clamp(g.px, -STICK_HALF_W * 0.75, STICK_HALF_W * 0.75);
-                const dirX = Math.sign(targetX - g.px);
-                const dirZ = -Math.sign(g.pz || 1);
+                const targetX = clamp(g.px, -STICK_HALF_W * 0.88, STICK_HALF_W * 0.88);
+                const dirX = clamp((targetX - g.px) * 14.0, -1, 1);
+                const dirZ = clamp(-g.pz * 9.0, -1, 1);
                 const pulse = 0.5 + 0.42 * Math.sin(g.px * 12.0 + g.flowPhase + g.flowTime * 1.3);
-                const creepSpeed = (0.075 + 0.14 * smoothstep(0.14, 0.78, meltState.melt)) * g.speedBias * (0.35 + 0.85 * pulse * pulse);
-                const damp = 1.0 - Math.exp(-stepDt * 8.0);
-                // Creep inward along the sticky underside meniscus directly into the wooden stick collar!
-                g.vx += (dirX * creepSpeed * 1.15 - g.vx) * damp;
-                g.vz += (dirZ * clamp(Math.abs(g.pz) * 4.5, 0, 1) * creepSpeed * 0.95 - g.vz) * damp;
+                const creepSpeed = (0.068 + 0.125 * smoothstep(0.14, 0.78, meltState.melt)) * g.speedBias * (0.35 + 0.85 * pulse * pulse);
+                const damp = 1.0 - Math.exp(-stepDt * 7.5);
+                // Creep smoothly inward along the sticky underside meniscus directly into the wooden stick collar!
+                g.vx += (dirX * creepSpeed - g.vx) * damp;
+                g.vz += (dirZ * creepSpeed * 0.85 - g.vz) * damp;
                 // Keep y tucked snugly right along the sticky bottom rim until reaching the stick!
                 const rimTargetY = Math.min(tSurf.sy - g.rideOut * 0.6, yBotLive + 0.008);
-                g.vy += (clamp((rimTargetY - g.py) * 8.0, -0.09, 0.06) - g.vy) * damp;
+                g.vy += (clamp((rimTargetY - g.py) * 7.5, -0.09, 0.06) - g.vy) * damp;
                 g.px += g.vx * stepDt;
                 g.py += g.vy * stepDt;
                 g.pz += g.vz * stepDt;
@@ -3902,11 +3905,12 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
             continue;
           }
 
-          // 2. ON WET BIRCH STICK: Ride down the wood & converge tightly around the semicircular bottom tip into (0, 0)!
+          // 2. ON WET BIRCH STICK: Only hand off once the bit has crept right to the stick collar,
+          // then hug smoothly with dt-scaled meniscus attraction (zero sudden multi-frame horizontal snap!).
           const onStickBand =
-            py <= yBotLive + 0.018 &&
-            Math.abs(px) < STICK_HALF_W + 0.075 + rCol * 1.3 &&
-            Math.abs(pz) < STICK_HALF_D + 0.125 + rCol * 1.3;
+            py <= yBotLive + 0.014 &&
+            Math.abs(px) < STICK_HALF_W + 0.024 + rCol * 0.8 &&
+            Math.abs(pz) < STICK_HALF_D + 0.036 + rCol * 0.8;
 
           if (onStickBand) {
             const dStick = sampleStickSDF(px, py, pz, physStickN);
@@ -3916,18 +3920,18 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
               f.flowSpeedBias *
               (0.26 + 0.92 * stickPulse * stickPulse);
             const damp = 1.0 - Math.exp(-subDt * 8.5);
-            const nearArch = smoothstep(STICK_BOT_ARCH_Y + 0.12, POPSICLE.stickBottomY + 0.008, py);
+            const nearArch = smoothstep(STICK_BOT_ARCH_Y + 0.14, POPSICLE.stickBottomY + 0.008, py);
             const dyArc = clamp(STICK_BOT_ARCH_Y - py, 0, STICK_HALF_W);
             const woodHalfW = Math.sqrt(Math.max(0, STICK_HALF_W * STICK_HALF_W - dyArc * dyArc));
             const maxXAtY = Math.max(0.014, woodHalfW * (1.0 - nearArch * 0.45) + rCol * 0.45);
 
             f.velocity.x +=
-              (Math.sin(py * 11.0 + f.flowPhase) * 0.012 * (1.0 - nearArch * 0.9) -
-                px * (0.55 + nearArch * 6.0) * Math.max(0.14, stickSpeed) -
+              (Math.sin(py * 11.0 + f.flowPhase) * 0.010 * (1.0 - nearArch * 0.9) -
+                px * (0.14 + nearArch * 5.6) * Math.max(0.14, stickSpeed) -
                 f.velocity.x) *
               damp;
             f.velocity.y += (-stickSpeed - f.velocity.y) * damp;
-            f.velocity.z += (-pz * (1.4 + nearArch * 5.0) * Math.max(0.14, stickSpeed) - f.velocity.z) * damp;
+            f.velocity.z += (-pz * (0.65 + nearArch * 4.8) * Math.max(0.14, stickSpeed) - f.velocity.z) * damp;
             f.mesh.position.addScaledVector(f.velocity, subDt);
 
             if (f.mesh.position.y < STICK_BOT_ARCH_Y && Math.abs(f.mesh.position.x) > maxXAtY) {
@@ -3938,7 +3942,9 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
             if (errS > 0) {
               f.mesh.position.addScaledVector(physStickN, errS);
             } else {
-              f.mesh.position.addScaledVector(physStickN, Math.max(errS * 0.48, -0.024));
+              // Smooth dt-scaled viscous meniscus hug onto the wood (never teleports across the collar!)
+              const pullAlpha = 1.0 - Math.exp(-subDt * 5.5);
+              f.mesh.position.addScaledVector(physStickN, Math.max(errS * pullAlpha, -0.22 * subDt));
             }
             physRollAxis.crossVectors(physStickN, f.velocity).divideScalar(Math.max(0.04, rCol));
             f.angVel.lerp(physRollAxis.multiplyScalar(0.32), 1.0 - Math.exp(-subDt * 6.0));
@@ -3953,7 +3959,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
             continue;
           }
 
-          // 3. ON POPSICLE BODY & STICKY UNDERSIDE RIM: Cling tightly along sticky underside & creep inward to the stick!
+          // 3. ON POPSICLE BODY & STICKY UNDERSIDE RIM: Cling tightly along sticky underside & creep smoothly inward to the stick!
           if (!iceGone && Math.abs(px) < iceHalfWBound + rCol + 0.06 && Math.abs(pz) < iceHalfDBound + rCol + 0.06) {
             sampleExactIceSurface(px, py, pz, liveProfileFrame, meltState, physExactSurf);
             physN.set(physExactSurf.nx, physExactSurf.ny, physExactSurf.nz);
@@ -3962,16 +3968,16 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
               const rideOut = prof.isFlat ? 0.009 : rCol * 0.62;
               const onStickyUnderside = py <= yBotLive + 0.032 || physN.y <= -0.62;
               if (onStickyUnderside) {
-                const targetX = clamp(px, -STICK_HALF_W * 0.75, STICK_HALF_W * 0.75);
-                const dirX = Math.sign(targetX - px);
-                const dirZ = -Math.sign(pz || 1);
+                const targetX = clamp(px, -STICK_HALF_W * 0.88, STICK_HALF_W * 0.88);
+                const dirX = clamp((targetX - px) * 14.0, -1, 1);
+                const dirZ = clamp(-pz * 9.0, -1, 1);
                 const pulse = 0.5 + 0.42 * Math.sin(px * 12.0 + f.flowPhase + f.flowTime * 1.3);
-                const creepSpeed = (0.075 + 0.14 * smoothstep(0.14, 0.78, meltState.melt)) * f.flowSpeedBias * (0.35 + 0.85 * pulse * pulse);
-                const damp = 1.0 - Math.exp(-subDt * 8.0);
-                f.velocity.x += (dirX * creepSpeed * 1.12 - f.velocity.x) * damp;
-                f.velocity.z += (dirZ * clamp(Math.abs(pz) * 4.5, 0, 1) * creepSpeed * 0.92 - f.velocity.z) * damp;
+                const creepSpeed = (0.068 + 0.125 * smoothstep(0.14, 0.78, meltState.melt)) * f.flowSpeedBias * (0.35 + 0.85 * pulse * pulse);
+                const damp = 1.0 - Math.exp(-subDt * 7.5);
+                f.velocity.x += (dirX * creepSpeed - f.velocity.x) * damp;
+                f.velocity.z += (dirZ * creepSpeed * 0.85 - f.velocity.z) * damp;
                 const rimTargetY = Math.min(physExactSurf.sy - rideOut * 0.55, yBotLive + 0.008);
-                f.velocity.y += (clamp((rimTargetY - py) * 8.0, -0.09, 0.06) - f.velocity.y) * damp;
+                f.velocity.y += (clamp((rimTargetY - py) * 7.5, -0.09, 0.06) - f.velocity.y) * damp;
                 f.mesh.position.addScaledVector(f.velocity, subDt);
                 sampleExactIceSurface(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, liveProfileFrame, meltState, physExactSurf);
                 physN.set(physExactSurf.nx, physExactSurf.ny, physExactSurf.nz);
