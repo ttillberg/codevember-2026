@@ -23,6 +23,7 @@ import {
   type HouseNetSpec,
   type NetTopology,
   type PanelId,
+  type PanelNetDef,
   type RoofType,
   type WindowDetail,
   type WindowOpenMode,
@@ -558,6 +559,27 @@ function resolveInitialPlayMode(): PlayMode {
 }
 let playMode: PlayMode = resolveInitialPlayMode();
 let debugReverseFoldEnabled = playMode === 'reverse';
+const skipIntro =
+  params.has('clean') ||
+  params.has('fold') ||
+  params.has('mode') ||
+  params.has('auto') ||
+  params.has('reverse') ||
+  params.has('city') ||
+  params.has('grid');
+let introAwaiting = !skipIntro;
+let introMenuPending = introAwaiting;
+if (introMenuPending) {
+  document.documentElement.classList.add('intro-awaiting');
+} else {
+  document.documentElement.classList.remove('intro-awaiting');
+}
+function revealIntroMenu(): void {
+  if (!introMenuPending) return;
+  introMenuPending = false;
+  document.documentElement.classList.remove('intro-awaiting');
+}
+const introHintBaseFold = new Map<FoldablePanelId, number>();
 const pCamTrick = params.get('cameraTrick');
 let debugCameraTrick: CameraTrickMode =
   pCamTrick !== null && VALID_CAMERA_TRICKS.includes(pCamTrick as CameraTrickMode)
@@ -737,6 +759,7 @@ document.addEventListener('visibilitychange', () => {
 
 // Unlock Web Audio smoothly on the very first user gesture if autoplay was deferred by browser policy
 const unlockAudioOnGesture = (e: Event) => {
+  if (introAwaiting) return;
   const target = e.target as Node | null;
   if (target && btnSound.contains(target)) return;
   if (soundWanted && !soundPausedByBlur && !document.hidden) {
@@ -746,10 +769,10 @@ const unlockAudioOnGesture = (e: Event) => {
 window.addEventListener('pointerdown', unlockAudioOnGesture, { capture: true, passive: true });
 window.addEventListener('keydown', unlockAudioOnGesture, { capture: true });
 
-if (soundWanted && !document.hidden) {
+if (!introAwaiting && soundWanted && !document.hidden) {
   void setSoundEnabled(true);
 } else {
-  btnSound.setAttribute('aria-pressed', 'false');
+  btnSound.setAttribute('aria-pressed', soundWanted ? 'true' : 'false');
 }
 
 function formatHandoffTag(pct: number): string {
@@ -1647,7 +1670,18 @@ function mountHouseGeneration(
     rig = preparedNext.rig;
     preparedNext = null;
   } else {
-    const spec = generateHouseSpec(gen, getCurrentMixOptions());
+    const baseOpts = getCurrentMixOptions();
+    const forceIntroCompound =
+      !fromSwap &&
+      gen === 1 &&
+      !params.has('clean') &&
+      forcedModelSlot === null &&
+      mixTopology === null &&
+      mixHouses === null;
+    const spec = generateHouseSpec(
+      gen,
+      forceIntroCompound ? { ...baseOpts, topology: 'village' } : baseOpts,
+    );
     const net = buildHouseNet(spec);
     rig = buildOrigamiHouseRig(net, materials, needsCutout);
   }
@@ -1782,7 +1816,86 @@ function mountHouseGeneration(
   }
 }
 
-mountHouseGeneration(1, false);
+function computeIntroHintFold(panel: PanelNetDef, idx: number, wallCount: number): number {
+  if (panel.parent === null || panel.isMountain) return 0;
+  const hash = Math.abs(Math.sin((idx + 1) * 12.9898 + (mixSeed + 7) * 78.233) * 43758.5453) % 1;
+  if (panel.stage === 'wall') {
+    // Almost flat sheet with a delicate whisper of lift on some sides (~7–15°), others nearly flush (~0–3°)
+    const lifted = idx % 2 === 0 || wallCount <= 3;
+    return lifted ? 0.08 + hash * 0.09 : hash * 0.03;
+  }
+  if (panel.stage === 'roof' || panel.stage === 'cap') {
+    // Barely perceptible upward curl on roof creases (~2–8°)
+    return 0.03 + hash * 0.07;
+  }
+  return 0.02 + hash * 0.04;
+}
+
+function frameIntroHintPose(): void {
+  const fp = computeFoldProgress();
+  rig.syncAnchorPose(fp);
+
+  // Frame and center the actual unfolded 3D bounding box with calm gallery margins
+  rig.root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(rig.root);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const sphereR = Math.max(2, size.length() * 0.5);
+  const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+  const aspect = camera.aspect > 0.1 ? camera.aspect : 1.6;
+  const tanH = tanV * aspect;
+  const fitDist = Math.max(
+    computeIdealFraming(rig.net).flatDist * 0.85,
+    sphereR / (0.68 * tanV),
+    sphereR / (0.72 * tanH),
+  );
+  // Solve swapDist so `computeAutoZoom(fp)` lands right on `fitDist` at the intro pose,
+  // and glides smoothly into `(0, finalLookY, 0, finalDist)` as the paper folds to 1.0!
+  const zRaw = clamp01((fp - 0.03) / 0.94);
+  const zoomEase = 0.5 - 0.5 * Math.cos(Math.PI * zRaw);
+  const denom = Math.max(0.25, 1 - zoomEase);
+  swapDist = Math.max(finalDist, (fitDist - finalDist * zoomEase) / denom);
+  swapLookX = center.x / denom;
+  swapLookY = Math.max(BASE_LOOK_Y, (center.y - finalLookY * zoomEase) / denom);
+  swapLookZ = center.z / denom;
+  swapShadowExtent = Math.max(finalShadowExtent, sphereR * 1.45);
+
+  const z = computeAutoZoom(fp);
+  targetDist = curDist = z.autoDist;
+  targetLookX = curLookX = z.autoLookX;
+  targetLookY = curLookY = z.autoLookY;
+  targetLookZ = curLookZ = z.autoLookZ;
+  curShadowExtent = z.shadowExtent;
+  applyShadowFrustum(curShadowExtent);
+  syncCameraFromOrbit();
+}
+
+function applyIntroHintPose(): void {
+  introHintBaseFold.clear();
+  const panelById = new Map(rig.net.panels.map((p) => [p.id, p]));
+  const wallCount = rig.net.panels.filter((p) => p.stage === 'wall').length;
+  rig.setFoldLinesVisible(true);
+  rig.panelIds.forEach((id, idx) => {
+    const def = panelById.get(id);
+    const hintFold = def ? computeIntroHintFold(def, idx, wallCount) : 0.15;
+    introHintBaseFold.set(id, hintFold);
+    const ps = panelState.get(id);
+    if (ps) {
+      ps.fold = hintFold;
+      ps.target = hintFold;
+      ps.startFold = hintFold;
+      ps.animating = false;
+      ps.delay = 0;
+    }
+    rig.updatePanelVisual(id, hintFold, 0, false);
+  });
+  frameIntroHintPose();
+}
+
+mountHouseGeneration(1, false, false, !introAwaiting);
+if (introAwaiting) {
+  applyIntroHintPose();
+}
 
 // ----------------------------------------------------------------------------
 // Zero-Transition Live-Camera GPU Projection (Ping-Pong HalfFloat RenderTargets!)
@@ -2509,6 +2622,7 @@ function completeReverseUnfoldSwap(): void {
   syncCameraFromOrbit();
 
   syncUI();
+  revealIntroMenu();
 
   if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
     autoBeatElapsed = 0;
@@ -2957,7 +3071,10 @@ function resetAll(): void {
   targetYaw = curYaw = defaultYaw;
   targetPitch = curPitch = defaultPitch;
   targetRoll = curRoll = 0;
-  mountHouseGeneration(1, false);
+  mountHouseGeneration(1, false, false, !introAwaiting);
+  if (introAwaiting) {
+    applyIntroHintPose();
+  }
   syncCameraFromOrbit();
   if (debugReverseFoldEnabled) {
     prepareReverseChain();
@@ -2994,6 +3111,7 @@ function setPlayMode(
   nextMode: PlayMode,
   opts: { persist?: boolean; startImmediately?: boolean } = {},
 ): void {
+  revealIntroMenu();
   const { persist = true, startImmediately = true } = opts;
   const changed = playMode !== nextMode;
   playMode = nextMode;
@@ -3021,7 +3139,39 @@ function setPlayMode(
   }
 }
 
+function startFromIntro(targetMode: PlayMode = 'slow'): void {
+  if (!introAwaiting) return;
+  introAwaiting = false;
+  introHintBaseFold.clear();
+  playMode = targetMode;
+  autoFoldEnabled = targetMode !== 'manual';
+  activeFoldIsManual = targetMode === 'manual';
+  syncDebugControls();
+
+  if (soundWanted && !document.hidden) {
+    void setSoundEnabled(true);
+  }
+
+  if (targetMode === 'reverse') {
+    setReverseMode(true, false);
+    if (!reverseUnfold) startReverseUnfold(true);
+  } else {
+    const dur = targetMode === 'manual' ? MANUAL_FOLD_HOUSE_SEC : FOLD_HOUSE_SEC;
+    launchStaggeredFold(1, 0, dur);
+    if (autoFoldEnabled) {
+      autoBeatElapsed = 0;
+      autoBeatRunning = true;
+    }
+  }
+  syncUI();
+}
+
 function activateManualFold(): void {
+  if (introAwaiting) {
+    startFromIntro('slow');
+    return;
+  }
+  revealIntroMenu();
   if (playMode !== 'manual') {
     setPlayMode('manual', { persist: true, startImmediately: false });
   }
@@ -4390,19 +4540,29 @@ window.addEventListener('keydown', (e) => {
 
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
-    activateManualFold();
+    if (introAwaiting) {
+      startFromIntro('slow');
+    } else {
+      activateManualFold();
+    }
   } else if (e.key === '1') {
-    setPlayMode('manual', { startImmediately: false });
+    if (introAwaiting) startFromIntro('manual');
+    else setPlayMode('manual', { startImmediately: false });
   } else if (e.key === '2') {
-    setPlayMode('slow');
+    if (introAwaiting) startFromIntro('slow');
+    else setPlayMode('slow');
   } else if (e.key === '3') {
-    setPlayMode('fast');
+    if (introAwaiting) startFromIntro('fast');
+    else setPlayMode('fast');
   } else if (e.key === '4') {
-    setPlayMode('reverse');
+    if (introAwaiting) startFromIntro('reverse');
+    else setPlayMode('reverse');
   } else if (e.key === 'f' || e.key === 'F') {
-    toggleFoldAll();
+    if (introAwaiting) startFromIntro('slow');
+    else toggleFoldAll();
   } else if (e.key === 'a' || e.key === 'A') {
-    setPlayMode(playMode === 'fast' ? 'manual' : 'fast');
+    if (introAwaiting) startFromIntro('fast');
+    else setPlayMode(playMode === 'fast' ? 'manual' : 'fast');
   } else if (e.key === 'm' || e.key === 'M') {
     const next = btnSound.getAttribute('aria-pressed') !== 'true';
     void setSoundEnabled(next);
@@ -4428,7 +4588,9 @@ function resize(): void {
     finalDist = ideal.dist;
     finalLookY = ideal.lookY;
     finalShadowExtent = ideal.shadowExtent;
-    if (!justProjected && !reverseUnfold) {
+    if (introAwaiting) {
+      frameIntroHintPose();
+    } else if (!justProjected && !reverseUnfold) {
       const fp = computeFoldProgress();
       if (fp <= 0.02) {
         swapDist = targetDist = curDist = ideal.flatDist;
@@ -4559,6 +4721,7 @@ if (isDebugMode && params.has('city')) {
         cutoutDropDelay: number;
         cameraTrick: CameraTrickMode;
         playMode: PlayMode;
+        introAwaiting: boolean;
         reverseFold: boolean;
         reverseUnfolding: boolean;
         reverseSwapReady: boolean;
@@ -4888,6 +5051,7 @@ if (isDebugMode && params.has('city')) {
       cutoutDropDelay,
       cameraTrick: debugCameraTrick,
       playMode,
+      introAwaiting,
       reverseFold: debugReverseFoldEnabled,
       reverseUnfolding: Boolean(reverseUnfold),
       reverseSwapReady: Boolean(reverseUnfold?.swapReady),
@@ -4954,8 +5118,21 @@ function animate(now: number): void {
   let foldChanged = false;
   let activeAnimMaxU = 0;
   let anyPanelAnimating = false;
-  for (const pid of rig.panelIds) {
+  for (let pIdx = 0; pIdx < rig.panelIds.length; pIdx++) {
+    const pid = rig.panelIds[pIdx];
     const ps = panelState.get(pid)!;
+
+    if (introAwaiting) {
+      const baseHint = introHintBaseFold.get(pid) ?? 0;
+      if (baseHint > 0.001) {
+        // Subtle living breath on angled flaps while awaiting the initial tap
+        const sway = Math.sin(windClockSec * 1.15 + pIdx * 1.37) * 0.012;
+        ps.fold = clamp01(Math.max(0.005, baseHint + sway));
+        ps.target = ps.fold;
+      }
+      rig.updatePanelVisual(pid, ps.fold, 0, false);
+      continue;
+    }
 
     if (ps.animating) {
       anyPanelAnimating = true;
@@ -5193,6 +5370,9 @@ function animate(now: number): void {
   }
 
   // Keep status caption updated & quietly pre-build the next house once settled into 3D!
+  if (!introAwaiting && introMenuPending && !debugReverseFoldEnabled && allPanelsSettledFolded()) {
+    revealIntroMenu();
+  }
   if (foldChanged && allPanelsSettledFolded()) {
     schedulePrepareNext(generation + 1, 80);
     syncUI();
@@ -5202,7 +5382,7 @@ function animate(now: number): void {
   //   reverse: continuous reverse unfold chain
   //   slow: full non-overlapping fold, then a 3s pause (SLOW_HOLD_SEC) on each settled house
   //   fast: configurable overlapping auto-fold chain (`autoHandoff` = 35%..140% of House 1's fold duration)
-  if (autoFoldEnabled && drag.kind === 'none' && helpModal.hidden && catalogModal.hidden) {
+  if (!introAwaiting && autoFoldEnabled && drag.kind === 'none' && helpModal.hidden && catalogModal.hidden) {
     if (debugReverseFoldEnabled) {
       if (!autoBeatRunning) {
         autoBeatRunning = true;

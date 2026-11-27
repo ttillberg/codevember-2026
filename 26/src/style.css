@@ -72,6 +72,13 @@ body {
   display: none !important;
 }
 
+/* Initial unfolded paper state: hide bottom menu until first tap */
+.intro-awaiting .toolbar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(14px);
+}
+
 /* Title plate (docs/DESIGN.md) */
 .plate {
   position: fixed;
@@ -182,6 +189,7 @@ body {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   max-width: calc(100vw - 20px);
+  transition: opacity 650ms cubic-bezier(0.22, 1, 0.36, 1), transform 650ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .action-btn {
