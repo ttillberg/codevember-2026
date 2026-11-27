@@ -54,6 +54,11 @@
         </span>
         <span class="auto-check-label">Reverse</span>
       </label>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="btn-sound" class="sound-btn" type="button" aria-pressed="true" title="Toggle layered ambient synth (M)" aria-label="Toggle ambient synth">
+        <svg class="sound-icon-off" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4V5z" /><path d="M22 9l-6 6" /><path d="M16 9l6 6" /></svg>
+        <svg class="sound-icon-on" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4V5z" /><path d="M15.54 8.46a5 5 0 0 1 0 7.07" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" /></svg>
+      </button>
     </div>
 
     <div class="bottom-right" hidden>
@@ -227,7 +232,7 @@
         <div class="debug-divider"></div>
         <label class="debug-row" for="dbg-color">
           <span>Color</span>
-          <input id="dbg-color" class="debug-switch" type="checkbox" />
+          <input id="dbg-color" class="debug-switch" type="checkbox" checked />
         </label>
         <label class="debug-row" for="dbg-spin">
           <span>Rotate</span>
@@ -254,7 +259,7 @@
           <input id="dbg-fade-proj" class="debug-switch" type="checkbox" />
         </label>
         <div class="debug-divider"></div>
-        <div class="debug-section-head"><span>Auto fold</span><em id="dbg-auto-bpm">15% overlap</em></div>
+        <div class="debug-section-head"><span>Auto fold</span><em id="dbg-auto-bpm">40% overlap</em></div>
         <div class="debug-curve-box" id="dbg-curve-box" title="Click left or right half to edit Fold 1 or Fold 2 curve">
           <svg id="dbg-curve-svg" viewBox="0 0 220 58" preserveAspectRatio="none">
             <rect id="dbg-curve-overlap" class="curve-overlap" x="92" y="7" width="1" height="44" />
@@ -277,8 +282,8 @@
             <input id="dbg-auto-speed" class="debug-range" type="range" min="25" max="300" step="5" value="100" aria-label="Auto fold total speed" />
           </label>
           <label class="debug-row debug-row-stack" for="dbg-auto-handoff" title="When the next house starts folding relative to the end of the current one (<100% overlaps, 100% back-to-back, >100% pauses)">
-            <span class="debug-slider-head"><span>Next fold</span><em id="dbg-auto-handoff-val">85%</em></span>
-            <input id="dbg-auto-handoff" class="debug-range" type="range" min="35" max="140" step="1" value="85" aria-label="When next fold starts relative to current fold end" />
+            <span class="debug-slider-head"><span>Next fold</span><em id="dbg-auto-handoff-val">60%</em></span>
+            <input id="dbg-auto-handoff" class="debug-range" type="range" min="35" max="140" step="1" value="60" aria-label="When next fold starts relative to current fold end" />
           </label>
         </div>
         <div class="debug-grid-2">
@@ -305,12 +310,12 @@
         <div class="debug-section-head"><span>Light &amp; shadow</span></div>
         <div class="debug-grid-2">
           <label class="debug-row debug-row-stack" for="dbg-shadow-strength">
-            <span class="debug-slider-head"><span>Shadow</span><em id="dbg-shadow-strength-val">100%</em></span>
-            <input id="dbg-shadow-strength" class="debug-range" type="range" min="0" max="200" step="5" value="100" aria-label="Shadow strength" />
+            <span class="debug-slider-head"><span>Shadow</span><em id="dbg-shadow-strength-val">165%</em></span>
+            <input id="dbg-shadow-strength" class="debug-range" type="range" min="0" max="200" step="5" value="165" aria-label="Shadow strength" />
           </label>
           <label class="debug-row debug-row-stack" for="dbg-shadow-blur">
-            <span class="debug-slider-head"><span>Softness</span><em id="dbg-shadow-blur-val">1.0</em></span>
-            <input id="dbg-shadow-blur" class="debug-range" type="range" min="0" max="8" step="0.2" value="1" aria-label="Shadow softness" />
+            <span class="debug-slider-head"><span>Softness</span><em id="dbg-shadow-blur-val">0.0</em></span>
+            <input id="dbg-shadow-blur" class="debug-range" type="range" min="0" max="8" step="0.2" value="0" aria-label="Shadow softness" />
           </label>
         </div>
         <div class="debug-grid-2">
@@ -350,7 +355,7 @@
           <span id="city-hills-val" class="cat-range-val">72%</span>
         </label>
         <button id="city-fold-btn" class="cat-pill-btn" type="button" title="Cascade all houses up the serpentine road or clear the island (Space)">Fold all</button>
-        <button id="city-color-btn" class="cat-pill-btn" type="button" aria-pressed="false">Color</button>
+        <button id="city-color-btn" class="cat-pill-btn" type="button" aria-pressed="true">Color</button>
         <button id="city-close" class="help-close" type="button" aria-label="Close island view">×</button>
       </div>
     </header>
@@ -380,7 +385,7 @@
             <button id="cat-view-3d" class="cat-seg-btn active" type="button" data-view="3d">3D</button>
             <button id="cat-view-flat" class="cat-seg-btn" type="button" data-view="flat">Flat</button>
           </div>
-          <button id="cat-color-btn" class="cat-pill-btn" type="button" aria-pressed="false">Color</button>
+          <button id="cat-color-btn" class="cat-pill-btn" type="button" aria-pressed="true">Color</button>
           <button id="catalog-close" class="help-close" type="button" aria-label="Close generations grid">×</button>
         </div>
       </header>
@@ -401,6 +406,7 @@
           <div><dt><span class="key">Space</span></dt><dd>Fold the whole house in one staggered wave and project onto the next sheet</dd></div>
           <div><dt><span class="key">F</span></dt><dd>Toggle staggered fold / unfold</dd></div>
           <div><dt><span class="key">A</span></dt><dd>Toggle automatic continuous folding loop</dd></div>
+          <div><dt><span class="key">M</span></dt><dd>Toggle layered ambient synth</dd></div>
           <div><dt><span class="key">G</span></dt><dd>Browse seeded generations grid and click any tile to fold</dd></div>
           <div><dt><span class="key">C</span></dt><dd>Explore an interactive Mediterranean paper mountain island; touch to fold houses & unveil roads</dd></div>
           <div><dt><span class="key">R</span></dt><dd>Reset to Layer 1 and default camera</dd></div>

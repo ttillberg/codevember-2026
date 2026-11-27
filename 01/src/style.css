@@ -301,6 +301,59 @@ body {
   flex-shrink: 0;
 }
 
+.sound-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: rgba(28, 28, 28, 0.48);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-right: -4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 140ms ease, background 140ms ease, transform 120ms ease;
+}
+
+.sound-btn:hover {
+  color: var(--ink);
+  background: rgba(28, 28, 28, 0.06);
+}
+
+.sound-btn:active {
+  transform: scale(0.92);
+}
+
+.sound-btn[aria-pressed='true'] {
+  color: var(--ink);
+}
+
+.sound-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sound-btn .sound-icon-on {
+  display: none;
+}
+
+.sound-btn[aria-pressed='true'] .sound-icon-off {
+  display: none;
+}
+
+.sound-btn[aria-pressed='true'] .sound-icon-on {
+  display: block;
+}
+
 .swatch-group {
   display: flex;
   align-items: center;

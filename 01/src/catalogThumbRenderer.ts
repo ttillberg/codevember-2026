@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import {
-  ARCHITECTURAL_PAPER_PALETTE,
   MM,
   buildHouseNet,
+  getColorSchemesForHouse,
   type BuiltHouseNet,
   type HouseNetSpec,
   type WindowOpenMode,
@@ -272,18 +272,10 @@ export class CatalogThumbRenderer {
 
     if (colorEnabled) {
       this.setBackdropHex(viewMode === 'flat' ? BACKDROP_FLAT_COLOR : BACKDROP_3D);
-      if (spec.topology === 'village') {
-        const baseIdx = Math.max(0, ARCHITECTURAL_PAPER_PALETTE.indexOf(spec.outsideColor));
-        const len = ARCHITECTURAL_PAPER_PALETTE.length;
-        materials.setOutsideColors([
-          ARCHITECTURAL_PAPER_PALETTE[baseIdx % len],
-          ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 2) % len],
-          ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 5) % len],
-          ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 3) % len],
-        ]);
-      } else {
-        materials.setOutsideColor(spec.outsideColor);
-      }
+      materials.setColorSchemes(
+        getColorSchemesForHouse(spec.outsideColor, spec.topology === 'village'),
+        Math.max(4.5, (spec.H + 22) * MM),
+      );
       materials.inside.color.set(viewMode === 'flat' ? spec.outsideColor : '#fbfaf7');
       materials.edge.color.set('#fbfaf7');
       hemi.color.set('#fffdf8');

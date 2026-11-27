@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  ARCHITECTURAL_COLOR_SCHEMES,
   ARCHITECTURAL_PAPER_PALETTE,
   buildHouseNet,
   type WindowOpenMode,
@@ -925,14 +926,14 @@ diffuseColor.a *= vis;`,
       this.plinthMat.color.set('#eae5da');
       this.trunkMat.color.set('#b8a995');
       this.treeMat.color.set('#7c9979');
-      const len = ARCHITECTURAL_PAPER_PALETTE.length;
+      const len = ARCHITECTURAL_COLOR_SCHEMES.length;
       for (let i = 0; i < this.matPool.length; i++) {
         const m = this.matPool[i];
-        m.setOutsideColors([
-          ARCHITECTURAL_PAPER_PALETTE[i % len],
-          ARCHITECTURAL_PAPER_PALETTE[(i + 2) % len],
-          ARCHITECTURAL_PAPER_PALETTE[(i + 5) % len],
-          ARCHITECTURAL_PAPER_PALETTE[(i + 3) % len],
+        m.setColorSchemes([
+          ARCHITECTURAL_COLOR_SCHEMES[i % len],
+          ARCHITECTURAL_COLOR_SCHEMES[(i + 2) % len],
+          ARCHITECTURAL_COLOR_SCHEMES[(i + 5) % len],
+          ARCHITECTURAL_COLOR_SCHEMES[(i + 3) % len],
         ]);
         m.inside.color.set('#fbfaf7');
         m.edge.color.set('#fbfaf7');

@@ -7,11 +7,11 @@ import {
   ALL_WINDOW_OPEN_MODES,
   ALL_WINDOW_OPENINGS,
   ALL_WINDOW_STYLES,
-  ARCHITECTURAL_PAPER_PALETTE,
   MM,
   MODEL_PRESETS,
   buildHouseNet,
   generateHouseSpec,
+  getColorSchemesForHouse,
   type BuildingLevels,
   type BuiltHouseNet,
   type DoorStyle,
@@ -48,6 +48,10 @@ import {
   fitFlatNetToSilhouetteNDC,
   sampleFoldedHouseSilhouetteNDC,
 } from './silhouetteMatch';
+import {
+  createFoldAmbientSynth,
+  type SoundtrackState,
+} from './soundtrack';
 
 const THUMB_SIZE = 240;
 
@@ -69,6 +73,7 @@ const helpClose = document.getElementById('help-close') as HTMLButtonElement;
 const btnAction = document.getElementById('btn-action') as HTMLButtonElement;
 const chkAuto = document.getElementById('chk-auto') as HTMLInputElement;
 const chkReverse = document.getElementById('chk-reverse') as HTMLInputElement;
+const btnSound = document.getElementById('btn-sound') as HTMLButtonElement;
 const statusEl = document.getElementById('status-label') as HTMLSpanElement;
 const btnDebug = document.getElementById('btn-debug') as HTMLButtonElement;
 const debugPanel = document.getElementById('debug-panel') as HTMLElement;
@@ -259,7 +264,7 @@ const FACTORY_SETTINGS: DebugSettings = {
   heightScale: null,
   consistency: null,
   seed: 0,
-  color: false,
+  color: true,
   spin: true,
   reverseFold: false,
   cameraTrick: 'balanced',
@@ -275,8 +280,8 @@ const FACTORY_SETTINGS: DebugSettings = {
   autoCurve2: DEFAULT_NEXT_FOLD_CURVE.curvePct,
   autoHandoff: DEFAULT_AUTO_FOLD_CURVE.handoffPct,
   cutoutDropDelay: 0.55,
-  shadowStrength: 100,
-  shadowBlur: 1.0,
+  shadowStrength: 165,
+  shadowBlur: 0.0,
   sunAzimuth: 62,
   sunElevation: 49,
 };
@@ -484,7 +489,29 @@ let mixConsistency: number | null =
   pConsistency !== null && Number.isFinite(Number(pConsistency))
     ? Math.max(0, Math.min(1, Number(pConsistency)))
     : initialSettings.consistency;
-let mixSeed = params.get('seed') !== null ? Math.max(0, Math.min(99999, Math.round(Number(params.get('seed')) || 0))) : initialSettings.seed;
+function pickRandomStartupSeed(): number {
+  return Math.floor(1 + Math.random() * 9998);
+}
+
+const hasSavedDebugSeed =
+  isDebugMode &&
+  (() => {
+    try {
+      const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as Partial<DebugSettings>;
+      return typeof parsed.seed === 'number' && Number.isFinite(parsed.seed);
+    } catch {
+      return false;
+    }
+  })();
+
+let mixSeed =
+  params.get('seed') !== null
+    ? Math.max(0, Math.min(99999, Math.round(Number(params.get('seed')) || 0)))
+    : hasSavedDebugSeed
+      ? initialSettings.seed
+      : pickRandomStartupSeed();
 let debugColorEnabled =
   params.get('color') !== null ? params.get('color') !== '0' : initialSettings.color;
 let debugSpinEnabled =
@@ -622,6 +649,60 @@ function getMixCacheKey(): string {
 
 function getAutoHandoffSec(): number {
   return FOLD_HOUSE_SEC * (autoHandoff / 100);
+}
+
+const soundtrack = createFoldAmbientSynth();
+let soundWanted = params.get('sound') !== '0' && !params.has('mute');
+let soundPausedByBlur = false;
+
+function setSoundEnabled(next: boolean, fromBlurPause = false): Promise<boolean> {
+  if (!fromBlurPause) {
+    soundWanted = Boolean(next);
+    soundPausedByBlur = false;
+  }
+  btnSound.setAttribute('aria-pressed', next ? 'true' : 'false');
+  return soundtrack.setEnabled(next).then((active) => {
+    btnSound.setAttribute('aria-pressed', active ? 'true' : 'false');
+    return active;
+  });
+}
+
+function handleWindowBlurMute(): void {
+  if (!soundtrack.getState().enabled) return;
+  soundPausedByBlur = true;
+  void setSoundEnabled(false, true);
+}
+
+function handleWindowFocusResume(): void {
+  if (document.hidden) return;
+  if (soundWanted && soundPausedByBlur) {
+    soundPausedByBlur = false;
+    void setSoundEnabled(true, true);
+  }
+}
+
+window.addEventListener('blur', handleWindowBlurMute);
+window.addEventListener('focus', handleWindowFocusResume);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) handleWindowBlurMute();
+  else handleWindowFocusResume();
+});
+
+// Unlock Web Audio smoothly on the very first user gesture if autoplay was deferred by browser policy
+const unlockAudioOnGesture = (e: Event) => {
+  const target = e.target as Node | null;
+  if (target && btnSound.contains(target)) return;
+  if (soundWanted && !soundPausedByBlur && !document.hidden) {
+    soundtrack.resumeIfNeeded();
+  }
+};
+window.addEventListener('pointerdown', unlockAudioOnGesture, { capture: true, passive: true });
+window.addEventListener('keydown', unlockAudioOnGesture, { capture: true });
+
+if (soundWanted && !document.hidden) {
+  void setSoundEnabled(true);
+} else {
+  btnSound.setAttribute('aria-pressed', 'false');
 }
 
 function formatHandoffTag(pct: number): string {
@@ -848,7 +929,7 @@ renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.02;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 
 // Seamless white-on-white studio backdrop & fog matched to lit horizontal white paper luminance!
 const BACKDROP = '#f5f4f0';
@@ -898,13 +979,17 @@ const underFill = new THREE.DirectionalLight('#fbfaf6', 0.44);
 underFill.position.copy(UNDER_FILL_BASE_POS);
 scene.add(underFill);
 
-// Build TWO ping-pong duplex paper material sets sharing ONE single procedural washi fiber texture pair!
+// Build THREE ring-buffer duplex paper material sets sharing ONE single procedural washi fiber texture pair!
+// Allows active house + pre-calculated Reverse next house + 1-step Reverse lookahead (zero pop through windows!)
+type MatSlotIdx = 0 | 1 | 2;
+const nextMatSlot = (idx: MatSlotIdx): MatSlotIdx => ((idx + 1) % 3) as MatSlotIdx;
 const sharedWashiTextures = createWashiFiberTextures(renderer.capabilities.getMaxAnisotropy());
-const materialsPool: [OrigamiMaterials, OrigamiMaterials] = [
+const materialsPool: [OrigamiMaterials, OrigamiMaterials, OrigamiMaterials] = [
+  createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy(), { sharedTextures: sharedWashiTextures }),
   createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy(), { sharedTextures: sharedWashiTextures }),
   createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy(), { sharedTextures: sharedWashiTextures }),
 ];
-let activeMatIdx: 0 | 1 = 0;
+let activeMatIdx: MatSlotIdx = 0;
 let materials: OrigamiMaterials = materialsPool[0];
 const tmpDrawSize = new THREE.Vector2();
 
@@ -1103,25 +1188,48 @@ function computeSlideViewShift(net: BuiltHouseNet): { yawDelta: number; targetPi
   return { yawDelta: yawSign * yawMag, targetPitch };
 }
 
-function computeIdealFraming(net: BuiltHouseNet): { dist: number; lookY: number; shadowExtent: number } {
+function computeIdealFraming(net: BuiltHouseNet): {
+  dist: number;
+  flatDist: number;
+  lookY: number;
+  shadowExtent: number;
+} {
   const sheetHalfW = net.sheetHalfMm * MM;
   const hWorld = net.foldedHeightMm * MM;
   const rWorld = net.foldedRadiusMm * MM;
   const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
-  const aspect = Math.max(0.65, Math.min(camera.aspect || 1.6, 1.38));
-  const tanH = tanV * aspect;
+  const rawAspect = camera.aspect > 0.1 ? camera.aspect : 1.6;
 
-  // Crisp, intimate architectural gallery framing (~34% screen height of the FOLDED 3D house) at ANY scale!
-  // Multi-house composites get generous width framing (`0.42`) so all wall-to-wall wings read clearly!
-  const widthFill = net.spec.topology === 'village' ? 0.42 : 0.33;
-  const distForHeight = hWorld / (0.34 * 2 * tanV);
+  // Smoothly transition from desktop gallery framing (`aspect >= 1.05`) to full width-matched portrait
+  // framing (`aspect <= 0.72`) so vertical/mobile screens zoom in ~2x to match viewport width minus padding!
+  const portraitT = clamp01((1.05 - rawAspect) / 0.33);
+  const portraitEase = portraitT * portraitT * (3 - 2 * portraitT);
+
+  const effAspect =
+    rawAspect < 1
+      ? Math.max(0.36, rawAspect)
+      : Math.min(rawAspect, 1.38);
+  const tanH = tanV * effAspect;
+
+  const baseWidthFill = net.spec.topology === 'village' ? 0.42 : 0.33;
+  const portraitWidthFill = net.spec.topology === 'village' ? 0.80 : 0.74;
+  const widthFill = baseWidthFill + (portraitWidthFill - baseWidthFill) * portraitEase;
+  const heightFill = 0.34 + (0.54 - 0.34) * portraitEase;
+  const minFloorDist = defaultDist + (16 - defaultDist) * portraitEase;
+
+  const distForHeight = hWorld / (heightFill * 2 * tanV);
   const distForWidth = rWorld / (widthFill * tanH);
-  const dist = Math.max(defaultDist, distForHeight, distForWidth);
+  const dist = Math.max(minFloorDist, distForHeight, distForWidth);
+
+  // Initial flat-sheet distance: keep `defaultDist` on desktop, match flat net width minus ~12% padding on portrait!
+  const portraitFlatDist = Math.max(dist, (sheetHalfW * 0.90) / (0.86 * tanH));
+  const flatDist = defaultDist + (portraitFlatDist - defaultDist) * portraitEase;
+
   const lookY = Math.max(BASE_LOOK_Y, (hWorld - 0.6) * 0.30);
   // Noon sun casts tight, short shadows (~0.32x height), allowing an even crisper shadow frustum!
   const shadowExtent = Math.max(14, sheetHalfW * 1.35, rWorld + hWorld * 0.90);
 
-  return { dist, lookY, shadowExtent };
+  return { dist, flatDist, lookY, shadowExtent };
 }
 
 function syncTurntableLights(viewYaw = curYaw, shadowExtent = curShadowExtent): void {
@@ -1218,7 +1326,7 @@ interface ReverseUnfoldState {
   nextGen: number;
   nextRig: OrigamiHouseRig;
   nextMats: OrigamiMaterials;
-  nextMatIdx: 0 | 1;
+  nextMatIdx: MatSlotIdx;
   targetRT: THREE.WebGLRenderTarget;
   startYaw: number;
   startPitch: number;
@@ -1236,6 +1344,8 @@ interface ReverseUnfoldState {
   landLookY: number;
   landLookZ: number;
   landShadowExtent: number;
+  landCoverage: number;
+  landBaseline: number;
   destYaw: number;
   destPitch: number;
   destRoll: number;
@@ -1252,7 +1362,12 @@ let generation = 1;
 let rig: OrigamiHouseRig;
 let outgoing: OutgoingLiveHouse | null = null;
 let reverseUnfold: ReverseUnfoldState | null = null;
-let preparedNext: { generation: number; mixKey: string; matIdx: 0 | 1; rig: OrigamiHouseRig } | null = null;
+/** Pre-calculated Reverse target (House B) ALREADY projected onto active House A's interior before unfolding! */
+let pendingReverse: ReverseUnfoldState | null = null;
+/** 1-step Reverse lookahead (House C) ALREADY projected onto House B so House A -> House B swap has 0 window pop! */
+let queuedReverse: ReverseUnfoldState | null = null;
+let reverseLookaheadDirty = false;
+let preparedNext: { generation: number; mixKey: string; matIdx: MatSlotIdx; rig: OrigamiHouseRig } | null = null;
 let prepareTimerId: number | null = null;
 const panelState = new Map<FoldablePanelId, PanelState>();
 let hoveredPanel: FoldablePanelId | null = null;
@@ -1269,11 +1384,21 @@ function clearOutgoing(): void {
   outgoing = null;
 }
 
+function disposeReverseEntry(entry: ReverseUnfoldState | null): void {
+  if (!entry) return;
+  scene.remove(entry.nextRig.root);
+  entry.nextRig.dispose();
+  entry.nextMats.setProjection(null);
+}
+
 function clearReverseUnfold(): void {
-  if (!reverseUnfold) return;
-  scene.remove(reverseUnfold.nextRig.root);
-  reverseUnfold.nextRig.dispose();
+  disposeReverseEntry(reverseUnfold);
   reverseUnfold = null;
+  disposeReverseEntry(pendingReverse);
+  pendingReverse = null;
+  disposeReverseEntry(queuedReverse);
+  queuedReverse = null;
+  reverseLookaheadDirty = false;
 }
 
 function clearPreparedNext(): void {
@@ -1289,11 +1414,11 @@ function clearPreparedNext(): void {
 
 /**
  * Pre-build the next generation's complete flat-net + cutout + punched window chad rig ahead of time
- * using the INACTIVE ping-pong material slot so live overlap handoffs stay 100% hitch-free!
+ * using the INACTIVE ring-buffer material slot so live overlap handoffs stay 100% hitch-free!
  */
 function prepareNextGenerationNow(gen: number): OrigamiHouseRig {
   const mixKey = getMixCacheKey();
-  const nextMatIdx: 0 | 1 = activeMatIdx === 0 ? 1 : 0;
+  const nextMatIdx: MatSlotIdx = nextMatSlot(activeMatIdx);
   if (
     preparedNext &&
     preparedNext.generation === gen &&
@@ -1311,8 +1436,9 @@ function prepareNextGenerationNow(gen: number): OrigamiHouseRig {
 }
 
 function schedulePrepareNext(gen: number, delayMs = 90): void {
+  if (debugReverseFoldEnabled) return;
   const mixKey = getMixCacheKey();
-  const nextMatIdx: 0 | 1 = activeMatIdx === 0 ? 1 : 0;
+  const nextMatIdx: MatSlotIdx = nextMatSlot(activeMatIdx);
   if (
     preparedNext &&
     preparedNext.generation === gen &&
@@ -1335,18 +1461,11 @@ function schedulePrepareNext(gen: number, delayMs = 90): void {
 
 function applyPaperColorsTo(mats: OrigamiMaterials, targetRig: OrigamiHouseRig): void {
   if (debugColorEnabled) {
-    if (targetRig.net.spec.topology === 'village') {
-      const baseIdx = Math.max(0, ARCHITECTURAL_PAPER_PALETTE.indexOf(targetRig.net.spec.outsideColor));
-      const len = ARCHITECTURAL_PAPER_PALETTE.length;
-      mats.setOutsideColors([
-        ARCHITECTURAL_PAPER_PALETTE[baseIdx % len],
-        ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 2) % len],
-        ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 5) % len],
-        ARCHITECTURAL_PAPER_PALETTE[(baseIdx + 3) % len],
-      ]);
-    } else {
-      mats.setOutsideColor(targetRig.net.spec.outsideColor);
-    }
+    const schemes = getColorSchemesForHouse(
+      targetRig.net.spec.outsideColor,
+      targetRig.net.spec.topology === 'village',
+    );
+    mats.setColorSchemes(schemes, targetRig.net.foldedHeightMm * MM);
     mats.edge.color.set('#fbfaf7');
     mats.projUniforms.uProjGain.value = 1.0;
   } else {
@@ -1356,7 +1475,7 @@ function applyPaperColorsTo(mats: OrigamiMaterials, targetRig: OrigamiHouseRig):
   }
 }
 
-function applyActiveOutsideColor(includeOutgoing = true): void {
+function applyActiveOutsideColor(includeOutgoing = true, refreshReverse = true): void {
   if (!rig) return;
   applyPaperColorsTo(materials, rig);
   if (includeOutgoing && outgoing) {
@@ -1369,6 +1488,8 @@ function applyActiveOutsideColor(includeOutgoing = true): void {
   const baseHemi = debugColorEnabled ? 1.50 : 1.78;
   const baseSun = debugColorEnabled ? 1.18 : 2.05;
   const baseFill = debugColorEnabled ? 0.24 : 0.28;
+  const baseUnderFill = 0.44;
+  const baseEnv = 0.08;
   const sNorm = Math.max(0, Math.min(2, shadowStrength / 100));
 
   if (debugColorEnabled) {
@@ -1386,20 +1507,31 @@ function applyActiveOutsideColor(includeOutgoing = true): void {
   }
 
   // Shadow strength (`0..200%`):
-  //   0..100%: smoothly scales Three.js `shadow.intensity` while preserving exact studio lighting balance.
-  // 100..200%: shifts ambient fill into directional key light to carve deeper shadows without blowing out bright paper!
+  //   0..100%: smoothly scales Three.js `shadow.intensity` while preserving classic white-on-white gallery lighting.
+  // 100..200%: drains ambient, fill, under-bounce & IBL all the way to pitch-black ink shadows at 200%
+  //            while rebalancing directional sun so lit horizontal paper stays crisp `#f5f4f0` white!
   sun.castShadow = sNorm > 0.005;
   sun.shadow.intensity = Math.min(1, sNorm);
   sun.shadow.radius = shadowBlur;
 
   if (sNorm > 1) {
     const boost = sNorm - 1;
-    hemi.intensity = baseHemi * (1 - boost * 0.52);
-    fill.intensity = baseFill * (1 - boost * 0.65);
-    sun.intensity = baseSun + (baseHemi * boost * 0.52) / Math.max(0.35, sunDirActive.y);
+    hemi.intensity = baseHemi * (1 - boost * 0.996);
+    fill.intensity = baseFill * (1 - boost);
+    underFill.intensity = baseUnderFill * (1 - boost);
+    scene.environmentIntensity = baseEnv * (1 - boost);
+    if (boost > 0.001) {
+      hemi.groundColor.lerp(new THREE.Color('#000000'), boost);
+    }
+    const removedHemi = baseHemi - hemi.intensity;
+    const removedFill = (baseFill - fill.intensity) * 0.46;
+    const removedEnv = (baseEnv - scene.environmentIntensity) * Math.PI;
+    sun.intensity = baseSun + (removedHemi + removedFill + removedEnv) / Math.max(0.35, sunDirActive.y);
   } else {
     hemi.intensity = baseHemi;
     fill.intensity = baseFill;
+    underFill.intensity = baseUnderFill;
+    scene.environmentIntensity = baseEnv;
     sun.intensity = baseSun;
   }
 
@@ -1413,14 +1545,25 @@ function applyActiveOutsideColor(includeOutgoing = true): void {
   if (includeOutgoing && outgoing) {
     outgoing.mats.projUniforms.uProjGain.value = calibratedGain;
   }
-  if (reverseUnfold) {
-    applyPaperColorsTo(reverseUnfold.nextMats, reverseUnfold.nextRig);
-    reverseUnfold.nextMats.projUniforms.uProjGain.value = calibratedGain;
-    captureReverseTarget(reverseUnfold);
+  if (refreshReverse && (reverseUnfold || pendingReverse || queuedReverse)) {
+    const syncEntry = (entry: ReverseUnfoldState | null) => {
+      if (!entry) return;
+      applyPaperColorsTo(entry.nextMats, entry.nextRig);
+      entry.nextMats.projUniforms.uProjGain.value = calibratedGain;
+    };
+    syncEntry(queuedReverse);
+    syncEntry(pendingReverse);
+    syncEntry(reverseUnfold);
+    refreshReverseCaptures();
   }
 }
 
-function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = false): void {
+function mountHouseGeneration(
+  gen: number,
+  fromSwap = false,
+  preservePrevRig = false,
+  startFolded = !fromSwap,
+): void {
   if (!preservePrevRig) {
     clearOutgoing();
     clearReverseUnfold();
@@ -1450,8 +1593,7 @@ function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = f
   const net = rig.net;
   scene.add(rig.root);
 
-  const startFolded = !fromSwap && debugReverseFoldEnabled;
-  const initFold = startFolded ? 1 : 0;
+  const initFold = !fromSwap && startFolded ? 1 : 0;
   panelState.clear();
   for (const id of rig.panelIds) {
     panelState.set(id, {
@@ -1516,7 +1658,7 @@ function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = f
     cutoutDropElapsed = 0;
     if (rig.hasCutout) rig.updateCutoutDrop(99);
 
-    swapDist = Math.max(defaultDist, ideal.dist);
+    swapDist = ideal.flatDist;
     swapLookX = 0;
     swapLookY = BASE_LOOK_Y;
     swapLookZ = 0;
@@ -1541,14 +1683,14 @@ function mountHouseGeneration(gen: number, fromSwap = false, preservePrevRig = f
     cutoutDropState = 'none';
     cutoutDropElapsed = 0;
 
-    swapDist = defaultDist;
+    swapDist = ideal.flatDist;
     swapLookX = 0;
     swapLookY = BASE_LOOK_Y;
     swapLookZ = 0;
     finalDist = ideal.dist;
     finalLookY = ideal.lookY;
     userZoomDelta = 0;
-    targetDist = curDist = defaultDist;
+    targetDist = curDist = ideal.flatDist;
     targetLookX = curLookX = 0;
     targetLookY = curLookY = BASE_LOOK_Y;
     targetLookZ = curLookZ = 0;
@@ -1608,8 +1750,8 @@ function ensureProjTargetsSized(): { tw: number; th: number } {
   }
   if (resized) {
     clearOutgoing();
-    if (reverseUnfold) {
-      captureReverseTarget(reverseUnfold);
+    if (reverseUnfold || pendingReverse || queuedReverse) {
+      refreshReverseCaptures();
     }
   }
   return { tw, th };
@@ -1628,7 +1770,7 @@ function warmupCutoutPipeline(): void {
   rig.root.updateMatrixWorld(true);
 
   const nextRig = prepareNextGenerationNow(generation + 1);
-  const nextMats = materialsPool[activeMatIdx === 0 ? 1 : 0];
+  const nextMats = materialsPool[nextMatSlot(activeMatIdx)];
   snapVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
 
   const prevToneMapping = renderer.toneMapping;
@@ -1816,8 +1958,8 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
   snapVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   activeRTIndex = nextIdx;
 
-  // Swap to the alternate ping-pong material slot (zero uniform or texture collision with `outgoing`!)
-  activeMatIdx = activeMatIdx === 0 ? 1 : 0;
+  // Swap to the next ring-buffer material slot (zero uniform or texture collision with `outgoing`!)
+  activeMatIdx = nextMatSlot(activeMatIdx);
   materials = materialsPool[activeMatIdx];
 
   // 4. INSTANT JIT SWAP: spawn House B flat + complementary cutout sheet reading `targetRT.texture`!
@@ -1831,19 +1973,23 @@ function projectAndSpawnUnderneath(trickMode: CameraTrickMode = 'off', keepOutgo
   syncUI();
 }
 
-function captureReverseTarget(rev: ReverseUnfoldState): void {
+function wrapAnglePi(delta: number): number {
+  return ((((delta + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) - Math.PI;
+}
+
+function captureReverseTarget(rev: ReverseUnfoldState, receiverMats: OrigamiMaterials): void {
   renderer.getDrawingBufferSize(tmpDrawSize);
   const tw = Math.max(2, Math.round(tmpDrawSize.x));
   const th = Math.max(2, Math.round(tmpDrawSize.y));
-  if (rev.targetRT.width !== tw || rev.targetRT.height !== th) {
-    rev.targetRT.dispose();
-    const idx = rtPool.indexOf(rev.targetRT);
-    const fresh = makeProjTarget(tw, th);
-    if (idx >= 0) rtPool[idx] = fresh;
-    rev.targetRT = fresh;
+  let rt = rtPool[rev.nextMatIdx];
+  if (rt.width !== tw || rt.height !== th) {
+    rt.dispose();
+    rt = makeProjTarget(tw, th);
+    rtPool[rev.nextMatIdx] = rt;
   }
+  rev.targetRT = rt;
 
-  // Render next folded 3D House B offscreen from `destCam` into `rev.targetRT` (NoToneMapping HalfFloat!)
+  // Render next folded 3D house offscreen from `destCam` into `rev.targetRT` (NoToneMapping HalfFloat!)
   const destCam = camera.clone();
   destCam.up.set(0, 1, 0);
   destCam.position.set(
@@ -1857,11 +2003,19 @@ function captureReverseTarget(rev: ReverseUnfoldState): void {
   destCam.updateMatrixWorld(true);
 
   const savedRigVis = rig.root.visible;
+  const savedUnfoldVis = reverseUnfold?.nextRig.root.visible ?? false;
+  const savedPendingVis = pendingReverse?.nextRig.root.visible ?? false;
+  const savedQueuedVis = queuedReverse?.nextRig.root.visible ?? false;
   const savedFogNear = studioFog.near;
   const savedFogFar = studioFog.far;
+
   rig.root.visible = false;
+  if (reverseUnfold) reverseUnfold.nextRig.root.visible = false;
+  if (pendingReverse) pendingReverse.nextRig.root.visible = false;
+  if (queuedReverse) queuedReverse.nextRig.root.visible = false;
   rev.nextRig.root.visible = true;
   rev.nextRig.root.updateMatrixWorld(true);
+
   studioFog.near = Math.max(44, rev.destDist * 1.25);
   studioFog.far = Math.max(120, rev.destDist * 3.15);
   syncTurntableLights(rev.destYaw, rev.destShadowExtent);
@@ -1876,11 +2030,14 @@ function captureReverseTarget(rev: ReverseUnfoldState): void {
 
   rev.nextRig.root.visible = false;
   rig.root.visible = savedRigVis;
+  if (reverseUnfold) reverseUnfold.nextRig.root.visible = savedUnfoldVis;
+  if (pendingReverse) pendingReverse.nextRig.root.visible = savedPendingVis;
+  if (queuedReverse) queuedReverse.nextRig.root.visible = savedQueuedVis;
   studioFog.near = savedFogNear;
   studioFog.far = savedFogFar;
   syncTurntableLights(curYaw, curShadowExtent);
 
-  // Compute exact landing VP matrix (`landCam`) onto House A's flat sheet (`aFlatPos`)!
+  // Compute exact landing VP matrix (`landCam`) onto the unfolding house's flat sheet (`aFlatPos`)!
   const landCam = camera.clone();
   landCam.up.set(0, 1, 0);
   landCam.position.set(
@@ -1895,40 +2052,40 @@ function captureReverseTarget(rev: ReverseUnfoldState): void {
 
   const projSide: 1 | -1 = landCam.position.y < 0 ? -1 : 1;
   snapVP.multiplyMatrices(landCam.projectionMatrix, landCam.matrixWorldInverse);
-  materials.setProjection(rev.targetRT.texture, snapVP, projSide);
+  receiverMats.setProjection(rev.targetRT.texture, snapVP, projSide);
+  receiverMats.setProjectionFade(1);
 }
 
 /**
- * Reverse (Unfold) optical illusion:
- * 1. Pre-builds & renders the NEXT 3D folded house (House B) offscreen into `targetRT`.
- * 2. Projects House B onto the INSIDE (`aFlatPos`) of currently folded 3D House A aimed at the
- *    exact camera pose `landCam` that will be reached when House A lays completely flat (`fold = 0`).
- * 3. Unfolds House A (`1 -> 0`) while its window chads & outer silhouette cutout fly back into place
- *    and lock seamlessly -> swaps at `fold = 0` with 0/255 pixel delta directly into real 3D House B!
+ * Re-captures active Reverse projection textures bottom-up (`House C -> House B`, then `House B -> House A`)
+ * so every window & interior wall stays 100% in sync with live lighting, shadow strength, color, and resize!
  */
-function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): void {
-  if (reverseUnfold) return;
-  clearOutgoing();
-
-  // Ensure active House A has its cutout & window chads built so it can reassemble cleanly on landing!
-  if (!rig.hasCutout) {
-    const curSpec = rig.net.spec;
-    const curNet = buildHouseNet(curSpec);
-    scene.remove(rig.root);
-    rig.dispose();
-    rig = buildOrigamiHouseRig(curNet, materials, true);
-    applyActiveOutsideColor(false);
-    rig.setWindowOpen(mixWinOpenMode, mixWinOpen);
-    scene.add(rig.root);
-    for (const id of rig.panelIds) {
-      const f = panelState.get(id)?.fold ?? 1;
-      rig.updatePanelVisual(id, f, 0, false);
-    }
-    rig.updateCutoutDrop(99);
+function refreshReverseCaptures(): void {
+  const activeTarget = reverseUnfold ?? pendingReverse;
+  if (!activeTarget) return;
+  if (queuedReverse) {
+    captureReverseTarget(queuedReverse, activeTarget.nextMats);
+  } else {
+    activeTarget.nextMats.setProjection(null);
   }
+  captureReverseTarget(activeTarget, materials);
+}
 
-  const nextGen = generation + 1;
-  const nextMatIdx: 0 | 1 = activeMatIdx === 0 ? 1 : 0;
+interface ReverseStartPose {
+  yaw: number;
+  pitch: number;
+  roll: number;
+  dist: number;
+  shadowExtent: number;
+}
+
+function buildReversePlan(
+  fromRig: OrigamiHouseRig,
+  fromGen: number,
+  fromPose: ReverseStartPose,
+  nextMatIdx: MatSlotIdx,
+): ReverseUnfoldState {
+  const nextGen = fromGen + 1;
   const nextMats = materialsPool[nextMatIdx];
   const mixKey = getMixCacheKey();
   let nextRig: OrigamiHouseRig;
@@ -1941,13 +2098,12 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
     nextRig = preparedNext.rig;
     preparedNext = null;
   } else {
-    clearPreparedNext();
     const spec = generateHouseSpec(nextGen, getCurrentMixOptions());
     const net = buildHouseNet(spec);
     nextRig = buildOrigamiHouseRig(net, nextMats, true);
   }
 
-  // Put House B into crisp folded 3D pose on the alternate material slot (hidden from main pass until swap!)
+  // Put next house into crisp folded 3D pose on its dedicated ring-buffer material slot (hidden until swap!)
   nextMats.setProjection(null);
   applyPaperColorsTo(nextMats, nextRig);
   nextMats.projUniforms.uProjGain.value = materials.projUniforms.uProjGain.value;
@@ -1964,19 +2120,19 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
   const totalSec = FOLD_HOUSE_SEC;
   const realSec = totalSec / Math.max(0.25, autoSpeed);
   const spinSpan = debugSpinEnabled ? AUTO_SPIN_RAD_PER_SEC * realSec : 0;
-  const idealA = computeIdealFraming(rig.net);
+  const idealA = computeIdealFraming(fromRig.net);
   const idealB = computeIdealFraming(nextRig.net);
 
   // Smooth landing camera for flat House A (`landPitch >= 0.34` guarantees 100% flat-sheet coverage of House B!)
   const baseLandYaw = debugGlideOnFoldEnabled
-    ? curYaw + spinSpan + (generation % 2 === 0 ? 0.58 : -0.58)
-    : curYaw + spinSpan;
+    ? fromPose.yaw + spinSpan + (fromGen % 2 === 0 ? 0.58 : -0.58)
+    : fromPose.yaw + spinSpan;
   const baseLandPitch = debugGlideOnFoldEnabled
-    ? Math.max(0.42, Math.min(1.08, 0.62 + ((generation * 7) % 3) * 0.14))
-    : Math.max(0.34, Math.min(1.42, curPitch));
-  const baseLandRoll = debugGlideOnFoldEnabled ? 0 : curRoll;
-  const baseLandDist = Math.max(defaultDist, curDist, idealA.dist * 0.96);
-  const landShadowExtent = Math.max(curShadowExtent, idealA.shadowExtent);
+    ? Math.max(0.42, Math.min(1.08, 0.62 + ((fromGen * 7) % 3) * 0.14))
+    : Math.max(0.34, Math.min(1.42, fromPose.pitch));
+  const baseLandRoll = debugGlideOnFoldEnabled ? 0 : fromPose.roll;
+  const baseLandDist = Math.max(idealA.flatDist, fromPose.dist, idealA.dist * 0.96);
+  const landShadowExtent = Math.max(fromPose.shadowExtent, idealA.shadowExtent);
 
   // Target 3D viewing camera for House B (`destCam`)
   let destYaw = baseLandYaw;
@@ -1992,8 +2148,7 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
     destRoll = jump.toRoll;
   }
 
-  // Fit flat House A's landing camera (`landDist`, `landLookX/Z`, subtle `landYaw`) directly to 3D House B's
-  // silhouette so House A's unfolding walls & roofs cover House B with minimal outer cutout!
+  // Fit flat House A's landing camera (`landDist`, `landYaw`) directly to 3D House B's silhouette!
   const sampleDestCam = camera.clone();
   sampleDestCam.up.set(0, 1, 0);
   sampleDestCam.position.set(
@@ -2017,7 +2172,7 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
     lookY: BASE_LOOK_Y,
     lookZ: 0,
   };
-  let landFit = fitFlatNetToSilhouetteNDC(silB, rig.net, baseLandPose, {
+  let landFit = fitFlatNetToSilhouetteNDC(silB, fromRig.net, baseLandPose, {
     fovDeg: camera.fov,
     aspect: camera.aspect,
     allowYawSearch: debugGlideOnFoldEnabled,
@@ -2030,7 +2185,7 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
   if (landFit.coverage < 0.98 && baseLandPitch < 0.82) {
     const steeperLand = fitFlatNetToSilhouetteNDC(
       silB,
-      rig.net,
+      fromRig.net,
       { ...baseLandPose, pitch: Math.min(1.08, Math.max(0.84, baseLandPitch + 0.24)) },
       {
         fovDeg: camera.fov,
@@ -2046,27 +2201,21 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
       landFit = steeperLand;
     }
   }
-  lastSilhouetteCoverage = landFit.coverage;
-  lastSilhouetteBaseline = landFit.baselineCoverage;
 
-  const nextRTIdx = (activeRTIndex + 1) % rtPool.length;
-  activeRTIndex = nextRTIdx;
-  const targetRT = rtPool[nextRTIdx];
-
-  reverseUnfold = {
+  return {
     nextGen,
     nextRig,
     nextMats,
     nextMatIdx,
-    targetRT,
-    startYaw: curYaw,
-    startPitch: curPitch,
-    startRoll: curRoll,
-    startDist: curDist,
-    startLookX: curLookX,
-    startLookY: curLookY,
-    startLookZ: curLookZ,
-    startShadowExtent: curShadowExtent,
+    targetRT: rtPool[nextMatIdx],
+    startYaw: fromPose.yaw,
+    startPitch: fromPose.pitch,
+    startRoll: fromPose.roll,
+    startDist: fromPose.dist,
+    startLookX: 0,
+    startLookY: idealA.lookY,
+    startLookZ: 0,
+    startShadowExtent: fromPose.shadowExtent,
     landYaw: landFit.yaw,
     landPitch: landFit.pitch,
     landRoll: landFit.roll,
@@ -2075,6 +2224,8 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
     landLookY: landFit.lookY,
     landLookZ: landFit.lookZ,
     landShadowExtent,
+    landCoverage: landFit.coverage,
+    landBaseline: landFit.baselineCoverage,
     destYaw,
     destPitch,
     destRoll,
@@ -2084,14 +2235,123 @@ function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): voi
     elapsedSec: 0,
     totalSec,
     swapReady: false,
-    holdBeforeSwap,
+    holdBeforeSwap: false,
   };
+}
 
-  captureReverseTarget(reverseUnfold);
-  materials.setProjectionFade(0);
+/**
+ * Pre-calculates the Reverse projection chain BEFORE the current house starts unfolding:
+ *  1. House C (`queuedReverse`) -> projected onto House B (`pendingReverse`)
+ *  2. House B (`pendingReverse`, WITH House C already printed inside!) -> projected onto active House A (`rig`)
+ * That way peeking through House A's windows already shows House B (zero pop on unfold start!),
+ * AND swapping House A -> House B has 0/255 pixel delta even inside House B's own windows!
+ */
+function prepareReverseChain(): void {
+  if (!debugReverseFoldEnabled || reverseUnfold || !rig) return;
+  ensureProjTargetsSized();
+
+  // Ensure active House A has its cutout & window chads built so it can reassemble cleanly on landing!
+  if (!rig.hasCutout) {
+    const curSpec = rig.net.spec;
+    const curNet = buildHouseNet(curSpec);
+    scene.remove(rig.root);
+    rig.dispose();
+    rig = buildOrigamiHouseRig(curNet, materials, true);
+    applyActiveOutsideColor(false, false);
+    rig.setWindowOpen(mixWinOpenMode, mixWinOpen);
+    scene.add(rig.root);
+    for (const id of rig.panelIds) {
+      const f = panelState.get(id)?.fold ?? 1;
+      rig.updatePanelVisual(id, f, 0, false);
+    }
+    rig.setFoldLinesVisible(false);
+    rig.setPaperRelief(curPaperRelief);
+    rig.updateCutoutDrop(99);
+  }
+
+  let builtAny = false;
+  if (!pendingReverse) {
+    const matB = nextMatSlot(activeMatIdx);
+    pendingReverse = buildReversePlan(
+      rig,
+      generation,
+      {
+        yaw: curYaw,
+        pitch: curPitch,
+        roll: curRoll,
+        dist: curDist,
+        shadowExtent: curShadowExtent,
+      },
+      matB,
+    );
+    builtAny = true;
+  }
+
+  if (!queuedReverse) {
+    const matC = nextMatSlot(pendingReverse.nextMatIdx);
+    queuedReverse = buildReversePlan(
+      pendingReverse.nextRig,
+      pendingReverse.nextGen,
+      {
+        yaw: pendingReverse.destYaw,
+        pitch: pendingReverse.destPitch,
+        roll: pendingReverse.destRoll,
+        dist: pendingReverse.destDist,
+        shadowExtent: pendingReverse.destShadowExtent,
+      },
+      matC,
+    );
+    builtAny = true;
+  }
+
+  if (builtAny || reverseLookaheadDirty) {
+    refreshReverseCaptures();
+    reverseLookaheadDirty = false;
+  }
+}
+
+/**
+ * Reverse (Unfold) optical illusion:
+ * Activates the ALREADY pre-calculated `pendingReverse` (whose projection is already sitting on
+ * House A's interior walls with zero pop!), smoothly unfolds House A (`1 -> 0`) onto `landCam`,
+ * and swaps seamlessly at `fold = 0` with 0/255 pixel delta directly into real 3D House B!
+ */
+function startReverseUnfold(continuousAuto = false, holdBeforeSwap = false): void {
+  if (reverseUnfold) return;
+  clearOutgoing();
+
+  if (!pendingReverse || !queuedReverse || reverseLookaheadDirty) {
+    prepareReverseChain();
+  }
+  const rev = pendingReverse;
+  if (!rev) return;
+  pendingReverse = null;
+
+  // Snapshot live camera pose (in case the user orbited or turntable spun before clicking Unfold)
+  // and wrap `landYaw` by 2π to the nearest equivalent angle to `curYaw` (exact same `snapVP`!).
+  rev.startYaw = curYaw;
+  rev.startPitch = curPitch;
+  rev.startRoll = curRoll;
+  rev.startDist = curDist;
+  rev.startLookX = curLookX;
+  rev.startLookY = curLookY;
+  rev.startLookZ = curLookZ;
+  rev.startShadowExtent = curShadowExtent;
+  rev.landYaw = curYaw + wrapAnglePi(rev.landYaw - curYaw);
+  rev.elapsedSec = 0;
+  rev.totalSec = FOLD_HOUSE_SEC;
+  rev.swapReady = false;
+  rev.holdBeforeSwap = holdBeforeSwap;
+
+  lastSilhouetteCoverage = rev.landCoverage;
+  lastSilhouetteBaseline = rev.landBaseline;
+  reverseUnfold = rev;
+
+  materials.setProjectionFade(1);
   rig.setFoldLinesVisible(true);
-  rig.updateCutoutReassemble(totalSec, Math.min(0.32, cutoutDropDelay * 0.5));
-  launchStaggeredFold(0, 0, totalSec);
+  rig.updateCutoutReassemble(rev.totalSec, Math.min(0.32, cutoutDropDelay * 0.5));
+  launchStaggeredFold(0, 0, rev.totalSec);
+  soundtrack.triggerFoldLayer(rev.nextGen, true, rev.totalSec / Math.max(0.25, autoSpeed));
 
   if (continuousAuto) {
     autoBeatElapsed = 0;
@@ -2105,17 +2365,23 @@ function completeReverseUnfoldSwap(): void {
   if (!rev) return;
   reverseUnfold = null;
 
-  // Dispose old flat House A and seamlessly promote real 3D House B (0/255 pixel delta!)
+  // Dispose old flat House A and seamlessly promote real 3D House B (0/255 pixel delta, even through windows!)
   scene.remove(rig.root);
   rig.dispose();
+  materials.setProjection(null);
 
   activeMatIdx = rev.nextMatIdx;
   materials = rev.nextMats;
-  materials.setProjection(null);
+  // KEEP `materials` pre-calculated projection (House C) already baked on House B's interior — zero window pop!
   rig = rev.nextRig;
   rig.root.visible = true;
   generation = rev.nextGen;
   justProjected = false;
+
+  // Advance 1-step lookahead (`queuedReverse` House C -> becomes `pendingReverse` for the next unfold!)
+  pendingReverse = queuedReverse;
+  queuedReverse = null;
+  reverseLookaheadDirty = true;
 
   panelState.clear();
   for (const id of rig.panelIds) {
@@ -2141,7 +2407,7 @@ function completeReverseUnfoldSwap(): void {
   curYaw = targetYaw = rev.destYaw;
   curPitch = targetPitch = rev.destPitch;
   curRoll = targetRoll = rev.destRoll;
-  swapDist = Math.max(defaultDist, rev.destDist);
+  swapDist = computeIdealFraming(rig.net).flatDist;
   swapLookX = 0;
   swapLookY = BASE_LOOK_Y;
   swapLookZ = 0;
@@ -2151,18 +2417,14 @@ function completeReverseUnfoldSwap(): void {
   curLookZ = targetLookZ = 0;
   curShadowExtent = swapShadowExtent = finalShadowExtent = rev.destShadowExtent;
   userZoomDelta = 0;
-  applyActiveOutsideColor(false);
+  applyActiveOutsideColor(false, false);
   syncCameraFromOrbit();
 
-  schedulePrepareNext(generation + 1, 80);
   syncUI();
 
   if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
     autoBeatElapsed = 0;
     autoBeatRunning = true;
-    if (autoHandoff <= 100) {
-      startReverseUnfold(true);
-    }
   }
 }
 
@@ -2586,7 +2848,12 @@ function resetAll(): void {
   targetPitch = curPitch = defaultPitch;
   targetRoll = curRoll = 0;
   mountHouseGeneration(1, false);
-  schedulePrepareNext(2, 120);
+  syncCameraFromOrbit();
+  if (debugReverseFoldEnabled) {
+    prepareReverseChain();
+  } else {
+    schedulePrepareNext(2, 120);
+  }
   syncUI();
 }
 
@@ -2603,7 +2870,11 @@ function setReverseMode(enabled: boolean, persist = true): void {
   materials.setProjection(null);
   mountHouseGeneration(generation, false);
   syncCameraFromOrbit();
-  schedulePrepareNext(generation + 1, 80);
+  if (debugReverseFoldEnabled) {
+    prepareReverseChain();
+  } else {
+    schedulePrepareNext(generation + 1, 80);
+  }
   syncDebugControls();
   if (persist) saveDebugSettings();
   syncUI();
@@ -2676,6 +2947,7 @@ function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
     projectAndSpawnUnderneath(debugCameraTrick, true);
     triggerCutoutDrop();
     launchStaggeredFold(1, leadSec, houseDur);
+    soundtrack.triggerFoldLayer(generation, false, houseDur / Math.max(0.25, autoSpeed));
     if (continuousAuto) {
       autoBeatElapsed = phaseCarrySec;
       autoBeatRunning = true;
@@ -2686,6 +2958,7 @@ function triggerStepAction(continuousAuto = false, phaseCarrySec = 0): void {
     const lead = cutoutDropState === 'waiting' ? leadSec : 0;
     if (cutoutDropState === 'waiting') triggerCutoutDrop();
     launchStaggeredFold(1, lead, houseDur);
+    soundtrack.triggerFoldLayer(generation, false, houseDur / Math.max(0.25, autoSpeed));
     if (continuousAuto) {
       autoBeatElapsed = phaseCarrySec;
       autoBeatRunning = true;
@@ -2925,27 +3198,36 @@ chkReverse.addEventListener('change', () => {
   }
 });
 
+btnSound.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const next = btnSound.getAttribute('aria-pressed') !== 'true';
+  void setSoundEnabled(next);
+});
+
 function remountWithCurrentMix(persist = true): void {
   syncDebugControls();
   if (persist) saveDebugSettings();
   const wasFolded = computeFoldProgress() > 0.5;
+  const savedZoomDelta = userZoomDelta;
   clearPreparedNext();
   justProjected = false;
   materials.setProjection(null);
-  mountHouseGeneration(generation, false);
-  if (wasFolded) {
-    applyFoldScrub(1, true);
-    const z = computeAutoZoom(1);
-    const { minDist, maxDist } = getZoomBounds();
-    targetDist = curDist = Math.max(minDist, Math.min(maxDist, z.autoDist + userZoomDelta));
-    targetLookX = curLookX = z.autoLookX;
-    targetLookY = curLookY = z.autoLookY;
-    targetLookZ = curLookZ = z.autoLookZ;
-    curShadowExtent = z.shadowExtent;
-    applyShadowFrustum(curShadowExtent);
-  }
+  mountHouseGeneration(generation, false, false, wasFolded);
+  userZoomDelta = savedZoomDelta;
+  const z = computeAutoZoom(wasFolded ? 1 : 0);
+  const { minDist, maxDist } = getZoomBounds();
+  targetDist = curDist = Math.max(minDist, Math.min(maxDist, z.autoDist + userZoomDelta));
+  targetLookX = curLookX = z.autoLookX;
+  targetLookY = curLookY = z.autoLookY;
+  targetLookZ = curLookZ = z.autoLookZ;
+  curShadowExtent = z.shadowExtent;
+  applyShadowFrustum(curShadowExtent);
   syncCameraFromOrbit();
-  schedulePrepareNext(generation + 1, 80);
+  if (debugReverseFoldEnabled) {
+    prepareReverseChain();
+  } else {
+    schedulePrepareNext(generation + 1, 80);
+  }
   syncUI();
   if (!catalogModal.hidden) rebuildCatalogGrid(false);
 }
@@ -3176,7 +3458,7 @@ function selectCatalogSpecimen(tileId: string, gen: number, opts: HouseMixOption
   targetYaw = curYaw = defaultYaw;
   targetPitch = curPitch = defaultPitch;
   targetRoll = curRoll = 0;
-  mountHouseGeneration(generation, false);
+  mountHouseGeneration(generation, false, false, false);
   syncCameraFromOrbit();
   syncUI();
   launchStaggeredFold(1);
@@ -3930,7 +4212,10 @@ window.addEventListener('keydown', (e) => {
         cv.setCityFold(allFolded ? 0 : 1, false);
         updateCityHud(cv.getStats());
       });
-    } else if (e.key === 'r' || e.key === 'R') {
+    } else if (e.key === 'm' || e.key === 'M') {
+    const next = btnSound.getAttribute('aria-pressed') !== 'true';
+    void setSoundEnabled(next);
+  } else if (e.key === 'r' || e.key === 'R') {
       e.preventDefault();
       withCityView((cv) => {
         cv.setCityFold(0, false);
@@ -3953,6 +4238,9 @@ window.addEventListener('keydown', (e) => {
     if (autoFoldEnabled && (!allPanelsFoldedTarget() || allPanelsSettledFolded())) {
       triggerStepAction(true);
     }
+  } else if (e.key === 'm' || e.key === 'M') {
+    const next = btnSound.getAttribute('aria-pressed') !== 'true';
+    void setSoundEnabled(next);
   } else if (e.key === 'r' || e.key === 'R') {
     resetAll();
   } else if ((e.key === 'd' || e.key === 'D') && isDebugMode) {
@@ -3975,6 +4263,18 @@ function resize(): void {
     finalDist = ideal.dist;
     finalLookY = ideal.lookY;
     finalShadowExtent = ideal.shadowExtent;
+    if (!justProjected && !reverseUnfold) {
+      const fp = computeFoldProgress();
+      if (fp <= 0.02) {
+        swapDist = targetDist = curDist = ideal.flatDist;
+      } else if (fp >= 0.98) {
+        swapDist = ideal.flatDist;
+        targetDist = curDist = ideal.dist + userZoomDelta;
+        targetLookY = curLookY = ideal.lookY;
+        curShadowExtent = swapShadowExtent = finalShadowExtent = ideal.shadowExtent;
+        applyShadowFrustum(curShadowExtent);
+      }
+    }
   }
   if (resizeTargetTimer !== null) window.clearTimeout(resizeTargetTimer);
   resizeTargetTimer = window.setTimeout(() => {
@@ -3996,6 +4296,9 @@ if (params.has('fold')) {
 }
 syncCameraFromOrbit();
 warmupCutoutPipeline();
+if (debugReverseFoldEnabled) {
+  prepareReverseChain();
+}
 syncUI();
 if (isDebugMode && params.has('city')) {
   setCityOpen(true, !params.has('instant'));
@@ -4035,6 +4338,8 @@ if (isDebugMode && params.has('city')) {
       setGlideOnFold: (enabled: boolean) => void;
       setFadePrint: (enabled: boolean) => void;
       setAuto: (enabled: boolean) => void;
+      setSound: (enabled: boolean) => Promise<boolean>;
+      soundInfo: () => SoundtrackState;
       setAutoCurve: (opts: {
         speed?: number;
         inPct?: number;
@@ -4270,6 +4575,12 @@ if (isDebugMode && params.has('city')) {
       }
     }
   },
+  setSound(enabled: boolean) {
+    return setSoundEnabled(Boolean(enabled));
+  },
+  soundInfo() {
+    return soundtrack.getState();
+  },
   setAutoCurve(opts: {
     speed?: number;
     inPct?: number;
@@ -4470,6 +4781,12 @@ function animate(now: number): void {
   updateCurvePlayhead(activeAnimMaxU, anyPanelAnimating, generation, outgoingPlayheadU, outgoing ? outgoing.generation : null);
 
   const foldProg = computeFoldProgress();
+  soundtrack.update();
+
+  // Quietly fill the 1-step Reverse lookahead AFTER the exact 0/255 swap frame has rendered!
+  if (debugReverseFoldEnabled && !reverseUnfold && reverseLookaheadDirty) {
+    prepareReverseChain();
+  }
 
   // ---- Reverse (Unfold) Mode Frame Update: smooth unfold + chad/cutout reassembly + pixel-exact swap! ----
   if (reverseUnfold) {
@@ -4482,8 +4799,8 @@ function animate(now: number): void {
     reverseUnfold.elapsedSec += foldDt;
     const uUnfold = clamp01(reverseUnfold.elapsedSec / Math.max(0.05, reverseUnfold.totalSec));
     const camEase = uUnfold * uUnfold * (3 - 2 * uUnfold);
-    const fadeInU = clamp01(reverseUnfold.elapsedSec / Math.max(0.18, reverseUnfold.totalSec * 0.14));
-    materials.setProjectionFade(fadeInU * fadeInU * (3 - 2 * fadeInU));
+    // Next house was pre-calculated onto the interior before unfolding — zero fade-in pop!
+    materials.setProjectionFade(1);
 
     // Smoothly melt blank outer corners into `#f5f4f0` as walls lay flat (`foldProg: 0.88 -> 0.42`)
     const relU = clamp01((foldProg - 0.42) / 0.46);
@@ -4569,7 +4886,7 @@ function animate(now: number): void {
     return;
   }
 
-  materials.setProjectionFade(computeProjectionFade(foldProg));
+  materials.setProjectionFade(debugReverseFoldEnabled ? 1 : computeProjectionFade(foldProg));
 
   // 2. Animate outer paper cutout (per Cutout delay timer) & per-wall window chads (released when each wall moves!)
   if (rig.hasCutout && (cutoutDropState === 'falling' || (cutoutDropState === 'waiting' && anyPanelAnimating))) {
@@ -4644,6 +4961,7 @@ function animate(now: number): void {
   const handoffSec = getAutoHandoffSec();
   if (
     autoFoldEnabled &&
+    !debugReverseFoldEnabled &&
     (foldProg > 0.18 || autoBeatElapsed > handoffSec * 0.42) &&
     (!preparedNext || preparedNext.generation !== generation + 1)
   ) {

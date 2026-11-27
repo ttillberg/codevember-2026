@@ -21,7 +21,7 @@ export interface FoldCurveShape {
 export interface AutoFoldCurveParams extends FoldCurveShape {
   /** Overall auto-fold speed multiplier (`0.25..3.0`, default `1.0`) */
   speed: number;
-  /** Next-fold trigger timing as % of House 1's fold duration (`35..140`, default `99`) */
+  /** Next-fold trigger timing as % of House 1's fold duration (`35..140`, default `60`) */
   handoffPct: number;
 }
 
@@ -30,7 +30,7 @@ export const DEFAULT_AUTO_FOLD_CURVE: Readonly<AutoFoldCurveParams> = {
   inPct: 40,
   outPct: 40,
   curvePct: 75,
-  handoffPct: 85,
+  handoffPct: 60,
 };
 
 export const DEFAULT_NEXT_FOLD_CURVE: Readonly<FoldCurveShape> = {

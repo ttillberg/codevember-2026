@@ -203,6 +203,46 @@ export const ARCHITECTURAL_PAPER_PALETTE: readonly string[] = [
   '#bbb4a7', // 8. Dove stone
 ];
 
+export interface ArchitecturalColorScheme {
+  wall: string;
+  roof: string;
+  window: string;
+  door: string;
+}
+
+/**
+ * Curated 4-part matte paper architectural color schemes (walls, roof, window panes/shutters, doors/awnings),
+ * paired 1:1 with `ARCHITECTURAL_PAPER_PALETTE` so every architectural element reads separately in Color mode.
+ */
+export const ARCHITECTURAL_COLOR_SCHEMES: readonly ArchitecturalColorScheme[] = [
+  { wall: '#9bb7cc', roof: '#c47c67', window: '#ebe5d8', door: '#3b536b' }, // 1. Powder blue + terracotta roof + ivory sashes + Prussian door
+  { wall: '#d8a49c', roof: '#6f7b87', window: '#f0eadf', door: '#4f6e62' }, // 2. Dusty rose + Parisian zinc roof + parchment sashes + pine door
+  { wall: '#9bb69f', roof: '#be7d65', window: '#eee8dc', door: '#b88848' }, // 3. Sage celadon + burnt clay roof + linen sashes + ochre door
+  { wall: '#dcc08a', roof: '#b96c59', window: '#5c7c77', door: '#6e433c' }, // 4. Butter ochre + sienna roof + teal shutters + walnut door
+  { wall: '#baa6c4', roof: '#5e6a7c', window: '#efe9de', door: '#c48f65' }, // 5. Misty lilac + blueberry slate roof + alabaster sashes + caramel door
+  { wall: '#dbb094', roof: '#7b8b7b', window: '#4e6a82', door: '#8e483c' }, // 6. Apricot peach + patina moss roof + indigo shutters + rust door
+  { wall: '#93b8b4', roof: '#c88b68', window: '#f1ebe0', door: '#7c5360' }, // 7. Seafoam slate + sandstone roof + shell sashes + dusty fig door
+  { wall: '#bbb4a7', roof: '#647687', window: '#5a7360', door: '#bc6a56' }, // 8. Dove stone + steel slate roof + sage shutters + coral door
+];
+
+export function getColorSchemesForHouse(
+  outsideColor: string,
+  isVillage: boolean,
+): ArchitecturalColorScheme[] {
+  const idx = Math.max(0, ARCHITECTURAL_PAPER_PALETTE.indexOf(outsideColor));
+  const len = ARCHITECTURAL_COLOR_SCHEMES.length;
+  if (isVillage) {
+    return [
+      ARCHITECTURAL_COLOR_SCHEMES[idx % len],
+      ARCHITECTURAL_COLOR_SCHEMES[(idx + 2) % len],
+      ARCHITECTURAL_COLOR_SCHEMES[(idx + 5) % len],
+      ARCHITECTURAL_COLOR_SCHEMES[(idx + 3) % len],
+    ];
+  }
+  const s = ARCHITECTURAL_COLOR_SCHEMES[idx % len];
+  return [s, s, s, s];
+}
+
 export interface PanelNetDef {
   id: PanelId;
   parent: PanelId | null;

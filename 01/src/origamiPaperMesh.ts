@@ -4,6 +4,7 @@ import {
   computeDoorCenterU,
   computeNetOuterPerimeter,
   resolveFacadeForPanel,
+  type ArchitecturalColorScheme,
   type BuiltHouseNet,
   type FoldablePanelId,
   type HouseNetSpec,
@@ -39,6 +40,10 @@ export interface ProjectionUniforms {
   uProjFade: { value: number };
   /** `+1` when Camera B projects onto top (`inside`) face; `-1` when Camera B projects from underneath onto bottom (`outside`) face */
   uProjSide: { value: number };
+  /** Subtle watercolor/dyed-paper gradient intensity (`0` in White mode, `1` in Color mode) */
+  uColorGrad: { value: number };
+  /** Reference folded house height in world units for vertical paper gradient scaling */
+  uGradHeight: { value: number };
 }
 
 export interface OrigamiMaterials {
@@ -50,8 +55,47 @@ export interface OrigamiMaterials {
     THREE.MeshStandardMaterial,
     THREE.MeshStandardMaterial,
   ];
+  /** Dedicated roof exterior materials (roof slopes, caps, dormers & chimneys) */
+  roofSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ];
+  /** Dedicated window pane/shutter/sill materials (exterior + interior leaf faces) */
+  windowSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ];
+  windowInsideSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ];
+  /** Dedicated door & entrance awning materials (exterior + interior leaf faces) */
+  doorSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ];
+  doorInsideSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ];
   /** Single-pass duplex paper materials (`normal.y` switches white inside / edge / colored outside in 1 draw call!) */
   duplexSlots?: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ];
+  roofDuplexSlots?: [
     THREE.MeshStandardMaterial,
     THREE.MeshStandardMaterial,
     THREE.MeshStandardMaterial,
@@ -73,6 +117,7 @@ export interface OrigamiMaterials {
   setCutoutOpacity(opacity: number): void;
   setOutsideColor(hex: string): void;
   setOutsideColors(hexes: readonly string[]): void;
+  setColorSchemes(schemes: readonly ArchitecturalColorScheme[], gradHeightWorld?: number): void;
   dispose(): void;
 }
 
@@ -158,6 +203,64 @@ interface ProjectiveShaderOpts {
   clipToSilhouette?: boolean;
   /** Which face receives the projected print: `+1` top (`inside`), `-1` bottom (`outside`), `0` edges (both sides) */
   face?: 1 | -1 | 0;
+  /** Apply subtle artisanal watercolor/dyed-paper gradient in Color mode (`uColorGrad > 0`) */
+  gradientMode?: 'none' | 'wall' | 'roof';
+}
+
+function buildPaperGradientSnippet(mode: 'none' | 'wall' | 'roof'): string {
+  if (mode === 'none') return '';
+  const hExpr =
+    mode === 'roof'
+      ? `clamp((vLiveWorldPos.y / max(3.5, uGradHeight) - 0.34) / 0.66, 0.0, 1.0)`
+      : `clamp(vLiveWorldPos.y / max(3.5, uGradHeight), 0.0, 1.0)`;
+  return `
+if (uColorGrad > 0.001) {
+  float gH = ${hExpr};
+  float gSheet = clamp(0.5 + (vProjWorldPos.x * 0.024 + vProjWorldPos.z * 0.020), 0.0, 1.0);
+  float gT = smoothstep(0.0, 1.0, clamp(mix(gH, gSheet, 0.20), 0.0, 1.0));
+  vec3 gradBot = diffuseColor.rgb * vec3(0.72, 0.69, 0.68);
+  vec3 gradTop = mix(diffuseColor.rgb * vec3(1.13, 1.12, 1.10), vec3(0.96, 0.93, 0.87), 0.14);
+  diffuseColor.rgb = mix(diffuseColor.rgb, mix(gradBot, gradTop, gT), uColorGrad);
+}`;
+}
+
+function attachGradientOnlyShader(
+  mat: THREE.MeshStandardMaterial,
+  uniforms: ProjectionUniforms,
+  mode: 'wall' | 'roof',
+): void {
+  mat.customProgramCacheKey = () => `origami-paper-grad-v1-${mode}`;
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uColorGrad = uniforms.uColorGrad;
+    shader.uniforms.uGradHeight = uniforms.uGradHeight;
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+attribute vec3 aFlatPos;
+varying vec3 vProjWorldPos;
+varying vec3 vLiveWorldPos;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+vProjWorldPos = aFlatPos;
+vLiveWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+uniform float uColorGrad;
+uniform float uGradHeight;
+varying vec3 vProjWorldPos;
+varying vec3 vLiveWorldPos;`,
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>${buildPaperGradientSnippet(mode)}`,
+      );
+  };
 }
 
 function attachProjectiveShader(
@@ -167,8 +270,9 @@ function attachProjectiveShader(
 ): void {
   const clip = Boolean(opts.clipToSilhouette);
   const face = opts.face ?? 1;
+  const gradMode = opts.gradientMode ?? 'none';
   const sideExpr = face === 0 ? '1.0' : face > 0 ? 'step(0.0, uProjSide)' : 'step(0.0, -uProjSide)';
-  mat.customProgramCacheKey = () => `origami-cam-proj-v13-${clip ? 'clip' : 'full'}-f${face}`;
+  mat.customProgramCacheKey = () => `origami-cam-proj-v15-${clip ? 'clip' : 'full'}-f${face}-g${gradMode}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHasProj = uniforms.uHasProj;
     shader.uniforms.uProjTex = uniforms.uProjTex;
@@ -177,6 +281,8 @@ function attachProjectiveShader(
     shader.uniforms.uProjGain = uniforms.uProjGain;
     shader.uniforms.uProjFade = uniforms.uProjFade;
     shader.uniforms.uProjSide = uniforms.uProjSide;
+    shader.uniforms.uColorGrad = uniforms.uColorGrad;
+    shader.uniforms.uGradHeight = uniforms.uGradHeight;
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -213,12 +319,14 @@ uniform float uPaperReveal;
 uniform float uProjGain;
 uniform float uProjFade;
 uniform float uProjSide;
+uniform float uColorGrad;
+uniform float uGradHeight;
 varying vec3 vProjWorldPos;
 varying vec3 vLiveWorldPos;`,
       )
       .replace(
         '#include <map_fragment>',
-        `#include <map_fragment>
+        `#include <map_fragment>${buildPaperGradientSnippet(gradMode)}
 float projSideMatch = ${sideExpr};
 float projIsBlank = 0.0;
 float projHasCaptured = 0.0;
@@ -254,7 +362,8 @@ if (uHasProj > 0.5) {
 float projSheetLift = max(0.0, abs(vLiveWorldPos.y - ${(PAPER_THICK * 0.5).toFixed(4)}) - ${(PAPER_THICK * 0.75 + 0.005).toFixed(4)});
 float projFlatLock = 0.0;
 if (uHasProj > 0.5 && projSideMatch > 0.5 && projHasCaptured > 0.5) {
-  projFlatLock = (1.0 - smoothstep(0.015, 0.48, projSheetLift)) * uProjFade;
+  float flatReliefGate = 1.0 - smoothstep(0.0, 0.85, uPaperReveal);
+  projFlatLock = (1.0 - smoothstep(0.015, 0.48, projSheetLift)) * uProjFade * flatReliefGate;
   gl_FragColor.rgb = mix(gl_FragColor.rgb, projCapturedLinear, projFlatLock);
 }`,
       )
@@ -296,6 +405,8 @@ export function createOrigamiMaterials(
     uProjGain: { value: 1 },
     uProjFade: { value: 1 },
     uProjSide: { value: 1 },
+    uColorGrad: { value: 0 },
+    uGradHeight: { value: 7.5 },
   };
 
   const inside = new THREE.MeshStandardMaterial({
@@ -325,6 +436,41 @@ export function createOrigamiMaterials(
     THREE.MeshStandardMaterial,
   ] = [outside, outside.clone(), outside.clone(), outside.clone()];
 
+  const roofSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ] = [outside.clone(), outside.clone(), outside.clone(), outside.clone()];
+
+  const windowSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ] = [outside.clone(), outside.clone(), outside.clone(), outside.clone()];
+
+  const windowInsideSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ] = [inside.clone(), inside.clone(), inside.clone(), inside.clone()];
+
+  const doorSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ] = [outside.clone(), outside.clone(), outside.clone(), outside.clone()];
+
+  const doorInsideSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ] = [inside.clone(), inside.clone(), inside.clone(), inside.clone()];
+
   const edge = new THREE.MeshStandardMaterial({
     color: new THREE.Color('#fbfaf7'),
     roughness: 0.95,
@@ -334,6 +480,14 @@ export function createOrigamiMaterials(
   // Optional single-pass duplex paper material for City LOD0 rigs: switches white inside / paper edge /
   // colored exterior directly from flat-extruded object `normal.y`, cutting panel draw calls 3×!
   let duplexSlots:
+    | [
+        THREE.MeshStandardMaterial,
+        THREE.MeshStandardMaterial,
+        THREE.MeshStandardMaterial,
+        THREE.MeshStandardMaterial,
+      ]
+    | undefined;
+  let roofDuplexSlots:
     | [
         THREE.MeshStandardMaterial,
         THREE.MeshStandardMaterial,
@@ -407,6 +561,7 @@ if (vPaperFaceY > 0.5) {
       return m;
     };
     duplexSlots = [makeDuplexMat(), makeDuplexMat(), makeDuplexMat(), makeDuplexMat()];
+    roofDuplexSlots = [makeDuplexMat(), makeDuplexMat(), makeDuplexMat(), makeDuplexMat()];
   }
 
   // Outer falling cutout shards: silhouette-clipped strictly to the sliced-off previous house
@@ -422,16 +577,29 @@ if (vPaperFaceY > 0.5) {
 
   if (enableProjection) {
     attachProjectiveShader(inside, projUniforms, { face: 1 });
-    for (const m of outsideSlots) {
-      attachProjectiveShader(m, projUniforms, { face: -1 });
+    for (const m of [...outsideSlots, ...windowSlots, ...doorSlots]) {
+      attachProjectiveShader(m, projUniforms, { face: -1, gradientMode: 'wall' });
+    }
+    for (const m of roofSlots) {
+      attachProjectiveShader(m, projUniforms, { face: -1, gradientMode: 'roof' });
+    }
+    for (const m of [...windowInsideSlots, ...doorInsideSlots]) {
+      attachProjectiveShader(m, projUniforms, { face: 1, gradientMode: 'wall' });
     }
     attachProjectiveShader(edge, projUniforms, { face: 0 });
     attachProjectiveShader(cutoutInside, projUniforms, { clipToSilhouette: true, face: 1 });
     attachProjectiveShader(cutoutEdge, projUniforms, { clipToSilhouette: true, face: 0 });
-    attachProjectiveShader(cutoutOutside, projUniforms, { clipToSilhouette: true, face: -1 });
+    attachProjectiveShader(cutoutOutside, projUniforms, { clipToSilhouette: true, face: -1, gradientMode: 'wall' });
     attachProjectiveShader(chadInside, projUniforms, { face: 1 });
     attachProjectiveShader(chadEdge, projUniforms, { face: 0 });
-    attachProjectiveShader(chadOutside, projUniforms, { face: -1 });
+    attachProjectiveShader(chadOutside, projUniforms, { face: -1, gradientMode: 'wall' });
+  } else {
+    for (const m of [...outsideSlots, ...windowSlots, ...windowInsideSlots, ...doorSlots, ...doorInsideSlots]) {
+      attachGradientOnlyShader(m, projUniforms, 'wall');
+    }
+    for (const m of roofSlots) {
+      attachGradientOnlyShader(m, projUniforms, 'roof');
+    }
   }
 
   const foldLine = new THREE.LineDashedMaterial({
@@ -479,7 +647,13 @@ if (vPaperFaceY > 0.5) {
     inside,
     outside,
     outsideSlots,
+    roofSlots,
+    windowSlots,
+    windowInsideSlots,
+    doorSlots,
+    doorInsideSlots,
     duplexSlots,
+    roofDuplexSlots,
     edge,
     cutoutInside,
     cutoutOutside,
@@ -510,22 +684,63 @@ if (vPaperFaceY > 0.5) {
     },
     setCutoutOpacity,
     setOutsideColor(hex: string) {
-      for (const m of outsideSlots) m.color.set(hex);
+      projUniforms.uColorGrad.value = 0;
+      for (const m of [...outsideSlots, ...roofSlots, ...windowSlots, ...doorSlots]) {
+        m.color.set(hex);
+      }
+      for (const m of [...windowInsideSlots, ...doorInsideSlots]) {
+        m.color.copy(inside.color);
+      }
       if (duplexSlots) {
         for (const m of duplexSlots) m.color.set(hex);
+      }
+      if (roofDuplexSlots) {
+        for (const m of roofDuplexSlots) m.color.set(hex);
       }
       cutoutOutside.color.set(hex);
       chadOutside.color.set(hex);
     },
     setOutsideColors(hexes: readonly string[]) {
+      projUniforms.uColorGrad.value = 0;
       const primary = hexes[0] ?? '#9bb7cc';
       for (let i = 0; i < outsideSlots.length; i++) {
         const col = hexes[i] ?? primary;
         outsideSlots[i].color.set(col);
+        roofSlots[i].color.set(col);
+        windowSlots[i].color.set(col);
+        doorSlots[i].color.set(col);
+        windowInsideSlots[i].color.copy(inside.color);
+        doorInsideSlots[i].color.copy(inside.color);
         if (duplexSlots) duplexSlots[i].color.set(col);
+        if (roofDuplexSlots) roofDuplexSlots[i].color.set(col);
       }
       cutoutOutside.color.set(primary);
       chadOutside.color.set(primary);
+    },
+    setColorSchemes(schemes: readonly ArchitecturalColorScheme[], gradHeightWorld?: number) {
+      projUniforms.uColorGrad.value = 1;
+      if (gradHeightWorld !== undefined && Number.isFinite(gradHeightWorld)) {
+        projUniforms.uGradHeight.value = Math.max(3.5, gradHeightWorld);
+      }
+      const primary = schemes[0] ?? {
+        wall: '#9bb7cc',
+        roof: '#c47c67',
+        window: '#ebe5d8',
+        door: '#3b536b',
+      };
+      for (let i = 0; i < outsideSlots.length; i++) {
+        const sc = schemes[i] ?? primary;
+        outsideSlots[i].color.set(sc.wall);
+        roofSlots[i].color.set(sc.roof);
+        windowSlots[i].color.set(sc.window);
+        windowInsideSlots[i].color.set(sc.window);
+        doorSlots[i].color.set(sc.door);
+        doorInsideSlots[i].color.set(sc.door);
+        if (duplexSlots) duplexSlots[i].color.set(sc.wall);
+        if (roofDuplexSlots) roofDuplexSlots[i].color.set(sc.roof);
+      }
+      cutoutOutside.color.set(primary.wall);
+      chadOutside.color.set(primary.wall);
     },
     dispose() {
       if (ownsTextures) {
@@ -533,9 +748,21 @@ if (vPaperFaceY > 0.5) {
         tex.bumpMap.dispose();
       }
       inside.dispose();
-      for (const m of outsideSlots) m.dispose();
+      for (const m of [
+        ...outsideSlots,
+        ...roofSlots,
+        ...windowSlots,
+        ...windowInsideSlots,
+        ...doorSlots,
+        ...doorInsideSlots,
+      ]) {
+        m.dispose();
+      }
       if (duplexSlots) {
         for (const m of duplexSlots) m.dispose();
+      }
+      if (roofDuplexSlots) {
+        for (const m of roofDuplexSlots) m.dispose();
       }
       edge.dispose();
       for (const m of allCutoutMats) m.dispose();
@@ -1324,10 +1551,19 @@ export function buildOrigamiHouseRig(
   const cutoutMats = [mats.cutoutInside, mats.cutoutEdge, mats.cutoutOutside];
   const chadMats = [mats.chadInside, mats.chadEdge, mats.chadOutside];
   const triMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0) => [mats.inside, mats.edge, mats.outsideSlots[slot]];
-  const panelMatForSlot = (slot: 0 | 1 | 2 | 3 = 0): THREE.Material | THREE.Material[] =>
-    useSingleGroup ? mats.duplexSlots![slot] : triMatsForSlot(slot);
-  const detailMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0): THREE.Material | THREE.Material[] =>
-    useSingleGroup ? mats.outsideSlots[slot] : [mats.outsideSlots[slot], mats.edge, mats.outsideSlots[slot]];
+  const roofTriMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0) => [mats.inside, mats.edge, mats.roofSlots[slot]];
+  const panelMatForSlot = (slot: 0 | 1 | 2 | 3 = 0, isRoof = false): THREE.Material | THREE.Material[] =>
+    useSingleGroup
+      ? isRoof
+        ? mats.roofDuplexSlots![slot]
+        : mats.duplexSlots![slot]
+      : isRoof
+        ? roofTriMatsForSlot(slot)
+        : triMatsForSlot(slot);
+  const roofDetailMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0): THREE.Material | THREE.Material[] =>
+    useSingleGroup ? mats.roofSlots[slot] : [mats.roofSlots[slot], mats.edge, mats.roofSlots[slot]];
+  const doorDetailMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0): THREE.Material | THREE.Material[] =>
+    useSingleGroup ? mats.doorSlots[slot] : [mats.doorSlots[slot], mats.edge, mats.doorSlots[slot]];
   const groupByPanel = new Map<PanelId, THREE.Group>();
   const panels = new Map<FoldablePanelId, PanelVisual>();
   const details: KirigamiDetailRig[] = [];
@@ -1457,7 +1693,8 @@ export function buildOrigamiHouseRig(
       curveSegs,
       useSingleGroup,
     );
-    const mesh = new THREE.Mesh(geo, panelMatForSlot(def.colorSlot ?? 0));
+    const isRoofPanel = def.stage === 'roof' || def.stage === 'cap';
+    const mesh = new THREE.Mesh(geo, panelMatForSlot(def.colorSlot ?? 0, isRoofPanel));
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { kind: 'panel', id: def.id };
@@ -1991,8 +2228,10 @@ export function buildOrigamiHouseRig(
     const pv = panels.get(panelId);
     if (!def || !pv || !def.wallFrame) continue;
     const wf = def.wallFrame;
-    const wallTriMats = triMatsForSlot(def.colorSlot ?? 0);
-    const wallDetailMats = [mats.outsideSlots[def.colorSlot ?? 0], mats.edge, mats.outsideSlots[def.colorSlot ?? 0]];
+    const slotIdx = def.colorSlot ?? 0;
+    const windowTriMats = [mats.windowInsideSlots[slotIdx], mats.edge, mats.windowSlots[slotIdx]];
+    const windowDetailMats = [mats.windowSlots[slotIdx], mats.edge, mats.windowSlots[slotIdx]];
+    const doorTriMats = [mats.doorInsideSlots[slotIdx], mats.edge, mats.doorSlots[slotIdx]];
     const rotY = Math.atan2(wf.vAxis[0], -wf.vAxis[1]);
     const kerf = 0.24; // Crisp 0.24 mm laser-cut paper clearance
 
@@ -2048,7 +2287,7 @@ export function buildOrigamiHouseRig(
       if (f.mode === 'sill') {
         const sillD = Math.min(2.6, Math.max(1.5, f.w * 0.24)) * MM;
         const sShape = makeLeafShape(-hw, hw, -sillD, 0, 'rect');
-        mountLeaf(0, -PAPER_THICK, -hh, sShape, 'x', 1.57, 'fixed', wallDetailMats);
+        mountLeaf(0, -PAPER_THICK, -hh, sShape, 'x', 1.57, 'fixed', windowDetailMats);
         continue;
       }
 
@@ -2057,7 +2296,7 @@ export function buildOrigamiHouseRig(
         const aShape = makeLeafShape(-kw * 0.5, kw * 0.5, 0, kh, 'rect');
         punchLeafFrameCutouts(aShape, -kw * 0.5, kw * 0.5, 0, kh, 'rect', f.detail, false, false);
         const tiltRad = -(0.20 + nextWinRand() * 0.10) * (Math.PI * 0.5);
-        const det = mountLeaf(0, 0, hh, aShape, 'x', tiltRad, 'window', wallTriMats, 'top-hung');
+        const det = mountLeaf(0, 0, hh, aShape, 'x', tiltRad, 'window', windowTriMats, 'top-hung');
         windowDetailGroups.push([det]);
         continue;
       }
@@ -2070,8 +2309,8 @@ export function buildOrigamiHouseRig(
         punchLeafFrameCutouts(sShape1, -kw * 0.5, kw * 0.5, 0, slatH, 'rect', f.detail, false, false, true);
         punchLeafFrameCutouts(sShape2, -kw * 0.5, kw * 0.5, 0, slatH, 'rect', f.detail, false, false, true);
         const tiltRad = -(0.20 + nextWinRand() * 0.10) * (Math.PI * 0.5);
-        const d1 = mountLeaf(0, 0, hh, sShape1, 'x', tiltRad, 'window', wallTriMats, 'top-hung');
-        const d2 = mountLeaf(0, 0, 0.01 * MM, sShape2, 'x', tiltRad, 'window', wallTriMats, 'top-hung');
+        const d1 = mountLeaf(0, 0, hh, sShape1, 'x', tiltRad, 'window', windowTriMats, 'top-hung');
+        const d2 = mountLeaf(0, 0, 0.01 * MM, sShape2, 'x', tiltRad, 'window', windowTriMats, 'top-hung');
         windowDetailGroups.push([d1, d2]);
         continue;
       }
@@ -2089,8 +2328,9 @@ export function buildOrigamiHouseRig(
         punchLeafFrameCutouts(rShape, -leafW, 0, -kh * 0.5, kh * 0.5, rightKind, f.detail, true, isDoor);
         const maxAng = isDoor ? 0.52 + nextWinRand() * 0.34 : 1.42 + nextWinRand() * 0.42;
         const wType = isDoor ? 'door' : 'side-hung';
-        const dL = mountLeaf(-hw, 0, 0, lShape, 'z', -maxAng, 'window', wallTriMats, wType);
-        const dR = mountLeaf(hw, 0, 0, rShape, 'z', maxAng, 'window', wallTriMats, wType);
+        const leafMats = isDoor ? doorTriMats : windowTriMats;
+        const dL = mountLeaf(-hw, 0, 0, lShape, 'z', -maxAng, 'window', leafMats, wType);
+        const dR = mountLeaf(hw, 0, 0, rShape, 'z', maxAng, 'window', leafMats, wType);
         if (isDoor) doorDetailGroups.push([dL, dR]);
         else windowDetailGroups.push([dL, dR]);
         continue;
@@ -2104,7 +2344,7 @@ export function buildOrigamiHouseRig(
         punchLeafFrameCutouts(cShape, 0, kw, -kh * 0.5, kh * 0.5, fullKind, f.detail, false, isDoor);
         const maxAng = isDoor ? 0.48 + nextWinRand() * 0.32 : 0.52 + nextWinRand() * 0.36;
         const wType = isDoor ? 'door' : 'side-hung';
-        const det = mountLeaf(-hw, 0, 0, cShape, 'z', -maxAng, 'window', wallTriMats, wType);
+        const det = mountLeaf(-hw, 0, 0, cShape, 'z', -maxAng, 'window', isDoor ? doorTriMats : windowTriMats, wType);
         if (isDoor) doorDetailGroups.push([det]);
         else windowDetailGroups.push([det]);
       }
@@ -2187,7 +2427,7 @@ export function buildOrigamiHouseRig(
       curveSegs,
       useSingleGroup,
     );
-    const aMesh = new THREE.Mesh(aGeo, detailMatsForSlot(frontDef.colorSlot ?? 0));
+    const aMesh = new THREE.Mesh(aGeo, doorDetailMatsForSlot(frontDef.colorSlot ?? 0));
     aMesh.castShadow = true;
     aMesh.receiveShadow = true;
     allMeshes.push(aMesh);
@@ -2215,7 +2455,7 @@ export function buildOrigamiHouseRig(
     const roofRDef = bList.find((p) => (p.localId ?? p.id) === 'roofR');
     const bSpec = roofLDef?.panelSpec ?? roofRDef?.panelSpec ?? spec;
     const bSlot = roofLDef?.colorSlot ?? roofRDef?.colorSlot ?? 0;
-    const bDetailMats = detailMatsForSlot(bSlot);
+    const bDetailMats = roofDetailMatsForSlot(bSlot);
 
     // B. Kirigami folded L-corner 3D chimney stack on roof
     const wantsDormersOnR =

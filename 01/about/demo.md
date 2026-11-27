@@ -1,37 +1,34 @@
 ---
-query: ?clean
-warmup: 1000
+query: ?clean&seed=246
+warmup: 1200
 seconds: 10
-xseconds: 20
+xseconds: 24
+crop: 820
 ---
-# 01 / Fold (Square Origami House), demo
+# 01 / Fold, demo
 
-`?clean`: the simplest pure white paper house pre-cut from a 15 × 15 cm square of origami paper, resting flat in a calm zoomed-out light studio. Four punched walls fold up 90°, both 45° roof slopes kiss seamlessly at the ridge, and the camera gently orbits around the standing white paper house.
+`?clean&seed=246`: opens directly on a folded, matte-paper architectural house with separate wall, roof, window-pane, and door colors plus subtle watercolor gradients. Each fold projects the standing 3D house live 1:1 onto a new flat house net underneath, sheds the previous silhouette cutout, and folds seamlessly through an endless chain of architectures.
 
 ```steps
-wait 600
-key space
-wait 1800
-key space
-wait 1700
-drag 460,560 760,510 2800ms
-wait 1300
-key f
-wait 1800
+wait 500
+key Space
+wait 2100
+key Space
+wait 2100
+key Space
+wait 5300
 ```
 
 ```x
 wait 700
-key space
-wait 2000
-key space
-wait 2000
-drag 430,560 780,500 3600ms
-wait 1600
-key f
-wait 2200
-key f
-wait 2400
-drag 780,500 440,540 3400ms
-wait 2100
+key a
+wait 11500
+key a
+wait 3200
+drag 460,620 760,540 2600ms
+wait 800
+js document.getElementById('chk-reverse').click()
+wait 600
+key Space
+wait 4600
 ```
