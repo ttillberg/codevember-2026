@@ -38,22 +38,13 @@
       <button id="btn-help" class="icon-btn" title="Controls (?)" aria-label="Controls">?</button>
     </div>
 
-    <div class="toolbar" role="toolbar" aria-label="Fold controls">
-      <button id="btn-action" class="action-btn" type="button">Fold</button>
-      <label class="auto-check" for="chk-auto" title="Continuously fold and project through houses (A)">
-        <input id="chk-auto" class="auto-check-input" type="checkbox" checked />
-        <span class="auto-check-box" aria-hidden="true">
-          <svg viewBox="0 0 12 12"><path d="M2.4 6.2 4.9 8.7 9.6 3.4" /></svg>
-        </span>
-        <span class="auto-check-label">Auto</span>
-      </label>
-      <label class="auto-check" for="chk-reverse" title="Run the illusion backwards: unfold a 3D house flat into the next house">
-        <input id="chk-reverse" class="auto-check-input" type="checkbox" />
-        <span class="auto-check-box" aria-hidden="true">
-          <svg viewBox="0 0 12 12"><path d="M2.4 6.2 4.9 8.7 9.6 3.4" /></svg>
-        </span>
-        <span class="auto-check-label">Reverse</span>
-      </label>
+    <div class="toolbar" role="toolbar" aria-label="Playback modes">
+      <button id="btn-action" class="action-btn" type="button" data-mode="manual" aria-pressed="false" title="Manual fold — or tap the house (Space / 1)">Fold</button>
+      <div class="mode-group" id="mode-group" role="group" aria-label="Auto modes">
+        <button type="button" class="mode-btn active" data-mode="slow" aria-pressed="true" title="Auto-fold with a 3s pause between transitions (2)">Slow</button>
+        <button type="button" class="mode-btn" data-mode="fast" aria-pressed="false" title="Fast continuous overlapping auto-fold (3)">Fast</button>
+        <button type="button" class="mode-btn" data-mode="reverse" aria-pressed="false" title="Continuous reverse unfold illusion (4)">Reverse</button>
+      </div>
       <span class="sep" aria-hidden="true"></span>
       <button id="btn-sound" class="sound-btn" type="button" aria-pressed="true" title="Toggle layered ambient synth (M)" aria-label="Toggle ambient synth">
         <svg class="sound-icon-off" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4V5z" /><path d="M22 9l-6 6" /><path d="M16 9l6 6" /></svg>
@@ -410,10 +401,11 @@
           <button id="help-close" class="help-close" aria-label="Close">×</button>
         </div>
         <dl class="help-list">
-          <div><dt>Click anywhere</dt><dd>Fold the whole house and advance to the next sheet</dd></div>
+          <div><dt>Click anywhere</dt><dd>Switch to manual Fold mode and advance to the next sheet</dd></div>
           <div><dt><span class="key">Space</span></dt><dd>Fold the whole house in one staggered wave and project onto the next sheet</dd></div>
+          <div><dt><span class="key">1</span>–<span class="key">4</span></dt><dd>Switch modes: Fold (manual), Slow (3s pause), Fast (auto), Reverse (auto unfold)</dd></div>
           <div><dt><span class="key">F</span></dt><dd>Toggle staggered fold / unfold</dd></div>
-          <div><dt><span class="key">A</span></dt><dd>Toggle automatic continuous folding loop</dd></div>
+          <div><dt><span class="key">A</span></dt><dd>Toggle Fast auto-fold loop</dd></div>
           <div><dt><span class="key">M</span></dt><dd>Toggle layered ambient synth</dd></div>
           <div><dt><span class="key">G</span></dt><dd>Browse seeded generations grid and click any tile to fold</dd></div>
           <div><dt><span class="key">C</span></dt><dd>Explore an interactive Mediterranean paper mountain island; touch to fold houses & unveil roads</dd></div>

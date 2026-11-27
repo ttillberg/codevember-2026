@@ -77,8 +77,8 @@ const btnHelp = document.getElementById('btn-help') as HTMLButtonElement;
 const helpModal = document.getElementById('help-modal') as HTMLDivElement;
 const helpClose = document.getElementById('help-close') as HTMLButtonElement;
 const btnAction = document.getElementById('btn-action') as HTMLButtonElement;
-const chkAuto = document.getElementById('chk-auto') as HTMLInputElement;
-const chkReverse = document.getElementById('chk-reverse') as HTMLInputElement;
+const modeGroup = document.getElementById('mode-group') as HTMLDivElement;
+const modeBtns = Array.from(modeGroup.querySelectorAll<HTMLButtonElement>('.mode-btn'));
 const btnSound = document.getElementById('btn-sound') as HTMLButtonElement;
 const statusEl = document.getElementById('status-label') as HTMLSpanElement;
 const btnDebug = document.getElementById('btn-debug') as HTMLButtonElement;
@@ -216,6 +216,10 @@ const VALID_CAMERA_TRICKS: readonly CameraTrickMode[] = [
   'subtle',
 ];
 
+type PlayMode = 'manual' | 'slow' | 'fast' | 'reverse';
+const VALID_PLAY_MODES: readonly PlayMode[] = ['manual', 'slow', 'fast', 'reverse'];
+const SLOW_HOLD_SEC = 3.0;
+
 interface DebugSettings {
   model: number | null;
   houses: 1 | 2 | 3 | 4 | null;
@@ -235,6 +239,7 @@ interface DebugSettings {
   seed: number;
   color: boolean;
   spin: boolean;
+  playMode: PlayMode;
   reverseFold: boolean;
   cameraTrick: CameraTrickMode;
   glideOnFold: boolean;
@@ -275,6 +280,7 @@ const FACTORY_SETTINGS: DebugSettings = {
   seed: 0,
   color: true,
   spin: true,
+  playMode: 'slow',
   reverseFold: false,
   cameraTrick: 'balanced',
   glideOnFold: false,
@@ -378,6 +384,13 @@ function loadSavedSettings(): DebugSettings {
       }
       if (typeof parsed.fadeProjOnFold === 'boolean') s.fadeProjOnFold = parsed.fadeProjOnFold;
       if (typeof parsed.autoFold === 'boolean') s.autoFold = parsed.autoFold;
+      if (typeof parsed.playMode === 'string' && VALID_PLAY_MODES.includes(parsed.playMode as PlayMode)) {
+        s.playMode = parsed.playMode as PlayMode;
+      } else if (typeof parsed.reverseFold === 'boolean' || typeof parsed.autoFold === 'boolean') {
+        s.playMode = s.reverseFold ? 'reverse' : s.autoFold ? 'fast' : 'manual';
+      }
+      s.autoFold = s.playMode !== 'manual';
+      s.reverseFold = s.playMode === 'reverse';
       if (typeof parsed.autoSpeed === 'number' && Number.isFinite(parsed.autoSpeed)) {
         s.autoSpeed = Math.max(0.25, Math.min(3.0, parsed.autoSpeed));
       }
@@ -529,8 +542,22 @@ let debugColorEnabled =
   params.get('color') !== null ? params.get('color') !== '0' : initialSettings.color;
 let debugSpinEnabled =
   params.get('spin') !== null ? params.get('spin') !== '0' : initialSettings.spin;
-let debugReverseFoldEnabled =
-  params.get('reverse') !== null ? params.get('reverse') !== '0' : initialSettings.reverseFold;
+const pModeRaw = params.get('mode')?.toLowerCase() ?? null;
+function resolveInitialPlayMode(): PlayMode {
+  if (pModeRaw === 'manual' || pModeRaw === 'fold') return 'manual';
+  if (pModeRaw === 'slow') return 'slow';
+  if (pModeRaw === 'fast' || pModeRaw === 'mesmerize') return 'fast';
+  if (pModeRaw === 'reverse') return 'reverse';
+  if (params.get('reverse') !== null) {
+    return params.get('reverse') !== '0' ? 'reverse' : params.get('auto') === '0' ? 'manual' : 'fast';
+  }
+  if (params.get('auto') !== null) {
+    return params.get('auto') === '0' ? 'manual' : 'fast';
+  }
+  return initialSettings.playMode;
+}
+let playMode: PlayMode = resolveInitialPlayMode();
+let debugReverseFoldEnabled = playMode === 'reverse';
 const pCamTrick = params.get('cameraTrick');
 let debugCameraTrick: CameraTrickMode =
   pCamTrick !== null && VALID_CAMERA_TRICKS.includes(pCamTrick as CameraTrickMode)
@@ -555,10 +582,7 @@ let debugFadeProjEnabled =
   params.get('fadePrint') !== null
     ? params.get('fadePrint') !== '0'
     : initialSettings.fadeProjOnFold;
-let autoFoldEnabled =
-  params.get('auto') !== null
-    ? params.get('auto') !== '0'
-    : initialSettings.autoFold;
+let autoFoldEnabled = playMode !== 'manual';
 const pAutoSpeed = params.get('autoSpeed');
 let autoSpeed =
   pAutoSpeed !== null && Number.isFinite(Number(pAutoSpeed))
@@ -869,14 +893,19 @@ function syncDebugControls(): void {
   dbgColor.checked = debugColorEnabled;
   catColorBtn.setAttribute('aria-pressed', debugColorEnabled ? 'true' : 'false');
   dbgSpin.checked = debugSpinEnabled;
-  chkReverse.checked = debugReverseFoldEnabled;
+  btnAction.classList.toggle('active', playMode === 'manual');
+  btnAction.setAttribute('aria-pressed', playMode === 'manual' ? 'true' : 'false');
+  for (const btn of modeBtns) {
+    const active = btn.dataset.mode === playMode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
   dbgCameraTrick.value = debugCameraTrick;
   dbgGlideFold.checked = debugGlideOnFoldEnabled;
   for (const btn of dbgAnchorModeBtns) {
     btn.classList.toggle('active', btn.dataset.anchorMode === debugAnchorMode);
   }
   dbgFadeProj.checked = debugFadeProjEnabled;
-  chkAuto.checked = autoFoldEnabled;
 
   // Auto-fold curve, speed & next-fold handoff controls
   const speedPct = Math.round(autoSpeed * 100);
@@ -921,6 +950,7 @@ function saveDebugSettings(): void {
       seed: mixSeed,
       color: debugColorEnabled,
       spin: debugSpinEnabled,
+      playMode,
       reverseFold: debugReverseFoldEnabled,
       cameraTrick: debugCameraTrick,
       glideOnFold: debugGlideOnFoldEnabled,
@@ -1484,7 +1514,7 @@ function schedulePrepareNext(gen: number, delayMs = 90): void {
   prepareTimerId = window.setTimeout(() => {
     prepareTimerId = null;
     const activelyDropping = cutoutDropState === 'falling' && cutoutDropElapsed >= cutoutDropDelay;
-    if (activelyDropping && (!autoFoldEnabled || autoBeatElapsed < getAutoHandoffSec() * 0.65)) {
+    if (activelyDropping && (!autoFoldEnabled || playMode === 'slow' || autoBeatElapsed < getAutoHandoffSec() * 0.65)) {
       schedulePrepareNext(gen, 220);
       return;
     }
@@ -2960,6 +2990,44 @@ function setReverseMode(enabled: boolean, persist = true): void {
   syncUI();
 }
 
+function setPlayMode(
+  nextMode: PlayMode,
+  opts: { persist?: boolean; startImmediately?: boolean } = {},
+): void {
+  const { persist = true, startImmediately = true } = opts;
+  const changed = playMode !== nextMode;
+  playMode = nextMode;
+  autoFoldEnabled = nextMode !== 'manual';
+  if (autoFoldEnabled) activeFoldIsManual = false;
+
+  const wantReverse = nextMode === 'reverse';
+  if (debugReverseFoldEnabled !== wantReverse) {
+    setReverseMode(wantReverse, false);
+  } else if (changed) {
+    autoBeatElapsed = 0;
+    autoBeatRunning = false;
+  }
+
+  syncDebugControls();
+  if (persist) saveDebugSettings();
+  syncUI();
+
+  if (startImmediately && autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
+    if (debugReverseFoldEnabled) {
+      if (!reverseUnfold) triggerStepAction(true);
+    } else if (!allPanelsFoldedTarget() || allPanelsSettledFolded()) {
+      triggerStepAction(true);
+    }
+  }
+}
+
+function activateManualFold(): void {
+  if (playMode !== 'manual') {
+    setPlayMode('manual', { persist: true, startImmediately: false });
+  }
+  triggerStepAction(false);
+}
+
 function resetToFactory(): void {
   try {
     window.localStorage.removeItem(SETTINGS_STORAGE_KEY);
@@ -2984,6 +3052,7 @@ function resetToFactory(): void {
   mixSeed = FACTORY_SETTINGS.seed;
   debugColorEnabled = FACTORY_SETTINGS.color;
   debugSpinEnabled = FACTORY_SETTINGS.spin;
+  playMode = FACTORY_SETTINGS.playMode;
   debugReverseFoldEnabled = FACTORY_SETTINGS.reverseFold;
   debugCameraTrick = FACTORY_SETTINGS.cameraTrick;
   debugGlideOnFoldEnabled = FACTORY_SETTINGS.glideOnFold;
@@ -3092,16 +3161,15 @@ function syncUI(): void {
         ? `${seedTag}${houseName} · `
         : '';
 
+  btnAction.textContent = 'Fold';
   if (debugReverseFoldEnabled) {
-    btnAction.textContent = 'Unfold';
     if (reverseUnfold) {
       statusEl.textContent = `${prefix}Unfolding`;
     } else {
-      statusEl.textContent = `${prefix}Click anywhere to unfold`;
+      statusEl.textContent = `${prefix}Reverse`;
     }
     return;
   }
-  btnAction.textContent = 'Fold';
   if (!allTargetFolded) {
     statusEl.textContent = `${prefix}Click anywhere to fold`;
   } else if (!settledFolded) {
@@ -3205,7 +3273,7 @@ function endPointer(e: PointerEvent, isCancel: boolean): void {
   drag = { kind: 'none' };
 
   if (wasClick) {
-    triggerStepAction();
+    activateManualFold();
   }
 }
 
@@ -3253,39 +3321,26 @@ canvas.addEventListener(
 // UI Controls
 btnAction.addEventListener('click', (e) => {
   e.stopPropagation();
-  triggerStepAction();
+  activateManualFold();
 });
 btnNext.addEventListener('click', (e) => {
   e.stopPropagation();
-  triggerStepAction();
+  activateManualFold();
 });
 btnReset.addEventListener('click', (e) => {
   e.stopPropagation();
   resetAll();
 });
 
-chkAuto.addEventListener('change', () => {
-  autoFoldEnabled = chkAuto.checked;
-  saveDebugSettings();
-  if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
-    if (debugReverseFoldEnabled) {
-      if (!reverseUnfold) triggerStepAction(true);
-    } else if (!allPanelsFoldedTarget() || allPanelsSettledFolded()) {
-      triggerStepAction(true);
+for (const btn of modeBtns) {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const mode = btn.dataset.mode as PlayMode | undefined;
+    if (mode && VALID_PLAY_MODES.includes(mode)) {
+      setPlayMode(mode);
     }
-  }
-});
-
-chkReverse.addEventListener('change', () => {
-  setReverseMode(chkReverse.checked, true);
-  if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
-    if (debugReverseFoldEnabled && !reverseUnfold) {
-      triggerStepAction(true);
-    } else if (!debugReverseFoldEnabled && (!allPanelsFoldedTarget() || allPanelsSettledFolded())) {
-      triggerStepAction(true);
-    }
-  }
-});
+  });
+}
 
 btnSound.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -4335,16 +4390,19 @@ window.addEventListener('keydown', (e) => {
 
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
-    triggerStepAction();
+    activateManualFold();
+  } else if (e.key === '1') {
+    setPlayMode('manual', { startImmediately: false });
+  } else if (e.key === '2') {
+    setPlayMode('slow');
+  } else if (e.key === '3') {
+    setPlayMode('fast');
+  } else if (e.key === '4') {
+    setPlayMode('reverse');
   } else if (e.key === 'f' || e.key === 'F') {
     toggleFoldAll();
   } else if (e.key === 'a' || e.key === 'A') {
-    autoFoldEnabled = !autoFoldEnabled;
-    chkAuto.checked = autoFoldEnabled;
-    saveDebugSettings();
-    if (autoFoldEnabled && (!allPanelsFoldedTarget() || allPanelsSettledFolded())) {
-      triggerStepAction(true);
-    }
+    setPlayMode(playMode === 'fast' ? 'manual' : 'fast');
   } else if (e.key === 'm' || e.key === 'M') {
     const next = btnSound.getAttribute('aria-pressed') !== 'true';
     void setSoundEnabled(next);
@@ -4442,6 +4500,7 @@ if (isDebugMode && params.has('city')) {
       cityTouch: (wx: number, wz: number, radius?: number, isClick?: boolean) => number;
       cityInfo: () => CityViewStats | null;
       setSpin: (enabled: boolean) => void;
+      setMode: (mode: PlayMode) => void;
       setReverse: (enabled: boolean) => void;
       unfoldNow: (holdBeforeSwap?: boolean) => void;
       reverseSwapNow: () => void;
@@ -4499,6 +4558,7 @@ if (isDebugMode && params.has('city')) {
         autoHandoff: number;
         cutoutDropDelay: number;
         cameraTrick: CameraTrickMode;
+        playMode: PlayMode;
         reverseFold: boolean;
         reverseUnfolding: boolean;
         reverseSwapReady: boolean;
@@ -4658,8 +4718,13 @@ if (isDebugMode && params.has('city')) {
     syncDebugControls();
     saveDebugSettings();
   },
+  setMode(mode: PlayMode) {
+    if (VALID_PLAY_MODES.includes(mode)) {
+      setPlayMode(mode);
+    }
+  },
   setReverse(enabled: boolean) {
-    setReverseMode(enabled, true);
+    setPlayMode(enabled ? 'reverse' : autoFoldEnabled ? 'fast' : 'manual');
   },
   unfoldNow(holdBeforeSwap = false) {
     if (!debugReverseFoldEnabled) setReverseMode(true, false);
@@ -4690,14 +4755,10 @@ if (isDebugMode && params.has('city')) {
     saveDebugSettings();
   },
   setAuto(enabled: boolean) {
-    autoFoldEnabled = Boolean(enabled);
-    if (autoFoldEnabled) activeFoldIsManual = false;
-    syncDebugControls();
-    saveDebugSettings();
-    if (autoFoldEnabled && !cityActive && catalogModal.hidden && helpModal.hidden) {
-      if (!allPanelsFoldedTarget() || allPanelsSettledFolded()) {
-        triggerStepAction(true);
-      }
+    if (enabled) {
+      setPlayMode(playMode === 'manual' ? 'fast' : playMode);
+    } else {
+      setPlayMode('manual', { startImmediately: false });
     }
   },
   setSound(enabled: boolean) {
@@ -4826,6 +4887,7 @@ if (isDebugMode && params.has('city')) {
       autoHandoff,
       cutoutDropDelay,
       cameraTrick: debugCameraTrick,
+      playMode,
       reverseFold: debugReverseFoldEnabled,
       reverseUnfolding: Boolean(reverseUnfold),
       reverseSwapReady: Boolean(reverseUnfold?.swapReady),
@@ -5136,9 +5198,10 @@ function animate(now: number): void {
     syncUI();
   }
 
-  // Configurable overlapping auto-fold chain (`autoHandoff` = 35%..140% of House 1's fold duration):
-  //   <100% launches House 2 while House 1 is still finishing (live dual-house projection overlap!)
-  //    100% hands off cleanly back-to-back, >100% holds briefly on the finished house before next fold.
+  // Auto playback modes:
+  //   reverse: continuous reverse unfold chain
+  //   slow: full non-overlapping fold, then a 3s pause (SLOW_HOLD_SEC) on each settled house
+  //   fast: configurable overlapping auto-fold chain (`autoHandoff` = 35%..140% of House 1's fold duration)
   if (autoFoldEnabled && drag.kind === 'none' && helpModal.hidden && catalogModal.hidden) {
     if (debugReverseFoldEnabled) {
       if (!autoBeatRunning) {
@@ -5151,6 +5214,22 @@ function animate(now: number): void {
         if (autoBeatElapsed >= holdSec) {
           startReverseUnfold(true);
         }
+      }
+    } else if (playMode === 'slow') {
+      if (!autoBeatRunning) {
+        autoBeatRunning = true;
+        autoBeatElapsed = 0;
+        if (!allPanelsFoldedTarget()) {
+          triggerStepAction(true, 0);
+        }
+      } else if (allPanelsSettledFolded()) {
+        autoBeatElapsed += dt;
+        if (autoBeatElapsed >= SLOW_HOLD_SEC) {
+          autoBeatElapsed = 0;
+          triggerStepAction(true, 0);
+        }
+      } else {
+        autoBeatElapsed = 0;
       }
     } else if (!autoBeatRunning) {
       autoBeatRunning = true;

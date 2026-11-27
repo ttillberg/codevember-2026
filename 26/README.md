@@ -12,9 +12,9 @@ Derived from `day-01`. Endless recursive duplex origami architecture: fold a pre
 
 ## Interaction
 
-- **Production view (`/`)**: shows the Fold experience only — click **Fold** (or press `Space`) to fold and project onto the next sheet, toggle **Auto** (`A`) for a continuous overlapping chain, or drag directly on flaps and orbit the camera.
+- **Production view (`/`)**: four playback modes in the bottom bar — **Fold** (manual; tapping the house or pressing `Space` kicks in manual mode and folds to the next sheet), **Slow** (default; auto-folds cleanly with a 3s pause on each house), **Fast** (continuous overlapping auto-fold chain), and **Reverse** (continuous reverse unfold illusion) — plus ambient synth toggle (`M`) and drag-to-orbit / pinch-to-zoom.
 - **Debug workbench (`?debug`)**: unlocks all settings & knobs (`D`), the **Generations Catalog Grid** (`G` / `?debug&grid`), the infinite **Coastal Paper City** flyover (`C` / `?debug&city`), and controls help (`?`).
-- **Query params**: `?clean`, `?auto=1`, `?fold=0..1`, `?debug`.
+- **Query params**: `?clean`, `?mode=fold|slow|fast|reverse`, `?fold=0..1`, `?debug`.
 
 ```sh
 pnpm -C 26 test

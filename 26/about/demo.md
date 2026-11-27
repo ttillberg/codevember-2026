@@ -27,7 +27,7 @@ key a
 wait 3200
 drag 460,620 760,540 2600ms
 wait 800
-js document.getElementById('chk-reverse').click()
+js document.querySelector('[data-mode="reverse"]').click()
 wait 600
 key Space
 wait 4600

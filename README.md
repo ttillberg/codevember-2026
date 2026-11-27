@@ -34,7 +34,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 23 | Magma | — | — |
 | 24 | Nest | [View](https://ttillberg.github.io/codevember-2026/24/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/24) |
 | 25 | Veil | — | — |
-| 26 | Anamorph | — | — |
+| 26 | Anamorph | [View](https://ttillberg.github.io/codevember-2026/26/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/26) |
 | 27 | Burrow | — | — |
 | 28 | Hive | — | — |
 | 29 | Portal | — | — |
