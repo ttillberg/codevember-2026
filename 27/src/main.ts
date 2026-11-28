@@ -630,9 +630,9 @@ let last = performance.now();
 let slowAcc = 0, slowN = 0, slowRuns = 0;
 function frame(now: number) {
   const raw = (now - last) / 1000;
-  tick(Math.min(0.05, raw));
-  last = now;
-  // two slow seconds in a row: give up some pixels (a hidden tab ticks slowly too, that is not the GPU's fault)
+  // Two slow seconds in a row: give up some pixels (a hidden tab ticks slowly too, that is not the GPU's fault).
+  // Before the frame is drawn, not after: a change of size empties the canvas, and one emptied after its frame was
+  // drawn is shown empty, a black flash.
   if (!document.hidden && raw < 0.2) {
     slowAcc += raw;
     if (++slowN >= 60) {
@@ -641,6 +641,8 @@ function frame(now: number) {
       slowAcc = slowN = 0;
     }
   }
+  tick(Math.min(0.05, raw));
+  last = now;
   if (!halted) requestAnimationFrame(frame);
 }
 
