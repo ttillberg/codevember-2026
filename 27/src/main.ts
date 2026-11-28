@@ -20,14 +20,16 @@ import { Life } from './life';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
-if (params.has('clean')) document.body.classList.add('clean');
+if (params.has('clean') || params.get('debug') === 'beastanimation') document.body.classList.add('clean');
 // ?auto: crawls in by itself (clips, process videos)
 const auto = params.has('auto');
+// ?debug=beastanimation: the thing on the lower level alone on a stage, to look at how it moves (the end of this file)
+const beastStage = params.get('debug') === 'beastanimation';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 // the controls, the help and the pointer lock (ui.ts); no controls at the start of a clip
 initUI(canvas, {
-  start: !auto && !params.has('at'),
+  start: !auto && !params.has('at') && !beastStage,
   sound: (on) => sound.setMuted(!on),
 });
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -42,7 +44,7 @@ const post = new Post(renderer);
 const FOG_STEPS = matchMedia('(pointer: coarse)').matches ? 12 : 20;
 // (twelve is what it runs at: the `air` switch in ?debug goes back up to the full count)
 const fog = new Fog(Math.min(FOG_STEPS, 12));
-fog.on = !params.has('nofog');
+fog.on = !params.has('nofog') && !beastStage;
 
 // ---- the world ----
 const t0 = performance.now();
@@ -676,6 +678,7 @@ function disturb(dt: number) {
 sound.bind({ nav, speed: SPEED, camPos, camQ, beast, light: U.uLightI, ripple: U.uRipple, mouth: U.uMouth.value, puddles: world.puddles, game });
 let clock = 0;
 function tick(dt: number) {
+  if (beastStage) { tickStage(dt); return; }
   clock += dt;
   const time = clock;
   U.uTime.value = time;
@@ -714,6 +717,57 @@ function tick(dt: number) {
   if (reveal === 1 && !wireFreed) { wireFreed = true; post.endWire(); wireMat.dispose(); hideMat.dispose(); }
   sound.update(dt);
 }
+
+// ---- ?debug=beastanimation ----
+// The beast by itself, out of the burrow and out of the game: stood in the open air over a grid that runs under it at
+// the pace it is walking, lit by the torch from wherever we look at it from. Drag turns round it, the wheel comes
+// nearer. The panel picks the clip, the pace, how fast time goes. Nothing else of the place is drawn or run.
+const show = { clip: 'idle', walk: true, speed: 0.24, rate: 1, floor: true, exposure: 1, dist: 0.8, yaw: 2.4, pitch: -0.25, lastYaw: 0, lastPitch: 0, walked: 0 };
+const stageAt = new THREE.Vector3(0, 1.6, 3.2);
+const stageFloor = new THREE.GridHelper(3, 30, 0x9a9a9a, 0x5a5a5a);
+if (beastStage) {
+  scene.add(stageFloor);
+  noShadow.push(stageFloor);
+  torchLock.power = torchLock.aim = true;
+  show.lastYaw = look.yawT; show.lastPitch = look.pitchT;
+}
+function tickStage(dt: number) {
+  clock += dt;
+  U.uTime.value = clock;
+  // round it: the drag that looks about in the burrow turns the stage here, further for the same drag
+  show.yaw += (look.yawT - show.lastYaw) * 3;
+  show.pitch = Math.max(-1.45, Math.min(1.2, show.pitch + (look.pitchT - show.lastPitch) * 3));
+  show.lastYaw = look.yawT; show.lastPitch = look.pitchT;
+  show.dist = Math.max(0.25, Math.min(3, show.dist * Math.exp(-input.wheel * 0.8)));
+  input.wheel = 0;
+  fromYawPitch(show.yaw, show.pitch, lookDir);
+  camPos.copy(stageAt).addScaledVector(lookDir, -show.dist);
+  camPos.y += 0.13;
+  camQ.setFromEuler(new THREE.Euler(show.pitch, show.yaw, 0, 'YXZ'));
+  viewDir.copy(lookDir);
+  camera.position.copy(camPos);
+  camera.quaternion.copy(camQ);
+  camera.updateMatrixWorld();
+  show.walked += beast.exhibit(dt * show.rate, stageAt, show.clip, show.walk ? show.speed : 0);
+  // (its nose is along +z: the ground goes the other way, one square of it after another)
+  stageFloor.position.set(stageAt.x, stageAt.y, stageAt.z - (show.walked % 0.1));
+  for (const c of scene.children) c.visible = c === beast.group || (c === stageFloor && show.floor);
+  U.uBeam.value = 1;
+  updateTorch(dt, clock);
+  U.uShadow.value = null;
+  renderShadow();
+  U.uShadow.value = shadowDepth;
+  renderer.setRenderTarget(post.scene);
+  renderer.clear();
+  renderer.render(scene, camera);
+  post.dof = 0;
+  // metered by hand for the pool of light at the distance we stand off at (as meter() bounds it in the burrow), so
+  // that coming nearer does not burn it out; the grid is drawn at the same grey whatever that comes to
+  post.exposure = show.exposure * 0.55 * (show.dist * show.dist + 0.012) / (1.16 * 0.04);
+  (stageFloor.material as THREE.LineBasicMaterial).color.setScalar(0.6 / post.exposure);
+  post.render(clock, fog.render(renderer, post.scene, camera), camera, 1, null);
+}
+
 let last = performance.now();
 let slowAcc = 0, slowN = 0, slowRuns = 0;
 /** frames to let go by uncounted (the ones right after the frame changed size), and the last average, ms */
@@ -780,7 +834,7 @@ function frame(now: number) {
 // ?loader holds on the drawing; ?clean goes without it (grabs, clips, timings).
 const REVEAL = 1.6; // seconds
 /** 0: the drawing alone; 1: the picture under it, unseen; 2: the picture (coming up over the drawing, then alone) */
-let stage = params.has('clean') ? 2 : 0;
+let stage = params.has('clean') || beastStage ? 2 : 0;
 let reveal = stage === 2 ? 1 : 0, unseen = 0, wireFreed = false;
 const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
 // lines are never culled: the far side of everything would show through. So the ground goes into the depth first, a
@@ -892,7 +946,26 @@ if (params.has('debug')) {
     afterFrame = () => stats.update();
   });
   const toggle = (label: string, key: Fast) => ({ label, get: () => fast[key], set: (on: boolean) => setFast(key, on) });
+  // ?debug=beastanimation: what the beast on its stage is doing (tickStage, above)
+  const clipButton = (clip: string) => ({ label: clip, run: () => { show.clip = clip; beast.again(); } });
+  const stagePanel = !beastStage ? [] : [
+    {
+      title: 'Beast',
+      knobs: [
+        { label: 'pace (m/s)', min: 0, max: 1.4, step: 0.01, get: () => show.speed, set: (v: number) => { show.speed = v; } },
+        { label: 'time', min: 0, max: 2, step: 0.01, get: () => show.rate, set: (v: number) => { show.rate = v; } },
+        { label: 'exposure', min: 0.1, max: 4, step: 0.05, get: () => show.exposure, set: (v: number) => { show.exposure = v; } },
+      ],
+      toggles: [
+        { label: 'walking', get: () => show.walk, set: (on: boolean) => { show.walk = on; } },
+        { label: 'floor', get: () => show.floor, set: (on: boolean) => { show.floor = on; } },
+      ],
+      readout: () => `${show.clip}${show.walk ? ` + walk, ${show.speed.toFixed(2)} m/s` : ''} · cycle ${beast.cycle.toFixed(2)}`,
+      buttons: ['idle', 'crouch', 'leap', 'bite', 'land', 'crawl'].map(clipButton),
+    },
+  ];
   import('./debug').then(({ debugPanel }) => debugPanel([
+    ...stagePanel,
     {
       title: 'Film grain',
       knobs: [

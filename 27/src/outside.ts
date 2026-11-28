@@ -14,34 +14,42 @@ export function turf(x: number, y: number, z: number, n: number): number {
 
 export function buildGrass(world: World, rnd: () => number): THREE.Mesh {
   const P = new Perlin(404);
-  const SEG = 5;
-  const pos: number[] = [], idx: number[] = [];
-  for (let i = 0; i <= SEG; i++) {
-    const t = i / SEG;
-    pos.push(-0.5, t, 0, 0.5, t, 0);
-    if (i < SEG) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-  }
-  const g = new THREE.InstancedBufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
-  g.setIndex(idx);
+  /** one blade: a strip of so many segments, bent in the vertex shader */
+  const strip = (seg: number) => {
+    const pos: number[] = [], idx: number[] = [];
+    for (let i = 0; i <= seg; i++) {
+      const t = i / seg;
+      pos.push(-0.5, t, 0, 0.5, t, 0);
+      if (i < seg) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    }
+    const g = new THREE.InstancedBufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+    g.setIndex(idx);
+    return g;
+  };
+  const g = strip(5);
 
-  const root: number[] = [], shape: number[] = [], look: number[] = [];
+  // Two lots: nearly all of it, and the tall blades on and beside the way in, the ones that go past the lens pushed
+  // right over. In five straight pieces that bend shows as corners: those few hundred are drawn in eight
+  const lot = () => ({ root: [] as number[], shape: [] as number[], look: [] as number[] });
+  const most = lot(), near = lot();
   const down = new THREE.Vector3(0, -1, 0), o = new THREE.Vector3();
   const own = mulberry32(77);
-  const blade = (x: number, z: number, h: number, w: number, bend: number, ang: number, tint: number): boolean => {
+  const blade = (x: number, z: number, h: number, w: number, bend: number, ang: number, tint: number, veil = false): boolean => {
     const y0 = world.terrainH(x, z) + 0.45;
     o.set(x, y0, z);
     if (world.sample(x, y0, z) > -0.02) return false;
     const t = world.march(o, down, 1.2);
     if (t >= 1.2) return false;
     const y = y0 - t;
-    if (turf(x, y, z, P.n(x * 2.1, 0.5, z * 2.1)) < 0.5) return false;
+    if (!veil && turf(x, y, z, P.n(x * 2.1, 0.5, z * 2.1)) < 0.5) return false;
     // straight in front of the hole it is kept short by what goes in and out (and the hole is not hidden from where we start)
-    if (z > 0.05) { const front = 1 - Math.min(1, Math.max(0, (Math.abs(x - 0.03) - 0.2) / 0.2)); h = Math.min(h, 0.07 + 0.06 * tint + (1 - front) * 0.5); }
-    root.push(x, y - 0.01, z);
-    shape.push(h, w, bend, ang);
+    if (z > 0.05 && !veil) { const front = 1 - Math.min(1, Math.max(0, (Math.abs(x - 0.03) - 0.2) / 0.2)); h = Math.min(h, 0.07 + 0.06 * tint + (1 - front) * 0.5); }
+    const to = veil || (h > 0.14 && z > 0.25 && Math.abs(x) < 0.7) ? near : most;
+    to.root.push(x, y - 0.01, z);
+    to.shape.push(h, w, bend, ang);
     // (a die of its own: how many blades take must not move what is built after the grass)
-    look.push(tint, own());
+    to.look.push(tint, own());
     return true;
   };
   // tussocks: long blades arching out of one crown. All over the bank, and thick in a ring round the hole itself,
@@ -75,14 +83,42 @@ export function buildGrass(world: World, rnd: () => number): THREE.Mesh {
     const x = -0.5 + own() * 1.05, z = 0.15 + own() * 1.6;
     blade(x, z, 0.03 + own() * 0.11, 0.002 + own() * 0.0025, 0.4 + own() * 1.5, own() * Math.PI * 2, own());
   }
-  g.setAttribute('aRoot', new THREE.InstancedBufferAttribute(new Float32Array(root), 3));
-  g.setAttribute('aShape', new THREE.InstancedBufferAttribute(new Float32Array(shape), 4));
-  g.setAttribute('aLook', new THREE.InstancedBufferAttribute(new Float32Array(look), 2));
-  const n = root.length / 3;
-  g.instanceCount = n;
+  // And across that way in, a body length out from the hole, a stand of it nobody has trodden yet: tall thin tufts
+  // between us and the hole, enough to stand in front of it without hiding it. Going in, the head parts them to the
+  // left and the right (the brush in the vertex shader, wider for a tall blade), and there is the hole.
+  for (let i = 0; i < 70; i++) {
+    const cx = -0.42 + own() * 0.88, cz = 0.36 + own() * 0.52, big = 0.75 + 0.45 * own(), tint = own();
+    const n = Math.round(6 + own() * 7);
+    for (let k = 0; k < n; k++) {
+      const a = own() * Math.PI * 2, r = own() * 0.035;
+      blade(cx + Math.cos(a) * r, cz + Math.sin(a) * r, (0.26 + own() * 0.26) * big, 0.003 + own() * 0.003, 0.25 + own() * 0.55, a + (own() - 0.5) * 0.6, 0.45 + 0.55 * (tint * 0.6 + own() * 0.4), true);
+    }
+  }
+  // and a few thin tufts right at the lip of the hole, on the bare dirt itself: not many, the hole shows between them
+  for (let i = 0; i < 14; i++) {
+    const cx = -0.26 + own() * 0.56, cz = 0.14 + own() * 0.22, big = 0.7 + 0.5 * own(), tint = own();
+    const n = Math.round(3 + own() * 3);
+    for (let k = 0; k < n; k++) {
+      const a = own() * Math.PI * 2, r = own() * 0.025;
+      blade(cx + Math.cos(a) * r, cz + Math.sin(a) * r, (0.2 + own() * 0.22) * big, 0.003 + own() * 0.003, 0.25 + own() * 0.6, a + (own() - 0.5) * 0.6, 0.45 + 0.55 * (tint * 0.6 + own() * 0.4), true);
+    }
+  }
+  const fill = (to: THREE.InstancedBufferGeometry, from: ReturnType<typeof lot>) => {
+    to.setAttribute('aRoot', new THREE.InstancedBufferAttribute(new Float32Array(from.root), 3));
+    to.setAttribute('aShape', new THREE.InstancedBufferAttribute(new Float32Array(from.shape), 4));
+    to.setAttribute('aLook', new THREE.InstancedBufferAttribute(new Float32Array(from.look), 2));
+    return (to.instanceCount = from.root.length / 3);
+  };
+  const n = fill(g, most);
   const mesh = new THREE.Mesh(g, grassMaterial());
   mesh.frustumCulled = false;
-  console.log(`grass: ${n} blades`);
+  // (a child of the rest: shown and hidden with it)
+  const tall = strip(8);
+  const m = fill(tall, near);
+  const stand = new THREE.Mesh(tall, mesh.material);
+  stand.frustumCulled = false;
+  mesh.add(stand);
+  console.log(`grass: ${n} blades, and ${m} by the way in, in eight segments`);
   return mesh;
 }
 

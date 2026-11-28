@@ -56,7 +56,8 @@ export interface SoundScene {
   puddles: { x: number; y: number; z: number; r: number }[];
 }
 
-const MUTE = new URLSearchParams(location.search).has('mute');
+// (and so does ?debug=beastanimation, which is a stage with nothing on it to hear)
+const MUTE = ((q) => q.has('mute') || q.get('debug') === 'beastanimation')(new URLSearchParams(location.search));
 /** the takes are re-cut now and then under the same names: this goes up with them, so no browser plays an old one */
 const TAKES = 4;
 const NAMES = ['outside', 'room', 'breath', 'presence', 'growl', 'snarl', 'groan', 'warn', 'alarm', 'steps', 'dirt', 'pebbles', 'drip', 'splash'] as const;

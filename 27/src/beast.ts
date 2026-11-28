@@ -34,7 +34,7 @@ const DEATH = 6.8;
 const SHY = 3.0;
 /** the ground one cycle of the `crawl` clip covers, metres: its playback is timed by this so the planted paws do not slide */
 const STRIDE = 0.264;
-const LIMBS = ['arm_upper_L', 'arm_upper_R', 'leg_upper_L', 'leg_upper_R', 'arm_lower_L', 'arm_lower_R', 'spine2'];
+const LIMBS = ['arm_upper_L', 'arm_upper_R', 'leg_upper_L', 'leg_upper_R', 'arm_lower_L', 'arm_lower_R', 'spine2', 'spine3', 'head', 'jaw'];
 const sstep = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 export class Beast {
@@ -421,25 +421,52 @@ export class Beast {
     return sstep(2.3, 3.5, dist);
   }
 
+  /** On the move: `moved` metres of ground gone by in dt. The walk is laid over whatever else is playing. */
+  private gait(moved: number, dt: number) {
+    if (this.walk && this.now !== this.walk) {
+      // the cycle, at the rate the ground is going by, faded in over the idle as it sets off and out as it stops
+      this.stride += ((moved > 0 ? 1 : 0) - this.stride) * (1 - Math.exp(-dt / 0.3));
+      if (!this.walk.isRunning()) this.walk.reset().play();
+      this.walk.setEffectiveWeight(this.stride);
+      this.now?.setEffectiveWeight(1 - this.stride);
+      this.walk.timeScale = moved > 0 && dt > 0 ? moved / dt / (STRIDE / this.walk.getClip().duration) : 0.35;
+      this.mixer.update(dt);
+    } else {
+      this.mixer.update(dt);
+      if (!this.walk) this.crawl(moved, dt);
+    }
+  }
+
+  /** the clips it has, by name (?debug=beastanimation) */
+  get clips() { return Object.keys(this.actions); }
+  private shown = '';
+  /**
+   * ?debug=beastanimation (main.ts): off the rails and out of the game, stood at `at` with its nose along +z, playing
+   * `clip` (one that plays once holds its last pose: again() plays it once more), with the walk laid over it at
+   * `speed` metres a second exactly as it is when it comes after us. Returns the ground it would have covered.
+   */
+  exhibit(dt: number, at: THREE.Vector3, clip: string, speed: number): number {
+    if (!this.ready) return 0;
+    const g = this.group;
+    this.state = 'away';
+    g.visible = true;
+    g.position.copy(at);
+    g.rotation.set(0, 0, 0);
+    if (clip !== this.shown && this.actions[clip]) { this.settle(); this.play(clip); this.shown = clip; }
+    // (the walk asked for by its own name: the clip as it was keyed, at its own rate)
+    if (this.walk && this.now === this.walk) this.walk.timeScale = 1;
+    this.gait(speed * dt, dt);
+    return speed * dt;
+  }
+  again() { this.shown = ''; }
+
   /** There is no clip of it walking: the legs are swung on top of whatever clip is playing, diagonal pairs together. */
   private crawl(dist: number, dt: number) {
     this.pace += (dist / 0.17) * Math.PI * 2;
     // (the swing dies away when it stops, and comes back as it sets off)
     this.stride += ((dist > 0 ? 1 : 0) - this.stride) * (1 - Math.exp(-dt / 0.25));
-    const ph = this.pace, g = this.group, k = this.stride;
-    const swing = (name: string, angle: number, axis: 'x' | 'y') => {
-      const b = this.bones[name];
-      if (!b?.parent) return;
-      // on top of the clip's pose, not of last frame's swing: where the clip holds a bone still the mixer leaves
-      // it alone, and the swings would pile up
-      const w = (this.swung[name] ??= { base: b.quaternion.clone(), left: new THREE.Quaternion(9, 9, 9, 9) });
-      if (b.quaternion.equals(w.left)) b.quaternion.copy(w.base); else w.base.copy(b.quaternion);
-      // about the animal's own sideways (or upright) axis, whatever way the bone's own axes lie
-      b.parent.getWorldQuaternion(this.q).invert();
-      this.ax.set(axis === 'x' ? 1 : 0, axis === 'y' ? 1 : 0, 0).applyQuaternion(g.quaternion).applyQuaternion(this.q);
-      b.quaternion.premultiply(this.q2.setFromAxisAngle(this.ax, angle * k));
-      w.left.copy(b.quaternion);
-    };
+    const ph = this.pace, k = this.stride;
+    const swing = (name: string, angle: number, axis: 'x' | 'y') => this.swing(name, angle * k, axis);
     swing('spine2', 0.07 * Math.sin(ph), 'y');
     swing('arm_upper_L', 0.42 * Math.sin(ph), 'x');
     swing('arm_upper_R', -0.42 * Math.sin(ph), 'x');
@@ -449,6 +476,41 @@ export class Beast {
     swing('arm_lower_L', -0.3 * Math.max(0, Math.cos(ph)), 'x');
     swing('arm_lower_R', -0.3 * Math.max(0, -Math.cos(ph)), 'x');
   }
+
+  /** One bone turned by hand, on top of whatever the clip has it at: about the animal's own sideways (x) or upright (y) axis. */
+  private swing(name: string, angle: number, axis: 'x' | 'y') {
+    const b = this.bones[name], g = this.group;
+    if (!b?.parent) return;
+    // on top of the clip's pose, not of last frame's swing: where the clip holds a bone still the mixer leaves
+    // it alone, and the swings would pile up
+    const w = (this.swung[name] ??= { base: b.quaternion.clone(), left: new THREE.Quaternion(9, 9, 9, 9) });
+    if (b.quaternion.equals(w.left)) b.quaternion.copy(w.base); else w.base.copy(b.quaternion);
+    // (whatever way the bone's own axes lie)
+    b.parent.getWorldQuaternion(this.q).invert();
+    this.ax.set(axis === 'x' ? 1 : 0, axis === 'y' ? 1 : 0, 0).applyQuaternion(g.quaternion).applyQuaternion(this.q);
+    b.quaternion.premultiply(this.q2.setFromAxisAngle(this.ax, angle));
+    w.left.copy(b.quaternion);
+  }
+
+  /**
+   * It is eating. Not over us with its mouth open any more: down on all fours across us with its head in what it
+   * has caught, so near that what the torch finds when it catches is the side of a head: a cheek, an eye, the jaw
+   * working, the whole head tugging. `near`: how far off the lens, metres; `down`: how far its nose is tipped into
+   * us; `drop`: how far below the middle of the view the cheek is. Its nose is always to our right, its body to our
+   * left: the torch is in our right hand, and the other way round the head is in the shadow of its own shoulder.
+   */
+  private feed(r: number, eye: THREE.Vector3, look: THREE.Vector3, near: number, down: number, drop: number) {
+    const side = -1;
+    const g = this.group;
+    const right = this.b.crossVectors(look, this.a.set(0, 1, 0)).normalize();
+    const up = this.from.crossVectors(right, look);
+    // its nose across the view and a little away from us, down into us; the head shaken as it pulls
+    const tug = Math.max(0, Math.sin(r * 31));
+    g.rotation.set(down + 0.1 * tug, Math.atan2(-side * right.x + 0.35 * look.x, -side * right.z + 0.35 * look.z), 0.13 * Math.sin(r * 27) * side);
+    this.a.set(side * 0.05, 0.1, 0.17).applyQuaternion(g.quaternion);
+    g.position.copy(eye).addScaledVector(look, near - 0.012 * tug).addScaledVector(up, -drop).addScaledVector(right, side * 0.02).sub(this.a);
+  }
+  private feeding = false;
 
   /** take the swing back off, before a clip of its own takes over */
   private settle() {
@@ -488,24 +550,46 @@ export class Beast {
       // (flat on our back the head rolls: from the roof to back along the tunnel, where there is room for what is on us)
       this.close = 0; this.flail = 0;
       this.fall = 1 - 0.6 * sstep(0.05, 0.9, r);
-      // it has not gone: over us, its head drawn back a little, looking straight at us down the line we look up it.
-      // Never further back than the earth lets it
-      this.face(eye, 1);
-      g.rotation.x = Math.min(1.3, Math.asin(Math.max(-1, Math.min(1, look.y))));
-      const room = this.world.march(eye, look, 0.9) - 0.24;
-      this.onto(eye, look, g.position, Math.max(0.16, Math.min(room, 0.2 + 0.26 * sstep(0.2, 1.2, r))));
-      this.mixer.update(dt * 0.35);
+      const flash = (r > 2.4 && r < 2.47) || (r > 2.62 && r < 2.76) || (r > 4.75 && r < 4.82);
+      // In the dark between, when its eyes show, it is over us, its head drawn back a little, looking straight at us
+      // down the line we look up it (never further back than the earth lets it). When the torch catches it is not
+      // looking at us at all: it is eating (feed(), above). The two are never seen to change into one another
+      const feeding = (r > 2.3 && r < 2.9) || (r > 4.6 && r < 4.95);
+      if (feeding !== this.feeding) {
+        this.feeding = feeding;
+        this.settle();
+        this.play(feeding ? 'idle' : 'bite');
+        // (the bite as it ended, not bitten again)
+        if (!feeding && this.now) this.now.time = this.now.getClip().duration;
+      }
+      if (feeding) {
+        this.mixer.update(dt);
+        // the first two catches are one look at it, its head right down in us; the last finds it further off, the
+        // head come up a little, the jaw going
+        if (r < 3.5) this.feed(r, eye, look, 0.16, 0.6, 0.055); else this.feed(r, eye, look, 0.22, 0.28, 0.03);
+        this.swing('jaw', 0.22 + 0.2 * Math.sin(r * 23), 'x');
+        this.swing('head', 0.12 * Math.sin(r * 29), 'y');
+      } else {
+        this.face(eye, 1);
+        g.rotation.x = Math.min(1.3, Math.asin(Math.max(-1, Math.min(1, look.y))));
+        g.rotation.z = 0;
+        const room = this.world.march(eye, look, 0.9) - 0.24;
+        this.onto(eye, look, g.position, Math.max(0.16, Math.min(room, 0.2 + 0.26 * sstep(0.2, 1.2, r))));
+        this.mixer.update(dt * 0.35);
+      }
       const swell = (a: number, b: number) => sstep(a, a + 0.18, r) * (1 - sstep(b - 0.25, b, r));
       const eyes = Math.max(swell(1.3, 1.9), swell(3.5, 4.2));
-      const flash = (r > 2.4 && r < 2.47) || (r > 2.62 && r < 2.76) || (r > 4.75 && r < 4.82);
       this.lamp = flash ? 0.35 + 0.65 * Math.random() : 0;
-      this.dark = flash ? 0 : 1 - eyes;
+      // (so near the lamp it would be nothing but white: the picture is stopped down for it)
+      this.dark = flash ? 0.8 : 1 - eyes;
       BEAST_EYES.value = flash ? 0 : eyes;
       if (r > DEATH) {
         this.rec = -1;
         this.lamp = 1; this.dark = 0; this.fall = 0;
         BEAST_EYES.value = 0;
-        g.rotation.x = 0;
+        g.rotation.x = g.rotation.z = 0;
+        this.feeding = false;
+        this.settle();
         this.home();
         this.onCaught();
       }
@@ -550,18 +634,7 @@ export class Beast {
       // nose the way it is going; and at us, once it is close and can see us
       if (sees && dist < 2.6) this.face(eye, 1 - Math.exp(-dt / 0.2));
       else if (moved > 1e-5) this.face(this.a.copy(g.position).multiplyScalar(2).sub(this.from), 1 - Math.exp(-dt / 0.25));
-      if (this.walk) {
-        // the cycle, at the rate the ground is going by, faded in over the idle as it sets off and out as it stops
-        this.stride += ((moved > 0 ? 1 : 0) - this.stride) * (1 - Math.exp(-dt / 0.3));
-        if (!this.walk.isRunning()) this.walk.reset().play();
-        this.walk.setEffectiveWeight(this.stride);
-        this.now?.setEffectiveWeight(1 - this.stride);
-        this.walk.timeScale = moved > 0 ? moved / dt / (STRIDE / this.walk.getClip().duration) : 0.35;
-        this.mixer.update(dt);
-      } else {
-        this.mixer.update(dt);
-        this.crawl(moved, dt);
-      }
+      this.gait(moved, dt);
       if (this.stood > this.patience) { this.settle(); this.state = 'crouch'; this.t = 0; this.play('crouch'); }
       // only out under the sky are we rid of it: it stops inside the mouth, and waits again
       else if ((this.lost = inside ? 0 : this.lost + dt) > 4) { this.settle(); this.state = 'lurk'; this.seen = 0; }
