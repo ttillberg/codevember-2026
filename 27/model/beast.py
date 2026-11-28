@@ -4,6 +4,7 @@
 #   /Applications/Blender.app/Contents/MacOS/Blender -b -P 27/model/beast.py             # build and export
 #   /Applications/Blender.app/Contents/MacOS/Blender -b -P 27/model/beast.py -- render   # and process/beast-*.png
 #   ... -- blockout   only the fused hide in clay, no teeth, claws or rig, and its three views
+#   ... -- crawl      build, export, and only the crawl's frames (process/beast-crawl-*.png)
 #
 # How it is made. Everything is written in the page's axes (metres, Y up, facing +Z, origin on the ground under
 # the chest) and turned into Blender's (Z up, facing -Y) on the way in; the exporter turns it back.
@@ -13,7 +14,7 @@
 #   2. Every vertex of that skin asks the pile which shape it came from, and gets from the answer its material,
 #      colour, fur weight and bones. Those are then smoothed over the mesh, so they blend where shapes met.
 #   3. Teeth, claws, eyes and tongue are added as they are, rigid on their bones.
-#   4. The armature, and five clips baked a key per frame from small pose functions. The legs are solved here
+#   4. The armature, and six clips baked a key per frame from small pose functions. The legs are solved here
 #      (two bones and a pole), so planted paws stay planted while the body moves over them.
 #
 # The bind pose is the idle one: crouched flat, elbows out, the mouth a third open (35 degrees).
@@ -21,7 +22,7 @@
 # In the file: one mesh, a primitive per material (skin, fur_base, mouth, teeth, claws, eye, all untextured and
 # white, the tone is in COLOR_0, linear), `_FUR` a float per vertex (1 where fur grows, 0 on head, mouth, paws
 # and the ridge down the back), JOINTS_0/WEIGHTS_0 (four influences), and the clips idle, crouch, leap, bite,
-# land, sampled at 60 a second.
+# land, crawl, sampled at 60 a second.
 
 import bpy, bmesh, math, os, sys, random
 import numpy as np
@@ -1054,6 +1055,98 @@ IMPACT = sym({
 })
 SETTLE = sym({'spine1@': (0, -0.011, -0.004), 'spine3': (-2, 0, 0), 'head': (-4, 0, 0), 'jaw': (-17, 0, 0), 'tail': (-6, 0, 0)})
 
+# ---- the crawl: a slow stalk, in place. The page moves the root forward at CRAWL_STRIDE / CRAWL_T (or scales the
+# clip's speed to its own), and then every planted paw stands still on the ground.
+# A lizard's walk: diagonal pairs, the hind paw of each pair a little ahead of its forepaw, all four down between
+# the pairs; the spine bends from side to side with it, hips one way and shoulders the other.
+CRAWL_T = 1.1                         # seconds a cycle
+CRAWL_STRIDE = 0.264                  # metres of ground a cycle
+CRAWL_DUTY = 0.64                     # of the cycle each paw is on the ground
+CRAWL_LIFT = {'arm_L': 0.10, 'leg_R': 0.04, 'arm_R': 0.60, 'leg_L': 0.54}   # when each paw leaves the ground, of the cycle
+CRAWL_MID = {'arm': 0.090 - WRIST[2], 'leg': -0.270 - ANKLE[2]}             # the middle of its stance, from where it rests
+
+
+def crawl_foot(limb, tau):
+    """a paw at tau of the cycle: forward of where it rests, and how far through its swing (None while planted)"""
+    swing = 1 - CRAWL_DUTY
+    u = (tau - CRAWL_LIFT[limb]) % 1.0
+    half = CRAWL_STRIDE * CRAWL_DUTY / 2
+    mid = CRAWL_MID[limb[:3]]
+    if u >= swing - 1e-9:
+        # planted: straight back, at the speed the ground goes by
+        return mid + half - CRAWL_STRIDE * (u - swing), None
+    s = u / swing
+    q = s * s * s * (s * (6 * s - 15) + 10)          # over the ground it leaves and arrives at rest
+    return mid - half + CRAWL_STRIDE * (q - u), s
+
+
+def crawl(t):
+    tau = t / CRAWL_T
+    wave = lambda lag: math.cos(TAU * (tau - lag))
+    # each girdle is turned furthest as its paw comes down: the hip or shoulder of the reaching leg forward
+    hips, chest = 7.5 * wave(0.40), -8.5 * wave(0.46)
+    roll1, roll3 = 2.0 * math.sin(TAU * (tau - 0.04)), -2.5 * math.sin(TAU * (tau - 0.10))   # dipping to the lifted paw
+    pose = {
+        # low, and kept over its feet: the bend alone would throw the chest sideways
+        'spine1@': (-0.07 * math.sin(math.radians(hips)), -0.008 + 0.0018 * math.cos(2 * TAU * tau), 0),
+        'spine1': (1.0, hips, roll1), 'spine2': (0, (chest - hips) / 2, -roll1), 'spine3': (1.5, (chest - hips) / 2, roll3),
+        # the head low, level and pointed where it is going, whatever the shoulders do
+        'head': (-2.0 + 0.6 * math.sin(2 * TAU * tau), -0.85 * chest, -0.7 * roll3),
+        'jaw': (-14 + 3.0 * math.sin(2 * TAU * tau + 0.5), 0, 0),
+        'tongue1': (-2, 2 * wave(0.2), 0), 'tongue2': (-3 * math.sin(2 * TAU * tau), 3 * wave(0.3), 0),
+        'tail': (-5, -13 * wave(0.47), 0),
+    }
+    for limb in CRAWL_LIFT:
+        side = limb[-1]
+        sx = 1 if side == 'L' else -1
+        arm = limb.startswith('arm')
+        z, s = crawl_foot(limb, tau)
+        a = 0.0 if s is None else math.sin(math.pi * s) ** 2
+        up = 0.0 if s is None else math.sin(math.pi * s ** 0.85) ** 2      # up early, down late
+        if arm:
+            # the forepaw swings out round (under the shoulder there is no room for it) and comes down flat,
+            # claws lifted clear on the way
+            pose[limb + '>'] = (sx * 0.028 * a, 0.032 * up, z)
+            pose[limb + '^'] = (sx * 0.15 * a, 0.35 * a, 0)
+            pose['paw_' + side] = (-16 * a, 0, 0)
+            pose['claws_in_' + side] = (4 - 15 * a, -sx * 4 * a, 0)
+            pose['claws_out_' + side] = (4 - 15 * a, sx * 4 * a, 0)
+        else:
+            pose[limb + '>'] = (0, 0.030 * up, z)
+            # the knee out to the side, the more so the further forward the paw is: up, it stands off the flank
+            fold = ss(-0.06, 0.10, z)
+            pose[limb + '^'] = (sx * (0.5 + 0.9 * fold), -0.45 * fold, 0)
+            pose['foot_' + side] = (-9 * a, 0, 0)
+    return pose
+
+
+def crawl_check(rig):
+    """how far each planted paw wanders over the ground, the root carried forward at the crawl's speed"""
+    n = round(CRAWL_T * FPS)
+    speed = CRAWL_STRIDE / CRAWL_T
+    print(f'crawl: {CRAWL_T} s a cycle, {CRAWL_STRIDE} m of ground a cycle, {speed:.4f} m/s, paws down {CRAWL_DUTY:.0%} of it')
+    for limb, (_, _, end) in rig.limbs.items():
+        joint, tip, miss, lift, run, z = 0.0, 0.0, 0.0, 0.0, None, []
+        for f in range(2 * n + 1):                   # twice round, so that no stance is cut by the loop
+            pose = crawl(f / FPS)
+            _, W = rig.solve(pose)
+            fwd, s = crawl_foot(limb, f / n)
+            at = W[end].translation
+            target = rig.M[end].translation + B(pose.get(limb + '>', (0, 0, 0)))
+            miss = max(miss, (at - target).length)
+            lift = max(lift, at.z - rig.M[end].translation.z)
+            z.append(-at.y)
+            # on the ground: the joint, and the far end of the paw (which also tells if it turns)
+            ground = [p + Vector((0, -speed * f / FPS, 0)) for p in (at, W[end] @ Vector((0, 0.05, 0)))]
+            if s is None:
+                run = run or ground
+                joint, tip = max(joint, (ground[0] - run[0]).length), max(tip, (ground[1] - run[1]).length)
+            else:
+                run = None
+        print(f'  {limb}: planted joint moves {joint * 1000:.3f} mm, paw end {tip * 1000:.3f} mm; reach missed by {miss * 1000:.3f} mm; '
+              f'lifted {lift * 1000:.0f} mm; from {min(z):.3f} to {max(z):.3f} m forward')
+
+
 CLIPS = [
     ('idle', IDLE_T, idle),
     ('crouch', 0.4, keyed([(0, IDLE0, 'io'), (0.4, CROUCH, 'io')])),
@@ -1063,6 +1156,7 @@ CLIPS = [
         (0.31, BITE_BACK, 'out'), (0.34, BITE_BACK, 'lin'), (0.41, BITE_SHUT, 'snap'), (0.47, BITE_SHUT, 'lin'), (0.6, BITE_END, 'io'),
     ])),
     ('land', 0.5, keyed([(0, BITE_END, 'io'), (0.16, IMPACT, 'in'), (0.31, SETTLE, 'out'), (0.5, IDLE0, 'io')])),
+    ('crawl', CRAWL_T, crawl),
 ]
 
 
@@ -1124,6 +1218,7 @@ def export(ob, rig, acts):
         if hasattr(strip, 'action_slot') and strip.action_slot is None and len(act.slots):
             strip.action_slot = act.slots[0]
     rig.rest()
+    rig.ob.location = (0, 0, 0)
     bpy.context.scene.frame_set(0)
     for o in bpy.context.scene.objects:
         o.select_set(o in (ob, rig.ob))
@@ -1153,6 +1248,9 @@ VIEWS = {
     'profile': (V(1.2, 0.12, 0.10), V(0, 0.11, 0.10), 110),     # the head from the side
     'flank': (V(1.05, 0.30, 0.45), V(0, 0.17, -0.02), 60),
     'back': (V(0.25, 0.75, -0.25), V(0, 0.15, -0.08), 50),
+    'walk': (V(1.70, 0.13, -0.05), V(0, 0.10, -0.05), 88),       # square on from its left
+    'oncoming': (V(0, 0.17, 1.30), V(0, 0.10, 0.10), 85),        # the crawl, from where it is going
+    'walk-above': (V(0.0, 2.00, -0.04), V(0, 0, -0.05), 70),     # straight down on the spine
 }
 
 
@@ -1223,6 +1321,7 @@ def main():
     print('bounds (x, y, z):', np.round(lo, 3), np.round(hi, 3))
 
     rig.check(LEAP)
+    crawl_check(rig)
     rig.rest()
     acts = {name: rig.bake(name, seconds, fn) for name, seconds, fn in CLIPS}
     rig.rest()
@@ -1244,6 +1343,26 @@ def main():
         ):
             rig.show(acts[clip], t)
             shoot(cam, 'beast-' + name, view)
+        rig.rest()
+    if RENDER or 'crawl' in ARGS:
+        # the crawl: from the side, with posts in the ground a tenth of a metre apart going by at its speed, so a
+        # planted paw can be seen to stay by its post; from the front and from above
+        cam = bpy.context.scene.camera or setup_render('VERTEX')
+        posts = [mesh_object('post', [V(x, y, z) for z in (k * 0.1 - 0.003, k * 0.1 + 0.003) for x, y in ((0.20, 0), (0.21, 0), (0.21, 0.012), (0.20, 0.012))],
+                             [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]) for k in range(-6, 9)]
+        for k in range(8):
+            t = CRAWL_T * k / 8
+            rig.show(acts['crawl'], t)
+            for post in posts:
+                post.location = B(V(0, 0, -CRAWL_STRIDE / CRAWL_T * t))
+            shoot(cam, f'beast-crawl-side-{k:02d}', 'walk')
+            if k % 2 == 0:
+                for post in posts:
+                    post.location = (0, 0, -10)
+                shoot(cam, f'beast-crawl-front-{k // 2:02d}', 'oncoming')
+                shoot(cam, f'beast-crawl-above-{k // 2:02d}', 'walk-above')
+        for post in posts:
+            bpy.data.objects.remove(post)
         rig.rest()
     export(ob, rig, acts)
 

@@ -1,5 +1,6 @@
 // The camera behind the eye: an HDR frame, the glow of anything too bright, a lens that goes soft and dark towards its
-// corners, exposure, film response and grain.
+// corners, exposure, film response and grain. And, out in front of the hole only, a depth of field: the eye is down
+// in the grass, the blades against the lens and the bank behind go soft, and the hole is what is sharp.
 import * as THREE from 'three';
 
 const VERT = /* glsl */ `
@@ -13,6 +14,38 @@ void main() {
   vec3 c = texture2D(tSrc, vUv + uTexel * vec2(-1.0, -1.0)).rgb + texture2D(tSrc, vUv + uTexel * vec2(1.0, -1.0)).rgb
          + texture2D(tSrc, vUv + uTexel * vec2(-1.0, 1.0)).rgb + texture2D(tSrc, vUv + uTexel * vec2(1.0, 1.0)).rgb;
   gl_FragColor = vec4(min(c * 0.25, vec3(64.0)), 1.0);
+}`;
+
+// Depth of field as a gather: every pixel looks round it over the widest circle there is, and takes from each place
+// only what that place's own circle of confusion would have spread this far.
+const DOF = /* glsl */ `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tSrc, tDepth;
+uniform vec2 uTexel;
+uniform float uFocus, uAmount, uMax, uNear, uFar;
+float viewZ(float d) { return uNear * uFar / (uFar - d * (uFar - uNear)); }
+// in pixels: nothing at the distance we are focused on, more the further off it in either direction (in dioptres)
+float coc(float z) { return min(uMax, abs(1.0 / uFocus - 1.0 / z) * uAmount); }
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+void main() {
+  float z0 = viewZ(texture2D(tDepth, vUv).x);
+  float c0 = coc(z0);
+  float turn = ign(gl_FragCoord.xy) * 6.2832;
+  vec3 sum = texture2D(tSrc, vUv).rgb;
+  float w = 1.0;
+  for (int i = 0; i < 30; i++) {
+    float r = sqrt((float(i) + 0.5) / 30.0) * uMax;
+    float th = float(i) * 2.39996 + turn;
+    vec2 uv = vUv + vec2(cos(th), sin(th)) * r * uTexel;
+    float zs = viewZ(texture2D(tDepth, uv).x);
+    // what is behind us in depth cannot smear over us if we are sharp ourselves
+    float reach = zs > z0 ? min(coc(zs), c0) : coc(zs);
+    float k = smoothstep(r - 1.5, r + 1.5, reach);
+    sum += min(texture2D(tSrc, uv).rgb, vec3(64.0)) * k;
+    w += k;
+  }
+  gl_FragColor = vec4(sum / w, 1.0);
 }`;
 
 const BLUR = /* glsl */ `
@@ -67,7 +100,12 @@ export class Post {
   private down: THREE.ShaderMaterial;
   private blur: THREE.ShaderMaterial;
   private final: THREE.ShaderMaterial;
+  private dofMat: THREE.ShaderMaterial;
+  private soft: THREE.WebGLRenderTarget;
   exposure = 1;
+  /** depth of field: how much of it (0 none, and then the pass is not run at all), and the distance that is sharp, metres */
+  dof = 0;
+  focus = 1;
 
   constructor(private renderer: THREE.WebGLRenderer) {
     // (the scene's target keeps its depth as a texture: the light in the air is marched against it, fog.ts)
@@ -76,7 +114,7 @@ export class Post {
       ...(depth ? { depthTexture: new THREE.DepthTexture(4, 4) } : {}),
     });
     this.scene = mk(4, true);
-    this.half = mk(); this.qA = mk(); this.qB = mk(); this.eA = mk(); this.eB = mk();
+    this.half = mk(); this.qA = mk(); this.qB = mk(); this.eA = mk(); this.eB = mk(); this.soft = mk();
     const tri = new THREE.BufferGeometry();
     tri.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
     const mat = (frag: string, uniforms: Record<string, THREE.IUniform>) =>
@@ -87,6 +125,10 @@ export class Post {
       tScene: { value: null }, tBlurA: { value: null }, tBlurB: { value: null },
       uExposure: { value: 1 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2() },
     });
+    this.dofMat = mat(DOF, {
+      tSrc: { value: null }, tDepth: { value: null }, uTexel: { value: new THREE.Vector2() },
+      uFocus: { value: 1 }, uAmount: { value: 0 }, uMax: { value: 14 }, uNear: { value: 0.012 }, uFar: { value: 80 },
+    });
     this.quad = new THREE.Mesh(tri, this.down);
     this.quad.frustumCulled = false;
     this.qScene.add(this.quad);
@@ -94,6 +136,7 @@ export class Post {
 
   setSize(w: number, h: number) {
     this.scene.setSize(w, h);
+    this.soft.setSize(w, h);
     this.half.setSize(w >> 1, h >> 1);
     this.qA.setSize(w >> 2, h >> 2); this.qB.setSize(w >> 2, h >> 2);
     this.eA.setSize(w >> 4, h >> 4); this.eB.setSize(w >> 4, h >> 4);
@@ -122,7 +165,19 @@ export class Post {
   }
 
   /** src: the frame to finish, the scene's own unless something (the air) has been laid over it since */
-  render(time: number, src: THREE.WebGLRenderTarget = this.scene) {
+  render(time: number, src: THREE.WebGLRenderTarget = this.scene, camera?: THREE.PerspectiveCamera) {
+    if (this.dof > 0.004 && camera) {
+      const d = this.dofMat.uniforms, px = src.height / 800;
+      d.tSrc.value = src.texture;
+      d.tDepth.value = this.scene.depthTexture;
+      d.uTexel.value.set(1 / src.width, 1 / src.height);
+      d.uFocus.value = this.focus;
+      d.uAmount.value = 7 * px * this.dof;
+      d.uMax.value = Math.max(2, 15 * px * this.dof);
+      d.uNear.value = camera.near; d.uFar.value = camera.far;
+      this.pass(this.dofMat, this.soft);
+      src = this.soft;
+    }
     this.downTo(src, this.half);
     this.downTo(this.half, this.qA);
     this.blurPair(this.qA, this.qB);

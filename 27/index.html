@@ -23,7 +23,14 @@
   <body>
     <canvas id="c"></canvas>
     <!-- the title plate (docs/DESIGN.md) -->
-    <div class="plate"><div class="head"><b>27 Burrow</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">巣穴</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i><i class="how"><span class="mouse">Drag to look · hold to run · the torch follows the pointer</span><span class="touch">Drag to look · hold to run</span></i></div></div>
+    <div class="plate"><div class="head"><b>27 Burrow</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">巣穴</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
+    <!-- top right: the help, brings the controls back -->
+    <button class="help" type="button" aria-label="Controls" aria-expanded="false">?</button>
+    <!-- the controls, at the start and from the help: a key map on a desktop, the headphones card on a phone (src/ui.ts) -->
+    <div class="veil" aria-label="Controls"></div>
+    <!-- desktop, bottom centre: lock the pointer and the mouse itself is the look (the pill from day 16) -->
+    <button class="lockpill" type="button"><svg width="14" height="14" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M11 1.5v5M11 15.5v5M1.5 11h5M15.5 11h5" /><circle cx="11" cy="11" r="1.1" fill="currentColor" stroke="none" /></svg>Lock pointer</button>
+    <div class="unlock"><kbd>Esc</kbd>to unlock</div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

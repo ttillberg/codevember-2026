@@ -51,7 +51,7 @@ const NODES: [string, number, number, number, number][] = [
   ['N', 0.35, -1.5, -8.7, 0.36],
   // the lower level: a long way down from J, round under the west of the den and back up to L
   ['P', -2.62, -1.62, -9.05, 0.29],
-  ['Q', -1.5, -2.16, -10.2, 0.33],
+  ['Q', -1.55, -2.2, -11.45, 0.33],
 ];
 /** the edges of the first level: they keep the dice they always had, whatever is dug after them */
 const FIRST = 16;
@@ -121,11 +121,13 @@ export class World {
       const lat = new THREE.Vector3().crossVectors(dir, up).normalize();
       const ctrl = [pa.clone()];
       const mids = open || bn === 'N' || an === 'E' ? 0 : L > 2.1 ? 2 : 1;
+      // (the long run up from Q is all but straight: from its top there is a clear look down the whole of it)
+      const wander = an === 'Q' ? 0.12 : 0.62;
       for (let i = 0; i < mids; i++) {
         const t = (i + 1) / (mids + 1);
         ctrl.push(
           pa.clone().lerp(pb, t)
-            .addScaledVector(lat, (rnd() - 0.5) * 0.62)
+            .addScaledVector(lat, (rnd() - 0.5) * wander)
             .addScaledVector(up, (rnd() - 0.5) * 0.14),
         );
       }

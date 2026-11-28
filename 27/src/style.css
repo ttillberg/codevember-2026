@@ -29,13 +29,160 @@ canvas:active { cursor: grabbing; }
   .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
   .plate b { font-size: 36px; }
   .plate .head > i { font-size: 10px; }
-  .plate .head > i.how { font-size: 9px; margin-top: 10px; }
 }
-/* what to do, under the plate: fades once you are in */
-.plate .head > i.how { margin-top: 14px; font-size: 11px; opacity: 0.85; transition: opacity 1.6s; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); }
-.plate .how .touch { display: none; }
-@media (hover: none) { .plate .how .mouse { display: none; } .plate .how .touch { display: inline; } }
-.inside .plate .how { opacity: 0; }
 .plate b, .plate .head > i { text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35); }
+
+/* ---- the furniture over the scene (src/ui.ts) ---- */
+button { touch-action: manipulation; }
+
+/* top right: the help. A round button on frosted glass, in the ink; turned over while the controls are up */
+.help {
+  position: fixed; z-index: 6;
+  top: max(24px, env(safe-area-inset-top)); right: max(24px, env(safe-area-inset-right));
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(20, 16, 10, 0.45); color: #f4f4f2; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.25);
+  font: 600 15px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  transition: background 0.2s, color 0.2s, transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.help:active { transform: scale(0.93); }
+.help.on { background: #f4f4f2; color: #060403; box-shadow: none; }
+@media (hover: hover) { .help:not(.on):hover { background: rgba(20, 16, 10, 0.7); } }
+
+/* the controls, over the scene and under the plate, the help and the lock: at the start, and from the help. The scene
+   is dimmed under them, not blurred: a blur the size of the screen costs frames, and slow frames cost the scene its pixels */
+.veil {
+  position: fixed; inset: 0; z-index: 1; display: grid; place-items: center; box-sizing: border-box; padding: 72px 24px;
+  color: #f4f4f2; pointer-events: none; opacity: 0; visibility: hidden;
+  background: radial-gradient(ellipse 75% 70% at 50% 50%, rgba(6, 4, 3, 0.8), rgba(6, 4, 3, 0.5));
+  transition: opacity 0.45s ease-out, visibility 0s 0.45s;
+}
+.veil.open { opacity: 1; visibility: visible; transition: opacity 0.45s ease-out; }
+@keyframes controls-in { from { opacity: 0; transform: translateY(10px); } }
+
+/* a desktop: the key map. Outlined caps and a mouse drawn four times, a word under each; no card, no boxes.
+   It takes no press: the first one goes through it to the scene */
+.keymap {
+  display: flex; flex-direction: column; align-items: center; gap: 38px;
+  font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.veil.open .keymap { animation: controls-in 0.7s 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.keymap .row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: center; gap: 32px 52px; }
+.keymap figure { display: flex; flex-direction: column; align-items: center; gap: 16px; margin: 0; }
+.keymap figcaption, .keymap p { margin: 0; white-space: nowrap; }
+.keymap svg { display: block; }
+.keymap figure > svg { width: 48px; height: 51px; }
+.keymap .clusters { display: flex; gap: 18px; }
+/* W over S, A S D in a row, as on the keyboard; the arrows the same way */
+.keymap .cluster { display: grid; grid-template-columns: repeat(3, 24px); grid-template-areas: ". u ." "l d r"; gap: 3px; }
+.keymap kbd {
+  display: grid; place-items: center; width: 24px; height: 24px; box-sizing: border-box;
+  border: 1px solid rgba(244, 244, 242, 0.8); border-radius: 5px; box-shadow: 0 1.5px 0 rgba(244, 244, 242, 0.8);
+  font: inherit; letter-spacing: 0;
+}
+.keymap .cluster kbd:nth-child(1) { grid-area: u; }
+.keymap .cluster kbd:nth-child(2) { grid-area: l; }
+.keymap .cluster kbd:nth-child(3) { grid-area: d; }
+.keymap .cluster kbd:nth-child(4) { grid-area: r; }
+.keymap .arrows kbd:nth-child(2) svg { transform: rotate(-90deg); }
+.keymap .arrows kbd:nth-child(3) svg { transform: rotate(180deg); }
+.keymap .arrows kbd:nth-child(4) svg { transform: rotate(90deg); }
+
+/* a phone: day 14's frosted card, headphones recommended, and under it what a finger does. A tap and it goes */
+body.touch .veil { background: rgba(6, 4, 3, 0.35); }
+body.touch .veil.open { pointer-events: auto; cursor: pointer; }
+.veil .card {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  width: 248px; box-sizing: border-box; padding: 30px 24px 24px; border-radius: 36px;
+  text-align: center; font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background: rgba(20, 16, 10, 0.5);
+  -webkit-backdrop-filter: blur(6px) saturate(1.8); backdrop-filter: blur(6px) saturate(1.8);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Apple's continuous corners where the browser has them */
+@supports (corner-shape: squircle) { .veil .card { corner-shape: squircle; border-radius: 56px; } }
+.veil.open .card { animation: controls-in 0.7s 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.veil:not(.open) .card { transform: scale(0.94); }
+.veil .card > svg { opacity: 0.95; }
+.veil .card b { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+.veil .card i {
+  margin-top: -4px; font-style: normal; font-size: 12px; letter-spacing: 0.08em; opacity: 0.55;
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+}
+.veil .card ul {
+  display: grid; justify-content: center; justify-items: start; gap: 8px; margin: 10px 0 0; padding: 18px 0 0;
+  list-style: none; align-self: stretch; box-shadow: inset 0 1px 0 rgba(244, 244, 242, 0.16);
+  font-weight: 600; font-size: 10px; line-height: 1; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.veil .card li { display: flex; align-items: center; gap: 10px; }
+.veil .card li svg { flex: none; }
+.veil .card em {
+  margin-top: 12px; font-style: normal; font-weight: 600; font-size: 10px; line-height: 1; letter-spacing: 0.12em;
+  text-transform: uppercase; opacity: 0.55;
+}
+
+/* desktop, bottom centre: lock the pointer; locked, how to let it go */
+.lockpill, .unlock {
+  position: fixed; z-index: 6; left: 0; right: 0; margin: 0 auto; width: max-content;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: #f4f4f2;
+  font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.lockpill {
+  padding: 11px 15px 10px 13px; border: 0; border-radius: 999px; cursor: pointer;
+  background: rgba(20, 16, 10, 0.45); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.25);
+  transition: background 0.2s, transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.lockpill svg { flex: none; margin-top: -1px; }
+.lockpill:active { transform: scale(0.96); }
+@media (hover: hover) { .lockpill:hover { background: rgba(20, 16, 10, 0.7); } }
+.unlock { display: none; pointer-events: none; opacity: 0.8; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); }
+.unlock kbd {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 7px; box-sizing: border-box;
+  border: 1px solid currentColor; border-radius: 5px; font: inherit; font-size: 9px; letter-spacing: 0.06em;
+}
+body.locked .lockpill, body.locked .help { display: none; }
+body.locked .unlock { display: inline-flex; }
+body.locked canvas, body.locked canvas:active { cursor: none; }
+/* none of it on a phone (the media query for the moment before the script has said so) */
+body.touch .lockpill, body.touch .unlock { display: none; }
+@media (pointer: coarse) { .lockpill, .unlock { display: none; } }
+
+@media (max-width: 640px) {
+  .help { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+}
+
+/* the little the game says, at the foot of the view */
+.note {
+  position: fixed; z-index: 6; left: 0; right: 0; margin: 0 auto; width: max-content; max-width: calc(100vw - 48px);
+  bottom: max(76px, calc(env(safe-area-inset-bottom) + 56px)); text-align: center; pointer-events: none;
+  color: #f4f4f2; font: 600 11px/1.5 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7); opacity: 0; transform: translateY(6px); transition: opacity 0.6s, transform 0.6s;
+}
+.note.on { opacity: 0.92; transform: none; }
+/* the end: the dark, the egg, a thought */
+.win {
+  position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 24px; box-sizing: border-box; background: #060504; color: #f4f4f2; text-align: center;
+  font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; opacity: 0; pointer-events: none; transition: opacity 2.6s ease;
+}
+.win.on { opacity: 1; pointer-events: auto; }
+.win > * { opacity: 0; transform: translateY(8px); transition: opacity 1.8s ease 2.6s, transform 1.8s cubic-bezier(0.2, 0.8, 0.2, 1) 2.6s; }
+.win.on > * { opacity: 1; transform: none; }
+.win canvas { width: min(300px, 62vw); height: auto; aspect-ratio: 1; margin-bottom: 4px; }
+.win .thought { margin: 0; max-width: 20em; font-size: clamp(19px, 2.6vw, 26px); line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; transition-delay: 3.6s; }
+.win .congrats { margin: 18px 0 0; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0; }
+.win.on .congrats { opacity: 0.62; transition-delay: 4.6s; }
+.win .again {
+  margin-top: 34px; padding: 11px 16px 10px; border: 0; border-radius: 999px; cursor: pointer; color: inherit; background: none;
+  box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.3); font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.12em; text-transform: uppercase; transition-delay: 5.4s;
+}
+@media (hover: hover) { .win .again:hover { background: rgba(244, 244, 242, 0.1); } }
+.clean .note { display: none; }
+
 /* ?clean: the scene alone */
-.clean .plate { display: none; }
+.clean .plate, .clean .help, .clean .veil, .clean .lockpill, .clean .unlock { display: none; }

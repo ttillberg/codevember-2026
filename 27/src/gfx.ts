@@ -134,7 +134,15 @@ vec3 daylight(vec3 P, Surf s, float sky) {
 
 vec3 shade(vec3 P, Surf s, vec3 Ng, float sky) {
   vec3 V = normalize(cameraPosition - P);
-  return torch(P, V, s, Ng) + bounce(P, s) + daylight(P, s, sky);
+  vec3 c = torch(P, V, s, Ng) + bounce(P, s) + daylight(P, s, sky);
+  if (sky > 0.0) {
+    // the hillside has an end (the grid does), and its top is cut off flat: before it gets there it is lost in the
+    // white of the day, the very colour of the sky, so there is no edge to see
+    vec3 q = (P - uMouth) / vec3(3.0, 1.1, 1.5);
+    if (q.z < 0.0) q.z *= 0.25;
+    c = mix(c, vec3(0.93, 0.94, 0.96) * uDay, smoothstep(0.68, 1.0, length(q)) * sky);
+  }
+  return c;
 }
 
 // how many world metres one pixel covers here: octaves finer than that are faded out instead of sparkling
@@ -1118,6 +1126,7 @@ const BEAST_FRAG = COMMON + /* glsl */ `
 uniform sampler3D uCells;
 uniform float uShell;
 uniform vec4 uPart; // roughness, f0, how much light comes through, kind (0 skin, 1 hide under fur, 2 mouth, 3 teeth, 4 claws, 5 eye)
+uniform float uEyes; // a light of their own in its eyes: for the dark after it has had us
 varying vec3 vP; varying vec3 vN; varying vec3 vRest; varying vec3 vCol; varying float vFur;
 void main() {
   vec3 N = normalize(vN);
@@ -1148,28 +1157,68 @@ void main() {
     alb *= 0.85 + 0.3 * nz(vRest * 60.0).a;
   }
   s.alb = alb; s.N = N;
-  vec3 col = shade(vP, s, N, 0.0);
+  // its hide gives nothing back until we are close: from down a tunnel there is only the dark, and the eyes in it
+  vec3 col = shade(vP, s, N, 0.0) * smoothstep(3.2, 1.9, distance(vP, cameraPosition));
   if (kind > 4.5) {
-    // clouded over, but something at the back of it still sends the lamp home
+    // clouded over, but something at the back of it still sends the lamp home: and what is sent straight back does
+    // not thin out with distance as the rest does. From the far end of a tunnel it is two points of light and
+    // nothing else; they catch even the edge of the beam
     vec3 V = normalize(cameraPosition - vP);
     vec3 Lv = uLightPos - vP;
     float d2 = dot(Lv, Lv);
     vec3 l = Lv * inversesqrt(d2);
-    float back = pow(max(dot(N, V), 0.0), 3.0) * pow(max(dot(l, V), 0.0), 24.0);
-    col += vec3(0.7, 0.85, 0.82) * uLightCol * (uLightI * cookie(dot(-l, uLightDir)) / (d2 + 0.06)) * back * 0.1;
+    // (the eyes sit on the sides of the head: seen from in front they are all but edge on, and shine all the same)
+    float back = pow(max(dot(N, V), 0.0), 0.35) * pow(max(dot(l, V), 0.0), 24.0);
+    col += vec3(0.7, 0.9, 0.8) * uLightCol * ((0.25 + uLightI * cookie(dot(-l, uLightDir))) * 20.0 / (0.35 * d2 + 3.0)) * back;
+    col += vec3(0.7, 0.9, 0.8) * (uEyes * 0.6 * pow(max(dot(N, V), 0.0), 0.6));
   }
   gl_FragColor = vec4(col, 1.0);
 }`;
+/** shared by every part of it: how much its eyes burn by themselves */
+export const BEAST_EYES = { value: 0 };
 const BEAST_PARTS = [[0.55, 0.04, 0.0], [0.8, 0.03, 0.2], [0.2, 0.05, 0.35], [0.25, 0.05, 0.25], [0.35, 0.05, 0.1], [0.12, 0.05, 0.3]];
 export function beastMaterial(kind: number, shell = 0) {
   const p = BEAST_PARTS[kind];
   return new THREE.ShaderMaterial({
-    uniforms: { ...U, uShell: { value: shell }, uPart: { value: new THREE.Vector4(p[0], p[1], p[2], kind) } },
+    uniforms: { ...U, uShell: { value: shell }, uPart: { value: new THREE.Vector4(p[0], p[1], p[2], kind) }, uEyes: BEAST_EYES },
     vertexShader: BEAST_VERT, fragmentShader: BEAST_FRAG, side: THREE.DoubleSide,
   });
 }
 export function beastDepthMaterial() {
   return new THREE.ShaderMaterial({ uniforms: { uShell: { value: 0 } }, vertexShader: BEAST_VERT, fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }', side: THREE.DoubleSide, colorWrite: false });
+}
+
+// ---- the egg: leathery, pale, freckled ----
+const EGG_VERT = /* glsl */ `
+varying vec3 vP; varying vec3 vN; varying vec3 vRest;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vP = wp.xyz;
+  vN = normalize(mat3(modelMatrix) * normal);
+  vRest = position;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const EGG_FRAG = COMMON + /* glsl */ `
+uniform sampler3D uCells;
+uniform float uDim;
+varying vec3 vP; varying vec3 vN; varying vec3 vRest;
+void main() {
+  vec3 N = normalize(vN);
+  // freckles: the middles of some cells, thicker towards the blunt end; and under them a cloudier mottle
+  vec4 c = texture(uCells, vRest * 30.0 + 0.37);
+  float freckle = smoothstep(0.2, 0.09, c.r) * step(0.42 - 3.0 * vRest.y, c.b);
+  float cloud = nz(vRest * 22.0).a;
+  vec3 alb = mix(vec3(0.5, 0.46, 0.36), vec3(0.62, 0.59, 0.5), sat(0.5 + cloud));
+  alb = mix(alb, vec3(0.17, 0.11, 0.07), freckle * 0.85);
+  Surf s;
+  s.alb = alb; s.N = normalize(N + nz(vRest * 70.0).rgb * 0.004);
+  // (it is carried a hand from the lamp: without a softened falloff it would be a white blank)
+  s.rough = 0.42; s.f0 = 0.04; s.trans = 0.12; s.glint = 0.0; s.ao = 1.0; s.near = 0.3;
+  gl_FragColor = vec4(shade(vP, s, N, smoothstep(-0.4, 0.3, vP.z)) * uDim, 1.0);
+}`;
+/** dim: how much of its light it keeps (in the hand it is right under the lamp, and would burn out) */
+export function eggMaterial(dim = 1) {
+  return new THREE.ShaderMaterial({ uniforms: { ...U, uDim: { value: dim } }, vertexShader: EGG_VERT, fragmentShader: EGG_FRAG });
 }
 
 export function soilMaterial(flat = false) {

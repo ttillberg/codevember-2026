@@ -11,7 +11,10 @@ import { buildFungi } from './fungi';
 import { Beast } from './beast';
 import { Den, buildDebris } from './den';
 import { Fog } from './fog';
+import { sound } from './sound';
 import { Growth } from './growth';
+import { initUI, say, showWin } from './ui';
+import { Game } from './game';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -20,6 +23,8 @@ if (params.has('clean')) document.body.classList.add('clean');
 const auto = params.has('auto');
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
+// the controls, the help and the pointer lock (ui.ts); no controls at the start of a clip
+initUI(canvas, { start: !auto && !params.has('at') });
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.autoClear = true;
@@ -71,13 +76,13 @@ scene.add(...rockMeshes, flora.roots, flora.hairs, grass, herbs, dust.crumbs, du
 /** dirt comes down from p: the crumbs, and the dust they leave hanging in the air behind them */
 function crumble(p: THREE.Vector3, amount: number, size = 1) {
   dust.crumble(p, amount, size);
+  sound.crumble(p, amount);
   fog.puff(tmpC.copy(p).setY(p.y - 0.06), 0.35 + amount * 0.75, 0.05 + 0.03 * amount, 0.2 + 0.2 * amount, 4 + 3 * amount, -0.32);
 }
-rocks.onShift = (p, amount) => crumble(p, 0.5 + amount * 0.6);
+rocks.onShift = (p, amount) => { crumble(p, 0.5 + amount * 0.6); sound.stone(p, amount); };
 flora.onTug = (p) => crumble(p, 0.25, 0.7);
-const den = new Den(world, rnd, flora.pixel);
+const den = new Den(world, rnd);
 scene.add(den.group);
-den.onStir = (p) => crumble(p, 1.1);
 const debris = buildDebris(world, rnd);
 scene.add(debris.mesh);
 console.log(`burrow: ${world.nx}×${world.ny}×${world.nz} cells, ${soil.geometry.index!.count / 3} triangles, ${(performance.now() - t0) | 0} ms`);
@@ -121,6 +126,41 @@ const beast = new Beast(world, mulberry32(666));
 scene.add(beast.group);
 beast.onReady = () => { casters.push(...beast.casters); noShadow.push(...beast.noShadow); };
 beast.onSnap = (p) => fog.puff(p, 0.9, 0.06, 0.3, 3.5, -0.1);
+// what there is to do down here (game.ts): its nest, the one egg in it, and getting out with that
+const game = new Game(world, beast, mulberry32(808));
+scene.add(game.group, game.held);
+casters.push(...game.casters);
+noShadow.push(game.held);
+game.onTake = () => { beast.enrage(); say('You have the egg. Now get out'); };
+game.onWin = () => { showWin(); setTimeout(() => { halted = true; }, 3400); };
+/** the end has come and the fade is over: nothing more is drawn here */
+let halted = false;
+beast.onCaught = () => {
+  // it has had us, and the dark is over: it all begins again. Out in front of the hole, the egg in its nest, the
+  // thing at home, the torch as it was, the picture coming up as it did the first time
+  game.drop();
+  const e = world.edges[0];
+  nav.e = 0; nav.s = 0; nav.entered = false; nav.v = 0; nav.step = 0; nav.dir = 1; nav.sign = 1;
+  world.railPoint(e, 0, camPos);
+  basePos.copy(camPos);
+  look.yaw = look.yawT = look.yaw0;
+  look.pitch = look.pitchT = look.pitch0;
+  document.body.classList.remove('inside');
+  torchPower = 1; torchSag = 0; torchNext = 9;
+  began = clock;
+};
+/** when this go began, on the scene's clock: the picture fades up from there */
+let began = 0;
+/** Put the eye on the rails, s metres along edge ei, looking at a point. */
+function putAt(ei: number, s: number, at: THREE.Vector3) {
+  nav.e = ei; nav.s = s; nav.entered = !world.edges[ei].open; nav.v = 0;
+  world.railPoint(world.edges[ei], s, camPos);
+  basePos.copy(camPos);
+  tmpA.copy(at).sub(camPos).normalize();
+  look.yaw = look.yawT = Math.atan2(-tmpA.x, -tmpA.z);
+  look.pitch = look.pitchT = Math.asin(tmpA.y);
+  document.body.classList.toggle('inside', nav.entered);
+}
 
 // ---- look, crawl ----
 const SPEED = 1.05;
@@ -134,6 +174,8 @@ const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, m
 const camPos = new THREE.Vector3();
 const camQ = new THREE.Quaternion();
 const lookDir = new THREE.Vector3();
+/** where the lens actually points: the look, with the gait and whatever has been done to us on top */
+const viewDir = new THREE.Vector3(0, 0, -1);
 const lightPos = new THREE.Vector3();
 const lightDir = new THREE.Vector3(0, 0, -1);
 const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3();
@@ -160,10 +202,20 @@ function fromYawPitch(yaw: number, pitch: number, out: THREE.Vector3) {
 
 canvas.addEventListener('pointerdown', (ev) => {
   if (input.down) return;
-  canvas.setPointerCapture(ev.pointerId);
+  // (a locked pointer cannot be captured, and need not be)
+  if (document.pointerLockElement !== canvas) canvas.setPointerCapture(ev.pointerId);
   Object.assign(input, { down: true, id: ev.pointerId, x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, t: performance.now(), moved: 0, mode: '' });
 });
+// the pointer locked (the pill, ui.ts): with no pointer to follow, the torch points where we look, from that moment on
+document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement === canvas) aim.x = aim.y = 0; });
 canvas.addEventListener('pointermove', (ev) => {
+  // and the mouse itself is the look: right looks right, up looks up
+  if (document.pointerLockElement === canvas) {
+    const k = (camera.fov * Math.PI) / 180 / innerHeight;
+    look.yawT -= ev.movementX * k * 1.7;
+    look.pitchT -= ev.movementY * k * 1.7;
+    return;
+  }
   if (ev.pointerType === 'mouse') {
     aim.mouse = true;
     aim.x = (ev.clientX / innerWidth) * 2 - 1;
@@ -175,9 +227,10 @@ canvas.addEventListener('pointermove', (ev) => {
   input.moved = Math.hypot(ev.clientX - input.x0, ev.clientY - input.y0);
   if (!input.mode && input.moved > (ev.pointerType === 'mouse' ? 5 : 12)) input.mode = 'look';
   if (input.mode) {
-    const k = (camera.fov * Math.PI) / 180 / innerHeight;
-    look.yawT += dx * k * 1.15;
-    look.pitchT += dy * k * 1.15;
+    // (a finger has less room to move than a mouse has: it turns the view half as far again)
+    const k = ((camera.fov * Math.PI) / 180 / innerHeight) * (ev.pointerType === 'mouse' ? 1.15 : 1.7);
+    look.yawT += dx * k;
+    look.pitchT += dy * k;
   }
 });
 const release = (ev: PointerEvent) => {
@@ -223,6 +276,7 @@ function switchEdge(node: number, over: number, moveDir: THREE.Vector3) {
 /** A forepaw comes down: side -1 left, +1 right. Grit jumps from under it. */
 const pawPos = new THREE.Vector3(), pawBack = new THREE.Vector3();
 function footfall(side: number) {
+  sound.step(side);
   if (!nav.entered || nav.v < SPEED * 0.4) return;
   pawBack.set(lookDir.x, 0, lookDir.z).normalize();
   pawPos.copy(camPos).addScaledVector(pawBack, 0.12).addScaledVector(tmpC.set(-pawBack.z, 0, pawBack.x), side * 0.085);
@@ -254,6 +308,8 @@ function crawl(dt: number) {
   world.railTangent(e, nav.s, tmpA);
   const d = tmpA.dot(lookDir);
   if (Math.abs(d) > 0.15) nav.dir = Math.sign(d);
+  // (the thing on the lower level will not be walked up to: towards it the legs slow, and short of it they stop)
+  nav.v = Math.min(nav.v, SPEED * beast.bars(camPos, nav, nav.dir * nav.sign));
   // each paw pushes: the ground comes in surges, not at a steady rate
   const ds = nav.v * dt * (1 + 0.18 * Math.cos(2 * gait - 1.6));
   const before = Math.floor(gait / Math.PI);
@@ -313,12 +369,16 @@ function updateCamera(dt: number, time: number) {
   const pitchG = (0.013 * Math.sin(2 * g - 0.4) - 0.02) * m; // and the head carried a little down
   gaitOff.set(-0.013 * Math.sin(g + 0.3) * m, (-0.011 * Math.cos(2 * g - 0.9) - 0.0035 * Math.cos(4 * g - 1.2)) * m, 0);
   // (and when the jaws shut on us the head is shaken)
-  const sk = beast.shake;
-  camQ.setFromEuler(new THREE.Euler(look.pitch + pitchG + sk * 0.07 * Math.sin(time * 61), look.yaw + yawG + sk * 0.06 * Math.sin(time * 47 + 1), roll + sk * 0.1 * Math.sin(time * 53 + 2), 'YXZ'));
+  // (and when it lands on us we go over backwards: the view tips up to the roof, twists, and the head goes back and down)
+  const sk = beast.shake, fb = beast.fall;
+  const pitch = Math.min(1.5, look.pitch + pitchG + sk * 0.07 * Math.sin(time * 61) + fb * (1.05 - 0.5 * look.pitch));
+  camQ.setFromEuler(new THREE.Euler(pitch, look.yaw + yawG + sk * 0.06 * Math.sin(time * 47 + 1) + fb * 0.12, roll + sk * 0.1 * Math.sin(time * 53 + 2) + fb * 0.3, 'YXZ'));
   // sideways along the shoulders, up and down in the world
   tmpB.set(1, 0, 0).applyQuaternion(camQ);
   camPos.copy(basePos).addScaledVector(tmpB, gaitOff.x);
-  camPos.y += gaitOff.y;
+  camPos.y += gaitOff.y - 0.04 * fb;
+  camPos.x -= lookDir.x * 0.14 * fb; camPos.z -= lookDir.z * 0.14 * fb;
+  viewDir.set(0, 0, -1).applyQuaternion(camQ);
   camera.position.copy(camPos);
   camera.quaternion.copy(camQ);
   camera.updateMatrixWorld();
@@ -327,12 +387,32 @@ function updateCamera(dt: number, time: number) {
 function updateTorch(dt: number, time: number) {
   const tanV = Math.tan((camera.fov * Math.PI) / 360), tanH = tanV * camera.aspect;
   const ax = aim.mouse ? aim.x : 0, ay = aim.mouse ? aim.y : 0;
-  // carried, not mounted: it trails the stride by a beat and swings wider than the head does
+  // carried, not mounted: it trails the stride by a beat and swings wider than the head does. And at a run nobody
+  // holds a torch up: it drops to light the ground just ahead, and what is further on is left to the edge of the beam
   const run = (nav.v / SPEED) ** 2;
-  tmpA.set(ax * tanH * 0.85 + 0.03 * Math.sin(gait - 0.5) * run, ay * tanV * 0.85 + 0.035 * Math.cos(2 * gait - 1.5) * run, -1).normalize().applyQuaternion(camQ);
+  tmpA.set(ax * tanH * 0.85 + 0.075 * Math.sin(gait - 0.5) * run, ay * tanV * 0.85 + (0.06 * Math.cos(2 * gait - 1.5) - 0.11) * run, -1).normalize().applyQuaternion(camQ);
+  // a cheap torch on tired cells: every so often it sags to a fraction, stutters, and comes back. Sooner when it is
+  // being shaken about
+  torchNext -= dt * (1 + 1.5 * run);
+  if (torchNext < 0 && torchSag <= 0) { torchSag = 0.5 + Math.random() * 1.6; torchDeep = 0.22 + Math.random() * 0.4; torchNext = 7 + Math.random() * 16; }
+  let power = 1;
+  if (torchSag > 0) {
+    torchSag -= dt;
+    const stutter = 0.5 + 0.5 * Math.sin(time * 37) * Math.sin(time * 23.3 + 1.3);
+    power = torchDeep * (0.6 + 0.4 * stutter) * (Math.random() < 0.06 ? 0.3 : 1);
+  }
+  torchPower += (power - torchPower) * (1 - Math.exp(-dt / (power < torchPower ? 0.05 : 0.25)));
+  // (and what the thing on the lower level does to it: knocked about in the hand, and out)
+  U.uLightI.value = torchPower * (1 + 0.035 * Math.sin(time * 9.1) * run) * beast.lamp;
   tmpA.x += Math.sin(time * 2.1) * 0.004 + Math.sin(time * 5.3) * 0.002;
   tmpA.y += Math.sin(time * 1.7 + 1.0) * 0.004;
-  lightDir.lerp(tmpA.normalize(), 1 - Math.exp(-dt / 0.11)).normalize();
+  const fl = beast.flail;
+  if (fl > 0.001) {
+    // thrown about: over the walls, the roof, back across whatever is on top of us
+    tmpB.set(Math.sin(time * 17.3) + 0.6 * Math.sin(time * 29.1 + 1), Math.sin(time * 13.7 + 2) + 0.6 * Math.sin(time * 23.9), Math.sin(time * 11.1 + 4) * 0.5);
+    tmpA.addScaledVector(tmpB, fl * 0.75);
+  }
+  lightDir.lerp(tmpA.normalize(), 1 - Math.exp(-dt / (0.11 - 0.07 * fl))).normalize();
   // held beside the head; pulled in when there is no room for the arm
   tmpB.set(0.085, -0.07, -0.02).applyQuaternion(camQ);
   let reach = 1;
@@ -349,16 +429,19 @@ function updateTorch(dt: number, time: number) {
 
   // what the hotspot lands on glows back
   const tb = world.march(lightPos, lightDir, 12);
-  hotspotDist = Math.min(tb, den.hit(lightPos, lightDir));
+  hotspotDist = tb;
   U.uBouncePos.value.copy(lightPos).addScaledVector(lightDir, Math.max(0.02, tb - 0.06));
   U.uBounceCol.value.set(0.95, 0.62, 0.38).multiply(LIGHT_COL).multiplyScalar(U.uLightI.value * 0.03);
 }
 
 let exposure = 0.25;
 let hotspotDist = 2;
+/** the torch's cells: what it is giving now, how long the sag it is in has left, how deep it goes, when the next one is due */
+let torchPower = 1, torchSag = 0, torchDeep = 0.4, torchNext = 9;
 function meter(dt: number) {
   const tanV = Math.tan((camera.fov * Math.PI) / 360), tanH = tanV * camera.aspect;
-  const I = U.uLightI.value, day = U.uDay.value;
+  // (metered for the torch at full power: when it sags the picture goes dark with it, the meter does not make it up)
+  const I = 1, day = U.uDay.value;
   let sum = 0, wsum = 0;
   for (const gy of [-0.55, 0, 0.55])
     for (const gx of [-0.6, 0, 0.6]) {
@@ -388,10 +471,10 @@ function meter(dt: number) {
   if (!Number.isFinite(target)) target = exposure;
   const tau = target < exposure ? 0.22 : 0.85;
   // the first moments: no adapting from a guess, the frame opens already metered and fades up from black
-  if (clock < 0.4) exposure = target;
+  if (clock - began < 0.4) exposure = target;
   exposure *= Math.exp(Math.log(target / exposure) * (1 - Math.exp(-dt / tau)));
   // (with it on the lens the meter knows nothing of it: stopped down by hand; and after the bite, dark)
-  post.exposure = exposure * sstep(0.1, 1.1, clock) * (1 - 0.3 * beast.close) * (1 - beast.dark);
+  post.exposure = exposure * sstep(0.1, 1.1, clock - began) * (1 - 0.3 * beast.close) * (1 - beast.dark);
 }
 
 let resScale = 1;
@@ -454,16 +537,19 @@ function disturb(dt: number) {
       tmpA.copy(camPos).addScaledVector(tmpB, t - 0.02);
       dust.crumble(tmpA, 0.12 + Math.random() * 0.25, 0.8);
       fog.puff(tmpA, 0.25, 0.04, 0.16, 3, -0.25);
+      sound.crumble(tmpA, 0.15);
     }
   }
   dust.update(dt);
-  den.update(dt, clock, camPos);
+  den.update(camPos);
   // the hillside is thrown out once we are in: nothing of it can be seen from round the first bend, nor, before
   // that, with our back to the mouth. Hidden is not drawn at all: not a vertex of it is run
   const seen = camPos.z > -2.6 && (camPos.z > -0.5 || lookDir.dot(tmpA.copy(U.uMouth.value).sub(camPos).normalize()) > -0.15);
   for (const o of hillside) o.visible = seen;
 }
 
+// the ear's side of all this (sound.ts): it reads these as they are, every frame
+sound.bind({ nav, speed: SPEED, camPos, camQ, beast, light: U.uLightI, ripple: U.uRipple, mouth: U.uMouth.value, puddles: world.puddles, game });
 let clock = 0;
 function tick(dt: number) {
   clock += dt;
@@ -478,7 +564,8 @@ function tick(dt: number) {
   U.uStir.value += (stirTo - U.uStir.value) * (1 - Math.exp(-dt / (stirTo > U.uStir.value ? 0.18 : 1.1)));
   crawl(dt);
   updateCamera(dt, time);
-  beast.update(dt, camPos, lookDir, nav.entered);
+  beast.update(dt, camPos, viewDir, nav.entered, nav);
+  game.update(dt, time, camPos, camQ, nav.entered, nav.v / SPEED);
   updateTorch(dt, time);
   meter(dt);
   disturb(dt);
@@ -489,7 +576,11 @@ function tick(dt: number) {
   renderer.clear();
   renderer.render(scene, camera);
   fog.update(dt);
-  post.render(time, fog.render(renderer, post.scene, camera));
+  // out in front of the hole the lens has a depth of field, focused on the hole; it is gone by a body length in
+  post.dof = sstep(-0.9, 0.25, camPos.z);
+  post.focus = Math.max(0.25, camPos.distanceTo(U.uMouth.value) - 0.1);
+  post.render(time, fog.render(renderer, post.scene, camera), camera);
+  sound.update(dt);
 }
 let last = performance.now();
 let slowAcc = 0, slowN = 0, slowRuns = 0;
@@ -506,7 +597,7 @@ function frame(now: number) {
       slowAcc = slowN = 0;
     }
   }
-  requestAnimationFrame(frame);
+  if (!halted) requestAnimationFrame(frame);
 }
 
 window.addEventListener('resize', resize);
@@ -516,7 +607,7 @@ requestAnimationFrame(frame);
 // dev: jump somewhere. burrow.go('B', 0, yawDeg, pitchDeg) puts the eye on the first edge at node B.
 Object.assign(window, {
   burrow: {
-    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim, fungi, hillside, beast,
+    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim, fungi, hillside, beast, game,
     go(name: string, along = 0, yaw?: number, pitch = 0) {
       const n = world.nodes.findIndex((x) => x.name === name);
       // arrive on the last edge listed at the node (the one that leads to it), looking the way it runs
@@ -554,4 +645,13 @@ Object.assign(window, {
   const at = params.get('at')?.split(',');
   const b = (window as unknown as { burrow: { go(n: string, a?: number, y?: number, p?: number): void } }).burrow;
   if (at && world.nodes.some((n) => n.name === at[0])) b.go(at[0], Number(at[1] ?? 0), at[2] === undefined ? undefined : Number(at[2]), Number(at[3] ?? 0));
+  // ?beast: start where the thing on the lower level is first seen from, the length of its tunnel away, looking at it
+  const way = params.has('beast') ? beast.approach : undefined;
+  if (way) {
+    putAt(way.ei, way.s, way.at);
+    console.log(`beast: ${way.sight.toFixed(1)} m down the tunnel`);
+  }
+  // ?egg: start with the egg already in hand (the thing knows): for trying the way out. ?win: the last screen
+  if (params.has('egg')) beast.onReady = ((ready) => () => { ready(); game.take(); })(beast.onReady);
+  if (params.has('win')) showWin();
 }
