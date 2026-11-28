@@ -67,6 +67,8 @@ body.nosound .snd { display: none; }
 @media (hover: hover) { .help:hover, .full:hover, .snd:hover { background: rgba(244, 244, 242, 0.12); } }
 /* where the page cannot have the whole screen (an iPhone), there is no button for it */
 body.nofull .full { display: none; }
+/* nothing to press while the place is still a drawing: they come with the picture */
+body.loading .help, body.loading .full, body.loading .snd { display: none; }
 /* the whole screen is the scene's: the plate goes */
 body.fullscreen .plate { display: none; }
 
