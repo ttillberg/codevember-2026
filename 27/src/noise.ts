@@ -11,11 +11,17 @@ export function mulberry32(seed: number) {
 }
 
 const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+// The sixteen gradients of improved Perlin noise as what each takes of x, y and z (1, -1 or nothing): the same sums as
+// its usual chain of choices, to the last bit, without a branch the processor cannot guess
+const GX = new Float64Array(16), GY = new Float64Array(16), GZ = new Float64Array(16);
+for (let g = 0; g < 16; g++) {
+  const su = (g & 1) === 0 ? 1 : -1, sv = (g & 2) === 0 ? 1 : -1;
+  if (g < 8) GX[g] = su; else GY[g] = su;
+  if (g < 4) GY[g] = sv; else if (g === 12 || g === 14) GX[g] = sv; else GZ[g] = sv;
+}
 function grad(h: number, x: number, y: number, z: number) {
   const g = h & 15;
-  const u = g < 8 ? x : y;
-  const v = g < 4 ? y : g === 12 || g === 14 ? x : z;
-  return ((g & 1) === 0 ? u : -u) + ((g & 2) === 0 ? v : -v);
+  return GX[g] * x + GY[g] * y + GZ[g] * z;
 }
 
 /** Improved Perlin noise, optionally periodic on the lattice (rep cells). */
@@ -108,14 +114,17 @@ export function bakeCellTexture(size = 64, cells = 8, seed = 31): THREE.Data3DTe
       for (let x = 0; x < n; x++) {
         const px = ((x + 0.5) / n) * C, py = ((y + 0.5) / n) * C, pz = ((z + 0.5) / n) * C;
         const cx = Math.floor(px), cy = Math.floor(py), cz = Math.floor(pz);
-        let f1 = 9, f2 = 9, id = 0;
+        // (compared squared, the root taken of the two that are kept: 27 roots a texel were most of the bake)
+        let f1 = 81, f2 = 81, id = 0;
         for (let k = -1; k <= 1; k++)
           for (let j = -1; j <= 1; j++)
             for (let i = -1; i <= 1; i++) {
               const q = ((((cx + i) % C) + C) % C) + C * ((((cy + j) % C) + C) % C) + C * C * ((((cz + k) % C) + C) % C);
-              const d = Math.hypot(cx + i + pts[q * 5] - px, cy + j + pts[q * 5 + 1] - py, cz + k + pts[q * 5 + 2] - pz);
+              const dx = cx + i + pts[q * 5] - px, dy = cy + j + pts[q * 5 + 1] - py, dz = cz + k + pts[q * 5 + 2] - pz;
+              const d = dx * dx + dy * dy + dz * dz;
               if (d < f1) { f2 = f1; f1 = d; id = q; } else if (d < f2) f2 = d;
             }
+        f1 = Math.sqrt(f1); f2 = Math.sqrt(f2);
         data[o++] = h(f1); data[o++] = h(f2 - f1); data[o++] = h(pts[id * 5 + 3]); data[o++] = h(pts[id * 5 + 4]);
       }
   const tex = new THREE.Data3DTexture(data, n, n, n);
