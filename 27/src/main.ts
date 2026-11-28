@@ -186,7 +186,7 @@ const SPEED = 1.05;
 /** one full cycle of the front paws, left then right, in metres of ground covered */
 const STRIDE = 0.55;
 /** step: what is left of a tap's dash (m), and way: which way it goes, 1 on, -1 back */
-const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0, way: 1, sx: 0, steer: 0 };
+const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0, way: 1, sx: 0, sy: 0, steer: 0, tilt: 0 };
 const look = { yaw: 0, pitch: 0, yawT: 0, pitchT: 0, yaw0: 0, pitch0: 0 };
 const aim = { x: 0, y: 0, mouse: false };
 const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, mode: '' as '' | 'look' | 'crawl', low: false, touch: false, fwd: false, back: false, left: false, right: false, rear: false, wheel: 0 };
@@ -251,11 +251,11 @@ canvas.addEventListener('pointermove', (ev) => {
   const dx = ev.clientX - input.x, dy = ev.clientY - input.y;
   input.x = ev.clientX; input.y = ev.clientY;
   input.moved = Math.hypot(ev.clientX - input.x0, ev.clientY - input.y0);
-  if (!input.mode && input.moved > (ev.pointerType === 'mouse' ? 5 : 12)) input.mode = 'look';
-  // (a finger held down steers by where on the screen it is, crawl(): sliding it is not a second way of turning)
-  if (input.mode && !(input.mode === 'crawl' && input.touch)) {
-    // (a finger has less room to move than a mouse has: it turns the view half as far again)
-    const k = ((camera.fov * Math.PI) / 180 / innerHeight) * (ev.pointerType === 'mouse' ? 1.15 : 1.7);
+  // (a finger does not drag the view about: where on the screen it is does all of it, crawl())
+  if (input.touch) return;
+  if (!input.mode && input.moved > 5) input.mode = 'look';
+  if (input.mode) {
+    const k = ((camera.fov * Math.PI) / 180 / innerHeight) * 1.15;
     // A drag takes hold of the place and pulls it past. Held down and running it is the other way round, a steer:
     // left turns left, up looks up
     const way = input.mode === 'crawl' ? -1 : 1;
@@ -270,6 +270,7 @@ const release = (ev: PointerEvent) => {
     nav.step = 1.4;
     nav.way = input.low ? -1 : 1;
     nav.sx = (ev.clientX / innerWidth) * 2 - 1;
+    nav.sy = ev.clientY / innerHeight;
   }
   input.down = false;
   input.mode = '';
@@ -356,12 +357,15 @@ function crawl(dt: number) {
   // the screen it is all turn and next to no run. And the legs go where the eyes do as far as the tunnel lets them,
   // the way a body slides along a wall it is run at: across the tunnel slower, with the nose to the wall not at all.
   // (Seen from above: looking up or down costs nothing, and a shaft has no across.)
+  // And how high it is, is the head: in the upper third it looks up, the more the higher, in a band over the strip
+  // that backs away it looks down, and between the two it is carried level with the tunnel.
   let along = 1;
-  nav.steer = 0;
+  nav.steer = nav.tilt = 0;
   if (finger && want) {
     if (want > 0) {
-      const sx = dash ? nav.sx : (input.x / innerWidth) * 2 - 1;
+      const sx = dash ? nav.sx : (input.x / innerWidth) * 2 - 1, sy = dash ? nav.sy : input.y / innerHeight;
       nav.steer = -Math.sign(sx) * Math.max(0, Math.min(1, (Math.abs(sx) - 0.14) / 0.72));
+      nav.tilt = sy < 0.3 ? Math.min(1, (0.3 - sy) / 0.2) : sy > 0.6 ? -Math.min(1, (sy - 0.6) / 0.12) : 0;
     }
     const ht = Math.hypot(tmpA.x, tmpA.z), hl = Math.hypot(lookDir.x, lookDir.z);
     if (ht > 0.3 && hl > 0.2) along = Math.max(0, ((tmpA.x * lookDir.x + tmpA.z * lookDir.z) / (ht * hl)) * dir);
@@ -392,6 +396,8 @@ function crawl(dt: number) {
   }
 }
 
+/** how far a finger tips the head from level, radians: a glance at the roof or the floor, not a look round */
+const TILT_UP = 0.42, TILT_DOWN = 0.3;
 function wrapPi(a: number) { return a - Math.round(a / (2 * Math.PI)) * 2 * Math.PI; }
 
 function updateCamera(dt: number, time: number) {
@@ -410,8 +416,15 @@ function updateCamera(dt: number, time: number) {
       // (not against a finger that is turning us)
       const k = (1 - Math.exp(-dt / 0.3)) * moving * Math.max(0, 1 - 4 * Math.abs(nav.steer));
       look.yawT += wrapPi(Math.atan2(-tmpA.x, -tmpA.z) - look.yawT) * k;
-      look.pitchT += (Math.asin(tmpA.y) * 0.8 - look.pitchT) * k * 0.6;
+      if (!nav.tilt) look.pitchT += (Math.asin(tmpA.y) * 0.8 - look.pitchT) * k * 0.6;
     }
+  }
+  // (and a finger put high or low tips the head, from where the tunnel has it: it stays there when the finger lifts,
+  // until the next run down the middle levels it again)
+  if (nav.tilt) {
+    world.railTangent(e, nav.s, tmpA);
+    const level = Math.asin(Math.max(-1, Math.min(1, tmpA.y * nav.dir))) * 0.8;
+    look.pitchT += (level + nav.tilt * (nav.tilt > 0 ? TILT_UP : TILT_DOWN) - look.pitchT) * (1 - Math.exp(-dt / 0.18));
   }
   // before the hole there is only the hole to look at (the first time: come back out of it, and we look where we like)
   if (!nav.entered && !beenIn) {
