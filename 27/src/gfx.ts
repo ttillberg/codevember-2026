@@ -24,6 +24,13 @@ export const U = {
   uGround: { value: new THREE.Vector3(0.2, 0.19, 0.13) },
   uDay: { value: 3.2 },
   uEye: { value: new THREE.Vector3() },
+  /** world metres one pixel covers at one metre's distance (set on resize) */
+  uPix: { value: 0.001 },
+  /** the head, and the way it is going: what grows in the way is brushed aside by it */
+  uWalker: { value: new THREE.Vector3(0, 9, 0) },
+  uWalkDir: { value: new THREE.Vector3(0, 0, -1) },
+  /** how much we are stirring what grows round us: 0 at rest, 1 at a run */
+  uStir: { value: 0 },
   /** standing water: x, the level of its surface, z, reach (0: none) */
   uPuddle: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
   uRipple: { value: 0 },
@@ -151,10 +158,9 @@ const mat3 R2 = mat3(0.0, 0.8, 0.6, -0.8, 0.36, -0.48, -0.6, -0.48, 0.64);
 const mat3 R3 = mat3(0.6, 0.0, 0.8, 0.48, 0.8, -0.36, -0.64, 0.6, 0.48);
 
 float turfMask(vec3 P) {
-  float t = clamp(P.z / 1.8, 0.0, 1.0);
-  vec3 q = P - vec3(0.05 * t, -0.05 - 0.2 * t, 1.8 * t);
+  vec3 q = P - vec3(0.0, -0.05, 0.0);
   q.y *= 0.8;
-  return sat((length(q) - (0.62 + 0.25 * t + 0.2 * nz(P * 0.35).a)) / 0.25);
+  return sat((length(q) - (0.3 + 0.1 * nz(P * 0.35).a)) / 0.2);
 }
 // the ground lies in layers (world.ts has the same two lines, and weathers the walls by them)
 float strataY(vec3 P) { return P.y + 0.1 * sin(P.x * 1.3 + 0.7 * sin(P.z * 0.9)) + 0.07 * sin(P.z * 1.7 + P.x * 0.6); }
@@ -291,18 +297,27 @@ Surf soil(vec3 P, vec3 N, float ao, float sky) {
 const SOIL_VERT = /* glsl */ `
 attribute float aAO;
 attribute float aSky;
-varying vec3 vP; varying vec3 vN; varying float vAO; varying float vSky;
+attribute vec3 aGrow;
+varying vec3 vP; varying vec3 vN; varying float vAO; varying float vSky; varying vec3 vGrow;
 void main() {
-  vP = position; vN = normal; vAO = aAO; vSky = aSky;
+  vP = position; vN = normal; vAO = aAO; vSky = aSky; vGrow = aGrow;
   gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
 }`.replace('void main', 'invariant gl_Position;\nvoid main');
 
 const SOIL_FRAG = COMMON + SOIL + /* glsl */ `
-varying vec3 vP; varying vec3 vN; varying float vAO; varying float vSky;
+varying vec3 vP; varying vec3 vN; varying float vAO; varying float vSky; varying vec3 vGrow;
 uniform float uFlat;
 void main() {
   vec3 Ng = normalize(vN);
   Surf s = soil(vP, Ng, vAO, vSky);
+  // what grows here stains the ground under it: the shells over it (growth.ts) are only the strands
+  if (vGrow.x + vGrow.y + vGrow.z > 0.01) {
+    float gp = 0.6 + 0.6 * nz(vP * 37.0).a;
+    s.alb = mix(s.alb, vec3(0.014, 0.026, 0.007), sat(vGrow.x * 1.3) * 0.85);
+    s.alb = mix(s.alb, s.alb * 0.6 + vec3(0.02, 0.012, 0.006), sat(vGrow.y) * 0.5);
+    s.alb = mix(s.alb, vec3(0.19, 0.195, 0.18), sat(vGrow.z * gp) * 0.5);
+    s.glint *= 1.0 - sat(vGrow.x + vGrow.z);
+  }
   if (uFlat > 0.5) { s.near = 0.0; s.N = Ng; s.alb = vec3(0.18, 0.11, 0.065); s.rough = 0.9; s.glint = 0.0; s.ao = vAO; }
   vec3 col = shade(vP, s, Ng, vSky);
   if (soilWater > 0.0) {
@@ -397,12 +412,12 @@ void main() {
   vec3 cSand = mix(vec3(0.16, 0.105, 0.055), vec3(0.215, 0.155, 0.085), vTint) * (0.78 + 0.4 * lam.a) * (0.9 + 0.2 * n4.a * k4);
   vec3 cSlate = mix(vec3(0.042, 0.047, 0.056), vec3(0.074, 0.076, 0.078), vTint) * (0.88 + 0.22 * lam.a);
   // milky, with clearer veins through it
-  vec3 cQuartz = mix(vec3(0.25, 0.235, 0.205), vec3(0.28, 0.24, 0.185), vTint) * (0.8 + 0.3 * smoothstep(0.25, 0.0, abs(n2.a)));
+  vec3 cQuartz = mix(vec3(0.19, 0.18, 0.155), vec3(0.215, 0.185, 0.14), vTint) * (0.8 + 0.3 * smoothstep(0.25, 0.0, abs(n2.a)));
   vec3 cIron = mix(vec3(0.125, 0.052, 0.026), vec3(0.165, 0.08, 0.034), vTint) * (0.8 + 0.4 * n2.a);
   cIron = mix(cIron, vec3(0.23, 0.13, 0.045), sat(n3.a * 1.5) * 0.4 * k3);
   // flint: a dark glassy heart wherever it has been chipped, a pale chalky rind everywhere else
   float heart = smoothstep(-0.05, 0.15, n1.a + 0.3 * n2.a);
-  vec3 cFlint = mix(vec3(0.25, 0.24, 0.21), vec3(0.032, 0.033, 0.04), heart);
+  vec3 cFlint = mix(vec3(0.17, 0.165, 0.145), vec3(0.032, 0.033, 0.04), heart);
   vec3 base = gran * cGran + sandst * cSand + slate * cSlate + quartz * cQuartz + iron * cIron + flint * cFlint;
 
   // it came out of the ground and still wears it: caked on in patches, dusted on top, packed into every pit.
@@ -432,14 +447,15 @@ attribute vec3 aTan;
 attribute float aRad;
 attribute float aAO;
 attribute float aSeed;
-varying vec3 vP; varying vec3 vN; varying vec3 vT; varying vec2 vUv; varying float vR; varying float vAO; varying float vSeed;
+attribute vec3 aGrow;
+varying vec3 vP; varying vec3 vN; varying vec3 vT; varying vec2 vUv; varying float vR; varying float vAO; varying float vSeed; varying vec3 vGrow;
 void main() {
-  vP = position; vN = normal; vT = aTan; vUv = uv; vR = aRad; vAO = aAO; vSeed = aSeed;
+  vP = position; vN = normal; vT = aTan; vUv = uv; vR = aRad; vAO = aAO; vSeed = aSeed; vGrow = aGrow;
   gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
 }`;
 
 const ROOT_FRAG = COMMON + /* glsl */ `
-varying vec3 vP; varying vec3 vN; varying vec3 vT; varying vec2 vUv; varying float vR; varying float vAO; varying float vSeed;
+varying vec3 vP; varying vec3 vN; varying vec3 vT; varying vec2 vUv; varying float vR; varying float vAO; varying float vSeed; varying vec3 vGrow;
 void main() {
   vec3 N = normalize(vN), T = normalize(vT);
   float th = vUv.x * 6.2832, cs = cos(th), sn = sin(th);
@@ -460,6 +476,9 @@ void main() {
   alb *= 0.85 + 0.3 * b.a * kb;
   // soil rubbed on where the root meets the wall
   alb = mix(vec3(0.14, 0.08, 0.038), alb, smoothstep(0.15, 0.7, vAO));
+  // moss in the light, mould in the damp: the bark under the strands takes their colour
+  alb = mix(alb, vec3(0.016, 0.03, 0.008), sat(vGrow.x * 1.3) * 0.8);
+  alb = mix(alb, vec3(0.19, 0.195, 0.18), sat(vGrow.z * (0.6 + 0.6 * d.a)) * 0.45);
   s.alb = alb; s.rough = 0.8; s.f0 = 0.035; s.trans = 0.0; s.glint = 0.0; s.near = 0.02;
   s.ao = mix(0.35, 1.0, vAO) * (1.0 - 0.25 * crease);
   float sky = smoothstep(-0.5, 0.05, vP.z);
@@ -707,21 +726,200 @@ export function crumbMaterial(scale: { value: number }) {
 }
 
 
+
+// ---- what grows: shells (after day 16's moss) and the strands that hang from the roof ----
+const SHELL_VERT = /* glsl */ `
+attribute vec3 aGrow; // moss, root felt, mould
+attribute float aAO;
+attribute float aSky;
+uniform float uScale, uPix;
+uniform vec3 uWalker;
+varying vec3 vP; varying vec3 vBase; varying vec3 vN; varying vec3 vGrow; varying float vT; varying float vAO; varying float vSky;
+void main() {
+  // the outermost layer is drawn first: what it covers of the layers under it is never shaded.
+  // (And never the surface itself: that is the ground's own, stained.)
+  float t = 1.0 - float(gl_InstanceID) / float(SHELLS);
+  // how tall each grows: a moss cushion a couple of centimetres, root hair a hand's breadth, mould a few millimetres.
+  // (Thin growth is short, but not in proportion: its edge is still a pile, not a film.)
+  vec3 gw = pow(max(aGrow, vec3(0.0)), vec3(0.6));
+  float far0 = distance(position, cameraPosition);
+  // (grown in between three metres and two: nothing pops, and past three it is thrown out)
+  float h = max(max(gw.x * 0.026, gw.y * mix(0.05, 0.075, clamp(-normal.y, 0.0, 1.0))), gw.z * 0.012) * uScale * smoothstep(3.0, 2.0, far0);
+  vec3 p = position + normal * (h * t);
+  // root hair hangs
+  p.y -= gw.y * 0.03 * uScale * t * t;
+  // and all of it gives way to the head
+  vec3 dw = p - uWalker;
+  float dist = length(dw);
+  p += (dw / max(dist, 1e-4)) * (smoothstep(0.36, 0.1, dist) * t * t * h * 1.6);
+  vP = p; vBase = position; vN = normal; vGrow = aGrow; vT = t; vAO = aAO; vSky = aSky;
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+  // The layers are most of what this costs, so whole triangles are thrown out here, before a pixel is touched:
+  // where nothing grows; where the strands would be finer than a pixel (only the low nap is kept); past three metres
+  float far = distance(p, cameraPosition);
+  float px = far * uPix * 0.7;
+  float top = mix(0.3, 1.01, clamp(0.005 / (px * 2.5) - 0.6, 0.0, 1.0));
+  if (h < 1e-5 || t > top || far > 3.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+
+const SHELL_FRAG = COMMON + /* glsl */ `
+uniform sampler3D uCells;
+const mat3 S1 = mat3(0.36, 0.48, -0.8, -0.8, 0.6, 0.0, 0.48, 0.64, 0.6);
+const mat3 S2 = mat3(0.0, 0.8, 0.6, -0.8, 0.36, -0.48, -0.6, -0.48, 0.64);
+varying vec3 vP; varying vec3 vBase; varying vec3 vN; varying vec3 vGrow; varying float vT; varying float vAO; varying float vSky;
+// lit like everything else, but cheaply: one tap of the shadow map, no gloss. There are many layers of this.
+vec3 shadeFuzz(vec3 P, Surf s, vec3 Ng, float sky) {
+  vec3 L = uLightPos - P;
+  float d2 = dot(L, L), d = sqrt(d2);
+  vec3 l = L / d;
+  float ck = cookie(dot(-l, uLightDir));
+  float sh = 1.0;
+  vec4 sc = uLightVP * vec4(P + Ng * (0.0012 + 0.0035 * d) + l * (0.002 + 0.004 * d), 1.0);
+  if (sc.w > 0.0) {
+    vec3 q = sc.xyz / sc.w * 0.5 + 0.5;
+    if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0 && q.z < 1.0) sh = texture(uShadow, q);
+  }
+  float ndl = dot(s.N, l);
+  vec3 e = uLightCol * (uLightI * ck * sh / (d2 + 0.012 + s.near));
+  return min(e * s.alb / PI * (max(ndl, 0.0) + s.trans * max(-ndl, 0.0)) * mix(1.0, s.ao, 0.35), vec3(600.0)) + bounce(P, s) + daylight(P, s, sky);
+}
+void main() {
+  vec3 g = vGrow;
+  float gm = max(g.x, max(g.y, g.z));
+  if (gm < 0.1) discard;
+  float uu = vT;
+  float moss = step(g.y, g.x) * step(g.z, g.x);
+  float mould = (1.0 - moss) * step(g.y, g.z);
+  float felt = 1.0 - moss - mould;
+  vec3 Ng = normalize(vN);
+  vec3 V = normalize(cameraPosition - vP);
+  // Day 05's fuzz: the pile is a noise on the surface it grows from, the same noise in every layer, and a layer
+  // keeps only what is denser than a bar that rises with it. Low down nearly everything passes, a dense nap;
+  // at the top only the peaks are left, the tips. And the sample point leans as it goes up, so strands curve
+  // instead of standing in columns that would show the layers as lines.
+  vec3 lean = nz(S1 * vBase * 9.0).rgb * 0.0011;
+  lean.y -= felt * 0.006;
+  vec3 q = vBase + lean * uu * uu;
+  float fs = moss + felt * 0.8 + mould * 2.2;
+  // (root hair runs long: its noise is stretched along the way it hangs)
+  vec3 qs = q * vec3(1.0, mix(1.0, 0.3, felt), 1.0);
+  float coarse = 0.5 + 0.5 * nz(S1 * qs * 24.0 * fs).a;
+  float mid = 0.5 + 0.5 * nz(S2 * qs * 64.0 * fs + 0.37).a;
+  vec4 c = texture(uCells, S2 * qs * 62.0 * fs);
+  float dens = coarse * 0.45 + mid * 0.3 + (1.0 - c.r * 1.4) * 0.25;
+  float bar = moss * 0.3 + felt * 0.4 + mould * 0.27;
+  // (thinner where the growth is thin, and thinner seen edge on, where the layers would line up)
+  if (dens < bar + 0.55 * uu + (1.0 - gm) * 0.35 + 0.3 * uu * (1.0 - abs(dot(Ng, V)))) discard;
+  // dark down in the pile, lit at the tips; each tuft a little its own colour
+  float own = c.a;
+  vec3 cm = mix(vec3(0.008, 0.018, 0.004), mix(vec3(0.045, 0.1, 0.018), vec3(0.085, 0.105, 0.025), own), uu * uu);
+  cm = mix(cm, vec3(0.14, 0.11, 0.035), step(0.93, c.b) * uu); // a dead tip here and there
+  vec3 cf = mix(vec3(0.05, 0.03, 0.015), mix(vec3(0.2, 0.125, 0.065), vec3(0.32, 0.22, 0.12), own), uu);
+  float blot = nz(vBase * 2.6 + 0.4).a;
+  vec3 cu = mix(vec3(0.13, 0.13, 0.12), mix(vec3(0.42, 0.43, 0.4), vec3(0.26, 0.36, 0.33), sat(blot * 1.6 - 0.2)), uu);
+  cu = mix(cu, vec3(0.4, 0.36, 0.19), sat(-blot * 1.8 - 0.5) * uu);
+  Surf s;
+  s.alb = moss * cm + felt * cf + mould * cu;
+  s.N = normalize(Ng + lean * 160.0 * uu);
+  s.rough = 0.8; s.f0 = 0.03; s.ao = vAO * mix(0.25, 1.0, uu); s.trans = 0.35; s.glint = 0.0; s.near = 0.03;
+  gl_FragColor = vec4(shadeFuzz(vP, s, Ng, vSky), 1.0);
+}`;
+export function shellMaterial(layers: number, scale = 1) {
+  return new THREE.ShaderMaterial({ defines: { SHELLS: layers }, uniforms: { ...U, uScale: { value: scale } }, vertexShader: SHELL_VERT, fragmentShader: SHELL_FRAG });
+}
+
+const TUFT_VERT = /* glsl */ `
+attribute vec3 aRoot;
+attribute vec3 aDir;
+attribute vec4 aShape; // length, width, curl, kind (0 root hair, 1 moss, 2 mould, 3 dead grass)
+attribute vec2 aLook;
+uniform float uTime;
+uniform vec3 uWalker, uWalkDir;
+varying vec3 vP; varying vec3 vN; varying float vT; varying float vKind; varying vec2 vLook;
+void main() {
+  float t = position.y;
+  // only what is near is drawn at all: past two metres a strand is thrown out here, before a pixel is touched
+  // (it would be finer than one anyway), and between there and a metre and a half it grows in, so nothing pops
+  float far = distance(aRoot, cameraPosition);
+  float show = smoothstep(2.0, 1.4, far);
+  float len = aShape.x * show;
+  vec3 d = normalize(aDir);
+  vec3 side = normalize(cross(d, vec3(sin(aLook.x * 40.0), 0.3, cos(aLook.x * 40.0))));
+  vec3 fwd = cross(side, d);
+  // out of the roof the way it grew, then down: it hangs
+  vec3 c = aRoot + d * (len * t * (1.0 - 0.5 * t)) + vec3(0.0, -1.0, 0.0) * (len * 0.5 * t * t) + fwd * (aShape.z * len * t * t);
+  // the air down here barely moves, but it moves
+  float sw = sin(uTime * 1.1 + aLook.x * 37.0 + aRoot.x * 2.3) * 0.1 + sin(uTime * 2.7 + aLook.x * 91.0) * 0.03;
+  c += side * (sw * len * t * t);
+  // brushed aside by the head, as day 16's grass is by the crawler: parted left and right of the way we go and
+  // dragged a little along it, the root staying put, and nothing left hanging in the lens
+  vec3 dw = c - uWalker;
+  float dist = length(dw);
+  float push = smoothstep(0.3, 0.06, dist) * t * t;
+  if (push > 0.001) {
+    vec3 right = normalize(cross(uWalkDir, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
+    vec3 dir = normalize(dw / max(dist, 1e-4) * 0.5 + right * clamp(dot(dw, right) / 0.07, -1.0, 1.0) * 0.9 + uWalkDir * 0.5);
+    c += dir * (push * min(len * 0.9, 0.16));
+    vec3 out2 = c - uWalker;
+    float d2 = length(out2);
+    if (d2 < 0.1) c = uWalker + out2 * (0.1 / max(d2, 1e-4));
+  }
+  vP = c + side * (position.x * aShape.y * (1.0 - 0.75 * t));
+  vN = fwd;
+  vT = t; vKind = aShape.w; vLook = aLook;
+  gl_Position = projectionMatrix * viewMatrix * vec4(vP, 1.0);
+  if (show <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const TUFT_FRAG = COMMON + /* glsl */ `
+varying vec3 vP; varying vec3 vN; varying float vT; varying float vKind; varying vec2 vLook;
+void main() {
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  float k = floor(vKind + 0.5);
+  vec3 hair = mix(vec3(0.11, 0.065, 0.032), vec3(0.3, 0.2, 0.11), vLook.y);
+  vec3 moss = mix(vec3(0.02, 0.045, 0.01), vec3(0.075, 0.12, 0.03), vLook.y) * mix(0.7, 1.2, vT);
+  vec3 mould = mix(vec3(0.28, 0.285, 0.265), vec3(0.46, 0.47, 0.44), vLook.y);
+  vec3 straw = mix(vec3(0.2, 0.155, 0.075), vec3(0.32, 0.26, 0.14), vLook.y);
+  Surf s;
+  // (4: the moss-like stuff of the dark, olive going to brown)
+  vec3 dusk = mix(vec3(0.03, 0.032, 0.012), vec3(0.085, 0.075, 0.03), vLook.y) * mix(0.7, 1.25, vT);
+  s.alb = k < 0.5 ? hair : k < 1.5 ? moss : k < 2.5 ? mould : k < 3.5 ? straw : dusk;
+  s.N = N; s.rough = 0.7; s.f0 = 0.03; s.ao = mix(0.5, 1.0, vT); s.trans = 0.4; s.glint = 0.0; s.near = 0.07;
+  float sky = smoothstep(-0.5, 0.05, vP.z);
+  gl_FragColor = vec4(shade(vP, s, N, sky), 1.0);
+}`;
+export function tuftMaterial() {
+  return new THREE.ShaderMaterial({ uniforms: { ...U }, vertexShader: TUFT_VERT, fragmentShader: TUFT_FRAG, side: THREE.DoubleSide });
+}
+
 // ---- grass: a blade is one arc, leaning away from its crown ----
 const GRASS_VERT = /* glsl */ `
 attribute vec3 aRoot;
 attribute vec4 aShape; // height, width, bend, heading
 attribute vec2 aLook;  // tint, seed
-uniform float uTime;
+uniform float uTime, uStir;
+uniform vec3 uWalker, uWalkDir;
 varying vec3 vP; varying vec3 vN; varying vec3 vSide; varying float vT; varying float vX; varying vec2 vLook;
 void main() {
   float t = position.y;
-  float bend = max(0.08, aShape.z + 0.12 * sin(uTime * 1.3 + aRoot.x * 2.7 + aRoot.z * 1.9 + aLook.y * 6.0) + 0.05 * sin(uTime * 3.1 + aLook.y * 40.0));
+  // nearly still while we are; our going through it sets what is round us shaking
+  float stir = uStir * smoothstep(1.5, 0.25, distance(aRoot, uWalker));
+  float bend = max(0.08, aShape.z + (0.055 + 0.12 * stir) * sin(uTime * 1.0 + aRoot.x * 2.7 + aRoot.z * 1.9 + aLook.y * 6.0) + (0.02 + 0.07 * stir) * sin(uTime * 2.3 + aLook.y * 40.0) + 0.09 * stir * sin(uTime * 5.7 + aLook.y * 23.0));
   vec3 d = vec3(cos(aShape.w), 0.0, sin(aShape.w));
   vec3 side = vec3(-d.z, 0.0, d.x);
   float a = bend * t;
   vec3 c = aRoot + (d * (1.0 - cos(a)) + vec3(0.0, sin(a), 0.0)) * (aShape.x / bend);
   vec3 tang = d * sin(a) + vec3(0.0, cos(a), 0.0);
+  // brushed aside as we come through: parted left and right of the way we go, the root staying where it is
+  vec3 dw = c - uWalker;
+  float dist = length(dw);
+  float push = smoothstep(0.34, 0.06, dist) * t * t;
+  if (push > 0.001) {
+    vec3 right = normalize(cross(uWalkDir, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
+    vec3 dir = normalize(dw / max(dist, 1e-4) * 0.5 + right * clamp(dot(dw, right) / 0.07, -1.0, 1.0) * 0.9 + uWalkDir * 0.4);
+    c += dir * push * min(aShape.x * 0.8, 0.2);
+    c.y -= push * push * aShape.x * 0.3;
+  }
   vP = c + side * (position.x * aShape.y * (1.0 - 0.9 * t * t));
   vN = cross(side, tang);
   vSide = side; vT = t; vX = position.x * 2.0; vLook = aLook;
@@ -748,6 +946,152 @@ void main() {
 }`;
 export function grassMaterial() {
   return new THREE.ShaderMaterial({ uniforms: { ...U }, vertexShader: GRASS_VERT, fragmentShader: GRASS_FRAG, side: THREE.DoubleSide });
+}
+
+// ---- herbs and flowers by the mouth: every instance one strip of one plant, its stem, a leaf or a petal ----
+const HERB_VERT = /* glsl */ `
+attribute vec3 aRoot;
+attribute vec4 aStem; // height, bend, heading, seed
+attribute vec4 aPart; // where up the stem it sits (below 0: it is the stem), length, width, angle round the stem
+attribute vec4 aLook; // colour, kind (0 stem, 1 leaf, 2 petal, 3 the middle of a flower)
+uniform float uTime, uStir;
+uniform vec3 uWalker, uWalkDir;
+varying vec3 vP; varying vec3 vN; varying vec3 vSide; varying float vT; varying float vX; varying float vAO; varying vec4 vLook;
+void main() {
+  float t = position.y;
+  float H = aStem.x;
+  float stir = uStir * smoothstep(1.5, 0.25, distance(aRoot, uWalker));
+  float bend = max(0.08, aStem.y + (0.05 + 0.11 * stir) * sin(uTime * 1.0 + aRoot.x * 2.7 + aRoot.z * 1.9 + aStem.w * 6.0) + (0.018 + 0.06 * stir) * sin(uTime * 2.3 + aStem.w * 40.0) + 0.08 * stir * sin(uTime * 5.7 + aStem.w * 23.0));
+  vec3 d = vec3(cos(aStem.z), 0.0, sin(aStem.z));
+  vec3 side = vec3(-d.z, 0.0, d.x);
+  // the stem is one arc, as a blade of grass is; a leaf or a flower rides on its point of it
+  float ts = aPart.x < 0.0 ? t : aPart.x;
+  float a = bend * ts;
+  vec3 c = aRoot + (d * (1.0 - cos(a)) + vec3(0.0, sin(a), 0.0)) * (H / bend);
+  vec3 tang = d * sin(a) + vec3(0.0, cos(a), 0.0);
+  // brushed aside with the grass
+  vec3 dw = c - uWalker;
+  float dist = length(dw);
+  float push = smoothstep(0.34, 0.06, dist) * ts * ts;
+  if (push > 0.001) {
+    vec3 right = normalize(cross(uWalkDir, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
+    vec3 dir = normalize(dw / max(dist, 1e-4) * 0.5 + right * clamp(dot(dw, right) / 0.07, -1.0, 1.0) * 0.9 + uWalkDir * 0.4);
+    c += dir * push * min(H * 0.8, 0.2);
+    c.y -= push * push * H * 0.3;
+  }
+  vec3 ws = side;
+  float w = aPart.z * (1.0 - 0.5 * t);
+  float kind = aLook.w;
+  if (aPart.x >= 0.0) {
+    // out from the stem at its own angle round it and a little along it, then curling back
+    vec3 o = cos(aPart.w) * side + sin(aPart.w) * cross(tang, side);
+    float spread = kind > 2.5 ? 0.4 : kind > 1.5 ? 0.9 : 0.72;
+    float droop = kind > 1.5 ? 0.12 : 0.5;
+    vec3 e = normalize(o * spread + tang * (1.0 - spread));
+    c += e * (aPart.y * t) - tang * (aPart.y * droop * t * t);
+    vec3 et = normalize(e - tang * (2.0 * droop * t));
+    ws = normalize(cross(et, tang));
+    tang = et;
+    w = aPart.z * sin(3.14159 * pow(t, kind > 1.5 ? 1.3 : 0.8));
+  }
+  vP = c + ws * (position.x * w);
+  vN = cross(ws, tang);
+  vSide = ws; vT = t; vX = position.x * 2.0; vLook = aLook;
+  vAO = mix(0.5, 1.0, smoothstep(0.0, 0.08, c.y - aRoot.y));
+  gl_Position = projectionMatrix * viewMatrix * vec4(vP, 1.0);
+}`;
+const HERB_FRAG = COMMON + /* glsl */ `
+varying vec3 vP; varying vec3 vN; varying vec3 vSide; varying float vT; varying float vX; varying float vAO; varying vec4 vLook;
+void main() {
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  vec3 Ng = N;
+  float k = vLook.w;
+  vec3 alb = vLook.rgb;
+  Surf s;
+  s.trans = 0.5;
+  if (k < 0.5) alb *= mix(0.6, 1.0, vT);
+  else if (k < 1.5) {
+    // a leaf: folded along a paler midrib
+    N = normalize(N + vSide * vX * 0.45 * (gl_FrontFacing ? 1.0 : -1.0));
+    alb = mix(alb, alb * 1.5 + 0.01, smoothstep(0.14, 0.03, abs(vX)));
+  } else {
+    // a petal: thin, the day comes through it; darker into the throat
+    alb *= mix(0.7, 1.0, smoothstep(0.0, 0.5, vT));
+    s.trans = 0.75;
+  }
+  s.N = N; s.alb = alb; s.rough = 0.5; s.f0 = 0.04; s.glint = 0.0; s.near = 0.0; s.ao = vAO;
+  gl_FragColor = vec4(shade(vP, s, Ng, 1.0), 1.0);
+}`;
+export function herbMaterial() {
+  return new THREE.ShaderMaterial({ uniforms: { ...U }, vertexShader: HERB_VERT, fragmentShader: HERB_FRAG, side: THREE.DoubleSide });
+}
+
+// ---- wax caps: a stem and a cap turned on a lathe, out of the wall and then up ----
+const FUNGUS_VERT = /* glsl */ `
+attribute vec3 aProf;  // 0 stem, 1 gills, 2 the skin of the cap; radius; height (each in its own measure)
+attribute vec2 aPn;    // the profile's normal: outwards, along the axis
+attribute vec3 aPos;
+attribute vec3 aNrm;
+attribute vec4 aShape; // height, cap radius, stem radius, how tall the cap is to its radius
+attribute vec4 aLook;  // colour, seed
+varying vec3 vP; varying vec3 vN; varying vec3 vK; varying vec2 vXZ; varying vec4 vLook;
+void main() {
+  // small things: past four metres they are not drawn at all
+  float show = smoothstep(4.0, 3.2, distance(aPos, cameraPosition));
+  vec3 n0 = normalize(aNrm);
+  // they grow towards up, each a little off it
+  vec3 upv = normalize(vec3(sin(aLook.w * 50.0) * 0.3, 1.0, cos(aLook.w * 31.0) * 0.3));
+  vec3 B = cross(n0, upv);
+  float bl = length(B);
+  B = bl > 0.05 ? B / bl : normalize(cross(upv, vec3(1.0, 0.0, 0.3)));
+  float h = aShape.x * show, cr = aShape.y * show, sr = aShape.z * show;
+  float cap = step(0.5, aProf.x);
+  float t = mix(aProf.z, 1.0, cap);
+  vec3 T = normalize(mix(n0, upv, t));
+  vec3 c = aPos - n0 * 0.004 + (n0 * (t - 0.5 * t * t) + upv * (0.5 * t * t)) * h;
+  vec3 Z = cross(T, B);
+  vec3 radial = B * position.x + Z * position.z;
+  // no cap is round
+  float oval = 1.0 + 0.1 * ((position.x * position.x - position.z * position.z) * sin(aLook.w * 77.0) + 2.0 * position.x * position.z * cos(aLook.w * 77.0));
+  float r = mix(sr * aProf.y, cr * aProf.y * oval, cap);
+  c += T * (cap * cr * aShape.w * aProf.z);
+  vP = c + radial * r;
+  vN = mix(radial, normalize(radial * (aPn.x * aShape.w) + T * aPn.y), cap);
+  vK = aProf; vXZ = position.xz; vLook = aLook;
+  gl_Position = projectionMatrix * viewMatrix * vec4(vP, 1.0);
+  if (show <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const FUNGUS_FRAG = COMMON + /* glsl */ `
+varying vec3 vP; varying vec3 vN; varying vec3 vK; varying vec2 vXZ; varying vec4 vLook;
+void main() {
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  float th = atan(vXZ.y, vXZ.x);
+  vec3 col = vLook.rgb;
+  vec3 pale = mix(col, vec3(0.56, 0.54, 0.48), 0.6);
+  // the stem: paler than the cap, a little dirty at the foot
+  vec3 stem = mix(vec3(0.36, 0.33, 0.27), pale, smoothstep(0.0, 0.5, vK.z));
+  // the gills: thick, far apart, waxy
+  vec3 gills = pale * (0.62 + 0.38 * smoothstep(-0.2, 0.6, sin(th * 30.0)));
+  // the skin: deepest on the crown, thinning to the colour of the gills at the rim, where it is lined
+  vec3 skin = col * mix(1.0, 0.72, smoothstep(0.55, 1.0, vK.z));
+  float rim = smoothstep(0.4, 0.06, vK.z);
+  skin = mix(skin, pale, rim * 0.45) * (1.0 - 0.14 * rim * sin(th * 30.0));
+  float k = vK.x;
+  Surf s;
+  s.alb = k < 1.0 ? mix(stem, gills, sat(k)) : mix(gills, skin, sat(k - 1.0));
+  s.N = N;
+  // waxy and wet: the lamp sits on the cap as a highlight
+  s.rough = mix(0.42, 0.2, sat(k - 1.0)); s.f0 = 0.045; s.trans = 0.3; s.glint = 0.0; s.near = 0.03;
+  s.ao = k < 1.0 ? mix(mix(0.45, 0.95, smoothstep(0.0, 0.4, vK.z)), 0.5, sat(k)) : mix(0.5, 1.0, sat(k - 1.0));
+  gl_FragColor = vec4(shade(vP, s, N, 0.0), 1.0);
+}`;
+export function fungusMaterial() {
+  return new THREE.ShaderMaterial({ uniforms: { ...U }, vertexShader: FUNGUS_VERT, fragmentShader: FUNGUS_FRAG, side: THREE.DoubleSide });
+}
+export function fungusDepthMaterial() {
+  return new THREE.ShaderMaterial({ vertexShader: FUNGUS_VERT, fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }', side: THREE.DoubleSide, colorWrite: false });
 }
 
 export function soilMaterial(flat = false) {

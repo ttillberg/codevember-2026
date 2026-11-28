@@ -25,10 +25,12 @@ class Frame {
   }
 }
 
-interface Tubes { pos: number[]; nrm: number[]; tan: number[]; uv: number[]; rad: number[]; seed: number[]; idx: number[] }
+interface Tubes { pos: number[]; nrm: number[]; tan: number[]; uv: number[]; rad: number[]; seed: number[]; idx: number[]; pts: number[] }
 
 function addTube(out: Tubes, path: THREE.Vector3[], radius: (t: number) => number, sides: number, seed: number) {
   const n = path.length;
+  // (and where the root runs, for whatever grows round it: growth.ts)
+  for (let i = 0; i < n; i += 2) out.pts.push(path[i].x, path[i].y, path[i].z, radius(i / (n - 1)));
   const base = out.pos.length / 3;
   const T = new THREE.Vector3(), N = new THREE.Vector3(), B = new THREE.Vector3(), prevT = new THREE.Vector3(), ax = new THREE.Vector3(), v = new THREE.Vector3();
   let len = 0;
@@ -70,6 +72,8 @@ interface Strand { start: number; n: number; parent: number; stiff: number; asle
 
 export class Flora {
   roots!: THREE.Mesh;
+  /** x, y, z, radius along every root: what grows round them wants to know */
+  rootPts: number[] = [];
   hairs!: THREE.Mesh;
   hairDepth = hairDepthMaterial();
   pixel = { value: 0.001 };
@@ -86,7 +90,7 @@ export class Flora {
   constructor(private world: World, rnd: () => number) {
     const P = new Perlin(91);
     const fr = new Frame(world);
-    const tubes: Tubes = { pos: [], nrm: [], tan: [], uv: [], rad: [], seed: [], idx: [] };
+    const tubes: Tubes = { pos: [], nrm: [], tan: [], uv: [], rad: [], seed: [], idx: [], pts: [] };
     const dir = new THREE.Vector3(), down = new THREE.Vector3(0, -1, 0);
     const tmp = new THREE.Vector3();
 
@@ -142,6 +146,12 @@ export class Flora {
       }
     };
 
+    /** a root stays in the ground: by the mouth, where a march finds no wall, it would otherwise arc out over the grass */
+    const bury = (p: THREE.Vector3, r: number) => {
+      const top = world.terrainH(p.x, p.z) - r - 0.06;
+      if (p.y > top) p.y = top;
+      return p;
+    };
     const woody = (e: RailEdge, s: number, thick: number) => {
       const sgn = rnd() < 0.5 ? -1 : 1;
       const phi0 = sgn * (1.0 + rnd() * 0.8), phi1 = -sgn * (0.25 + rnd() * 1.3);
@@ -160,7 +170,7 @@ export class Flora {
         let rho = tw - rr * 0.35 - Math.sin(Math.PI * t) * sag;
         if (k === 0 || k === K) rho = tw + 0.09;
         else rho = Math.max(rho, 0.16 + rr);
-        ctrl.push(fr.c.clone().addScaledVector(dir, rho));
+        ctrl.push(bury(fr.c.clone().addScaledVector(dir, rho), rr));
       }
       const curve = new THREE.CatmullRomCurve3(ctrl, false, 'centripetal');
       const path = curve.getSpacedPoints(Math.max(8, Math.ceil(curve.getLength() / 0.02)));
@@ -181,7 +191,7 @@ export class Flora {
           fr.at(e, along(t0) + as * k).dir(phiB + bs * k * (0.16 + rnd() * 0.12), dir);
           const tw = world.march(fr.c, dir, 1.0);
           const rho = k === KB ? tw + 0.06 : Math.max(tw - rb * 0.3 - (rnd() < 0.3 ? 0.03 : 0), 0.15 + rb);
-          bc.push(fr.c.clone().addScaledVector(dir, rho));
+          bc.push(bury(fr.c.clone().addScaledVector(dir, rho), rb));
         }
         const bcurve = new THREE.CatmullRomCurve3(bc, false, 'centripetal');
         const bpath = bcurve.getSpacedPoints(Math.max(6, Math.ceil(bcurve.getLength() / 0.02)));
@@ -244,6 +254,7 @@ export class Flora {
     g.setAttribute('aSeed', new THREE.BufferAttribute(new Float32Array(tubes.seed), 1));
     g.setAttribute('aAO', new THREE.BufferAttribute(ao, 1));
     g.setIndex(new THREE.BufferAttribute(new Uint32Array(tubes.idx), 1));
+    this.rootPts = tubes.pts;
     this.roots = new THREE.Mesh(g, rootMaterial());
     this.roots.frustumCulled = false;
 

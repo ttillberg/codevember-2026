@@ -35,8 +35,8 @@ export interface RailEdge {
 
 // name, x, y, z, radius. The hill is entered at E looking down -z.
 const NODES: [string, number, number, number, number][] = [
-  ['O', 0.04, 0.1, 0.98, 0.3],
-  ['E', 0.0, 0.0, 0.0, 0.31],
+  ['O', 0.04, 0.1, 0.98, 0.26],
+  ['E', 0.0, 0.0, 0.0, 0.25],
   ['A', 0.18, -0.32, -1.55, 0.3],
   ['B', -0.05, -0.58, -3.05, 0.37],
   ['C', -1.35, -0.72, -4.25, 0.3],

@@ -69,7 +69,7 @@ interface Set { c: THREE.Vector3; q: THREE.Quaternion; s: number; axis: THREE.Ve
 export class Rocks {
   meshes: THREE.InstancedMesh[] = [];
   pebbles!: THREE.InstancedMesh;
-  private sets: Set[] = [];
+  sets: Set[] = [];
   private peb!: { p: Float32Array; v: Float32Array; s: Float32Array; q: THREE.Quaternion[]; awake: Uint8Array; n: number };
   /** called when a stone shifts: somewhere for the dirt above it to come down from */
   onShift: (p: THREE.Vector3, amount: number) => void = () => {};

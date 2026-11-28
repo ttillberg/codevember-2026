@@ -6,9 +6,11 @@ import { mulberry32 } from './noise';
 import { Rocks } from './rocks';
 import { Flora } from './flora';
 import { Dust } from './dust';
-import { buildGrass } from './outside';
+import { buildGrass, buildHerbs } from './outside';
+import { buildFungi } from './fungi';
 import { Den, buildDebris } from './den';
 import { Fog } from './fog';
+import { Growth } from './growth';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -46,7 +48,25 @@ const rockMeshes = rocks.build(rnd);
 const flora = new Flora(world, rnd);
 const dust = new Dust(world);
 const grass = buildGrass(world, rnd);
-scene.add(...rockMeshes, flora.roots, flora.hairs, grass, dust.crumbs, dust.motes);
+// (their own dice, so that adding them moved nothing else)
+const herbs = buildHerbs(world, mulberry32(1127));
+/** the hillside's plants: drawn only while they can be seen */
+const hillside = [grass, herbs];
+// what grows: moss by the mouth, root felt and mould inside, round the roots and the stones (growth.ts)
+const growth = new Growth(world, rocks.sets, flora.rootPts);
+const LAYERS = matchMedia('(pointer: coarse)').matches ? 6 : 10;
+const grown: THREE.Object3D[] = [];
+{
+  const onSoil = growth.dress(soil.geometry, false), onRoots = growth.dress(flora.roots.geometry, true);
+  if (onSoil) grown.push(growth.shells(onSoil, LAYERS, 1));
+  if (onRoots) grown.push(growth.shells(onRoots, Math.max(4, LAYERS - 4), 0.45));
+  grown.push(growth.tufts(rnd));
+  console.log(`growth: shells over ${(onSoil?.index!.count ?? 0) / 3} + ${(onRoots?.index!.count ?? 0) / 3} triangles, ${LAYERS} layers`);
+}
+scene.add(...grown);
+const fungi = buildFungi(world, growth, mulberry32(3301));
+scene.add(fungi.mesh);
+scene.add(...rockMeshes, flora.roots, flora.hairs, grass, herbs, dust.crumbs, dust.motes);
 /** dirt comes down from p: the crumbs, and the dust they leave hanging in the air behind them */
 function crumble(p: THREE.Vector3, amount: number, size = 1) {
   dust.crumble(p, amount, size);
@@ -92,8 +112,9 @@ const casters: { obj: THREE.Mesh | THREE.Points | THREE.LineSegments; depth: THR
   ...rockMeshes.map((obj) => ({ obj, depth: depthMat })),
   ...den.casters,
   { obj: debris.mesh, depth: debris.depth },
+  { obj: fungi.mesh, depth: fungi.depth },
 ];
-const noShadow: THREE.Object3D[] = [sky, dust.motes, dust.crumbs, grass, soilPre];
+const noShadow: THREE.Object3D[] = [sky, dust.motes, dust.crumbs, grass, herbs, soilPre, ...grown];
 
 // ---- look, crawl ----
 const SPEED = 1.05;
@@ -376,17 +397,19 @@ function resize() {
   fog.setSize(Math.round(w * dpr), Math.round(h * dpr));
   const tanV = Math.tan((camera.fov * Math.PI) / 360);
   flora.pixel.value = (2 * tanV) / (h * dpr);
+  U.uPix.value = flora.pixel.value;
   dust.scale.value = (h * dpr) / (2 * tanV);
 }
 
 function renderShadow() {
   for (const c of casters) { c.keep = c.obj.material; c.obj.material = c.depth; }
-  for (const o of noShadow) o.visible = false;
+  // (what was already hidden stays hidden after: the hillside, once we are in)
+  for (const o of noShadow) { o.userData.shown = o.visible; o.visible = false; }
   renderer.setRenderTarget(shadowRT);
   renderer.clear();
   renderer.render(scene, lightCam);
   for (const c of casters) c.obj.material = c.keep!;
-  for (const o of noShadow) o.visible = true;
+  for (const o of noShadow) o.visible = o.userData.shown;
 }
 
 // ---- what our passing does to the place ----
@@ -424,8 +447,10 @@ function disturb(dt: number) {
   }
   dust.update(dt);
   den.update(dt, clock, camPos);
-  // nothing of the hillside can be seen from round the first bend
-  grass.visible = camPos.z > -2.6;
+  // the hillside is thrown out once we are in: nothing of it can be seen from round the first bend, nor, before
+  // that, with our back to the mouth. Hidden is not drawn at all: not a vertex of it is run
+  const seen = camPos.z > -2.6 && (camPos.z > -0.5 || lookDir.dot(tmpA.copy(U.uMouth.value).sub(camPos).normalize()) > -0.15);
+  for (const o of hillside) o.visible = seen;
 }
 
 let clock = 0;
@@ -435,6 +460,11 @@ function tick(dt: number) {
   U.uTime.value = time;
   // our running shivers whatever water is near
   U.uRipple.value += (nav.v / SPEED - U.uRipple.value) * (1 - Math.exp(-dt / 0.6));
+  U.uWalker.value.copy(camPos);
+  U.uWalkDir.value.set(moveDir.x, 0, moveDir.z).normalize();
+  // quick to rise as we set off, slow to settle once we stop
+  const stirTo = Math.min(1, Math.abs(nav.v) / SPEED);
+  U.uStir.value += (stirTo - U.uStir.value) * (1 - Math.exp(-dt / (stirTo > U.uStir.value ? 0.18 : 1.1)));
   crawl(dt);
   updateCamera(dt, time);
   updateTorch(dt, time);
@@ -474,7 +504,7 @@ requestAnimationFrame(frame);
 // dev: jump somewhere. burrow.go('B', 0, yawDeg, pitchDeg) puts the eye on the first edge at node B.
 Object.assign(window, {
   burrow: {
-    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim,
+    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim, fungi, hillside,
     go(name: string, along = 0, yaw?: number, pitch = 0) {
       const n = world.nodes.findIndex((x) => x.name === name);
       // arrive on the last edge listed at the node (the one that leads to it), looking the way it runs

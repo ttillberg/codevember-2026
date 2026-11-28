@@ -104,8 +104,9 @@ export class Fog {
             float dm2 = dot(Lm, Lm), dm = sqrt(dm2);
             float mu = dot(Lm / max(dm, 1e-3), -rd);
             float hg = 0.75 / pow(1.25 - mu, 1.5);
-            light += uSky * (uDay * (0.05 / (0.05 + dm2)) * smoothstep(3.2, 0.4, dm) * hg * 1.5);
-            sum += light * (dens * exp(-tau) * dt);
+            // (through the even air, not the patchy: with the wisps in it the day came out of the mouth in rays)
+            vec3 day = uSky * (uDay * (0.05 / (0.05 + dm2)) * smoothstep(3.2, 0.4, dm) * hg * 1.5);
+            sum += (light * dens + day * uFog) * (exp(-tau) * dt);
             tau += dens * 60.0 * dt;
           }
           gl_FragColor = vec4(sum, exp(-tau));
