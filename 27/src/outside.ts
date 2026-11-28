@@ -30,7 +30,8 @@ export function buildGrass(world: World, rnd: () => number): THREE.Mesh {
   const g = strip(5);
 
   // Two lots: nearly all of it, and the tall blades on and beside the way in, the ones that go past the lens pushed
-  // right over. In five straight pieces that bend shows as corners: those few hundred are drawn in eight
+  // right over. In five straight pieces that bend shows as corners, and in eight it still did, up against the lens:
+  // those few hundred are drawn in sixteen
   const lot = () => ({ root: [] as number[], shape: [] as number[], look: [] as number[] });
   const most = lot(), near = lot();
   const down = new THREE.Vector3(0, -1, 0), o = new THREE.Vector3();
@@ -91,7 +92,7 @@ export function buildGrass(world: World, rnd: () => number): THREE.Mesh {
     const n = Math.round(6 + own() * 7);
     for (let k = 0; k < n; k++) {
       const a = own() * Math.PI * 2, r = own() * 0.035;
-      blade(cx + Math.cos(a) * r, cz + Math.sin(a) * r, (0.26 + own() * 0.26) * big, 0.003 + own() * 0.003, 0.25 + own() * 0.55, a + (own() - 0.5) * 0.6, 0.45 + 0.55 * (tint * 0.6 + own() * 0.4), true);
+      blade(cx + Math.cos(a) * r, cz + Math.sin(a) * r, (0.26 + own() * 0.26) * big, 0.003 + own() * 0.003, 0.2 + own() * 0.4, a + (own() - 0.5) * 0.6, 0.45 + 0.55 * (tint * 0.6 + own() * 0.4), true);
     }
   }
   // and a few thin tufts right at the lip of the hole, on the bare dirt itself: not many, the hole shows between them
@@ -100,7 +101,7 @@ export function buildGrass(world: World, rnd: () => number): THREE.Mesh {
     const n = Math.round(3 + own() * 3);
     for (let k = 0; k < n; k++) {
       const a = own() * Math.PI * 2, r = own() * 0.025;
-      blade(cx + Math.cos(a) * r, cz + Math.sin(a) * r, (0.2 + own() * 0.22) * big, 0.003 + own() * 0.003, 0.25 + own() * 0.6, a + (own() - 0.5) * 0.6, 0.45 + 0.55 * (tint * 0.6 + own() * 0.4), true);
+      blade(cx + Math.cos(a) * r, cz + Math.sin(a) * r, (0.2 + own() * 0.22) * big, 0.003 + own() * 0.003, 0.2 + own() * 0.45, a + (own() - 0.5) * 0.6, 0.45 + 0.55 * (tint * 0.6 + own() * 0.4), true);
     }
   }
   const fill = (to: THREE.InstancedBufferGeometry, from: ReturnType<typeof lot>) => {
@@ -113,12 +114,12 @@ export function buildGrass(world: World, rnd: () => number): THREE.Mesh {
   const mesh = new THREE.Mesh(g, grassMaterial());
   mesh.frustumCulled = false;
   // (a child of the rest: shown and hidden with it)
-  const tall = strip(8);
+  const tall = strip(16);
   const m = fill(tall, near);
   const stand = new THREE.Mesh(tall, mesh.material);
   stand.frustumCulled = false;
   mesh.add(stand);
-  console.log(`grass: ${n} blades, and ${m} by the way in, in eight segments`);
+  console.log(`grass: ${n} blades, and ${m} by the way in, in sixteen segments`);
   return mesh;
 }
 

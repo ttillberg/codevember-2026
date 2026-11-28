@@ -16,7 +16,7 @@ import { sound } from './sound';
 import { Growth } from './growth';
 import { initUI, say, type, showWin, firstPress } from './ui';
 import { Game } from './game';
-import { Life } from './life';
+import { Life, buildMidges } from './life';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -66,7 +66,7 @@ const grass = buildGrass(world, rnd);
 // (their own dice, so that adding them moved nothing else)
 const herbs = buildHerbs(world, mulberry32(1127));
 /** the hillside's plants: drawn only while they can be seen */
-const hillside = [grass, herbs];
+const hillside: THREE.Object3D[] = [grass, herbs];
 // what grows: moss by the mouth, root felt and mould inside, round the roots and the stones (growth.ts)
 const growth = new Growth(world, rocks.sets, flora.rootPts);
 const LAYERS = matchMedia('(pointer: coarse)').matches ? 6 : 10;
@@ -151,6 +151,11 @@ bones.onReady = () => { casters.push(...bones.casters); void renderer.compileAsy
 const life = new Life(world, mulberry32(1331));
 scene.add(life.group);
 noShadow.push(life.group);
+// and what flies over the bank: midges. Only out there, so they go with the hillside
+const midges = buildMidges(world, mulberry32(2718), dust.scale);
+scene.add(midges);
+noShadow.push(midges);
+hillside.push(midges);
 /** the end has come and the fade is over: nothing more is drawn here */
 let halted = false;
 beast.onCaught = () => {
