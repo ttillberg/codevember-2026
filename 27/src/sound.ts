@@ -64,7 +64,7 @@ const MIX = {
   outside: 0.8, room: 0.15, wind: 0.2, ambient: 0.5,
   breath: 0.12, gasp: 0.12, heart: 0.16,
   steps: 0.45, dirt: 0.7, stone: 0.9, water: 0.55,
-  presence: 2, drone: 0.18, growl: 0.12, snarl: 0.25, groan: 0.1, cry: 0.4, pads: 0.7, beast: 0.9,
+  presence: 2, drone: 0.18, growl: 0.12, snarl: 0.25, groan: 0.1, cry: 1.2, pads: 0.7, beast: 0.9,
   torch: 0.5,
 };
 
@@ -213,7 +213,6 @@ class Sound {
   private tdTick = 0;
   private outG!: GainNode;
   private outLP!: BiquadFilterNode;
-  private lampWas = 1;
   private ended = false;
 
   constructor() {
@@ -536,13 +535,14 @@ class Sound {
     if (this.live > 28) return;
     this.place(b.group.position);
     const td = Math.max(b.tunnelDistance ? b.tunnelDistance(s.nav) : this.dist, this.dist);
-    const lvl = Math.max(floor, (1 / (1 + Math.pow(td / 4, 1.6))) * clamp01((20 - td) / 4));
+    const lvl = Math.max(floor, (1 / (1 + Math.pow(td / 5, 1.3))) * clamp01((20 - td) / 4));
     if (lvl < 0.004) return;
     const off = clamp01(td / 14);
     const inp = ac.createGain(), lp = ac.createBiquadFilter(), dry = ac.createGain(), wet = ac.createGain(), echo = ac.createGain();
     inp.gain.value = MIX.cry * gain * lvl;
     lp.type = 'lowpass';
-    lp.frequency.value = 1300 + 5200 / (1 + (td * td) / 30);
+    // (behind us it is a little duller still: left from right is plain to the ear, front from back is not)
+    lp.frequency.value = (2000 + 5000 / (1 + (td * td) / 81)) * (1 - 0.35 * clamp01(-this.front));
     inp.connect(lp);
     let tail: AudioNode = lp;
     if (ac.createStereoPanner) {
@@ -855,7 +855,6 @@ class Sound {
     }
     // (the torch says nothing when the beast is on us, nor in the black after: its sparks and ticks there were tried,
     // and they were bad. Only the heart then)
-    this.lampWas = b.lamp;
     const onUs = st === 'crouch' || st === 'leap' || st === 'bite' || st === 'gone';
     // the torch's electronics: every jump in what it gives is a tick, a little to the right, where it is held
     if (!dead && !onUs && this.lit >= 0 && Math.abs(I - this.lit) > 0.05 && t - this.lastTick > 0.035) {
@@ -936,7 +935,7 @@ class Sound {
     // ten or twenty seconds while it is anywhere down here with us, sooner when it is after us, a short one: not an
     // alarm, the way to tell where it is
     if (angry && !this.wasAngry && !dead && st !== 'away') {
-      this.cry('alarm', t, 1, 1, 0.1, 0, 3.3);
+      this.cry('alarm', t, 1, 1, 0.15, 0, 3.3);
       this.nextCry = 9 + 6 * rnd();
     }
     this.wasAngry = angry;

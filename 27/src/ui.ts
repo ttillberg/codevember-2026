@@ -11,7 +11,7 @@ const svg = (w: number, h: number, box: string, body: string) =>
 // a mouse, with the way it is moved to look about drawn either side of it
 const MOUSE = svg(44, 47, '0 0 44 47', '<rect x="12" y="6" width="20" height="36" rx="10" /><path d="M22 12v6" /><path d="M6.5 20l-4 4 4 4M37.5 20l4 4-4 4" />');
 
-// only what is needed to set off: the keys move, the mouse looks, R looks over the shoulder. The rest is found by doing
+// only what is needed to set off: the keys move, the mouse looks, E looks over the shoulder. The rest is found by doing
 const KEYMAP = `
   <div class="row">
     <figure>
@@ -19,7 +19,7 @@ const KEYMAP = `
       <figcaption>Move</figcaption>
     </figure>
     <figure>
-      <div class="clusters"><span class="cluster one"><kbd>R</kbd></span></div>
+      <div class="clusters"><span class="cluster one"><kbd>E</kbd></span></div>
       <figcaption>Look back if followed</figcaption>
     </figure>
     <figure>${MOUSE}<figcaption>Look around</figcaption></figure>

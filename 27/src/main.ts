@@ -26,8 +26,7 @@ const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 // the controls, the help and the pointer lock (ui.ts); no controls at the start of a clip
 initUI(canvas, {
   start: !auto && !params.has('at'),
-  // (asked for by name, so that the button is there before the engine knows how)
-  sound: (on) => (sound as unknown as { setMuted?: (off: boolean) => void }).setMuted?.(!on),
+  sound: (on) => sound.setMuted(!on),
 });
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -174,7 +173,7 @@ const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0 };
 const look = { yaw: 0, pitch: 0, yawT: 0, pitchT: 0, yaw0: 0, pitch0: 0 };
 const aim = { x: 0, y: 0, mouse: false };
 const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, mode: '' as '' | 'look' | 'crawl', fwd: false, back: false, left: false, right: false, rear: false, wheel: 0 };
-/** the head turned to look behind us (R held): 0 ahead, 1 right round. Only the head: the legs go on as they were */
+/** the head turned to look behind us (E held): 0 ahead, 1 right round. Only the head: the legs go on as they were */
 let rear = 0;
 
 const camPos = new THREE.Vector3();
@@ -250,12 +249,14 @@ canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('wheel', (ev) => { ev.preventDefault(); input.wheel += -ev.deltaY * 0.0022; input.wheel = Math.max(-1.2, Math.min(1.2, input.wheel)); }, { passive: false });
 const key = (ev: KeyboardEvent, on: boolean) => {
+  // (with Cmd, Ctrl or Alt down the key is the browser's, not ours: Cmd+R reloads, Cmd+D bookmarks)
+  if (on && (ev.metaKey || ev.ctrlKey || ev.altKey)) return;
   switch (ev.code) {
     case 'KeyW': case 'ArrowUp': input.fwd = on; break;
     case 'KeyS': case 'ArrowDown': input.back = on; break;
     case 'KeyA': case 'ArrowLeft': input.left = on; break;
     case 'KeyD': case 'ArrowRight': input.right = on; break;
-    case 'KeyR': input.rear = on; break;
+    case 'KeyE': input.rear = on; break;
     default: return;
   }
   ev.preventDefault();
@@ -382,7 +383,7 @@ function updateCamera(dt: number, time: number) {
   // (and when it lands on us we go over backwards: the view tips up to the roof, twists, and the head goes back and down)
   const sk = beast.shake, fb = beast.fall;
   const pitch = Math.min(1.5, look.pitch + pitchG + sk * 0.07 * Math.sin(time * 61) + fb * (1.05 - 0.5 * look.pitch));
-  // R: the head goes round over the shoulder to see what is behind, and comes back when the key is let go. The
+  // E: the head goes round over the shoulder to see what is behind, and comes back when the key is let go. The
   // way we are going does not change (that is `look`, which this leaves alone); the torch comes round with the head
   rear += ((input.rear && !beast.dead ? 1 : 0) - rear) * (1 - Math.exp(-dt / 0.085));
   const round = rear * rear * (3 - 2 * rear);
