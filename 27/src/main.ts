@@ -24,7 +24,11 @@ const auto = params.has('auto');
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 // the controls, the help and the pointer lock (ui.ts); no controls at the start of a clip
-initUI(canvas, { start: !auto && !params.has('at') });
+initUI(canvas, {
+  start: !auto && !params.has('at'),
+  // (asked for by name, so that the button is there before the engine knows how)
+  sound: (on) => (sound as unknown as { setMuted?: (off: boolean) => void }).setMuted?.(!on),
+});
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.autoClear = true;

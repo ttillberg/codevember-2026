@@ -36,19 +36,32 @@ canvas:active { cursor: grabbing; }
 button { touch-action: manipulation; }
 
 /* top right: the help. A round button on frosted glass, in the ink; turned over while the controls are up */
-.help {
+/* top right: the help and, left of it, the whole screen. Outlines only: a ring and a glyph, nothing filled */
+.help, .full, .snd {
   position: fixed; z-index: 6;
   top: max(24px, env(safe-area-inset-top)); right: max(24px, env(safe-area-inset-right));
   display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
-  background: rgba(20, 16, 10, 0.45); color: #f4f4f2; cursor: pointer;
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.25);
+  background: none; color: #f4f4f2; cursor: pointer;
+  box-shadow: inset 0 0 0 1.5px rgba(244, 244, 242, 0.7);
+  filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.45));
   font: 600 15px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  transition: background 0.2s, color 0.2s, transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1);
+  transition: background 0.2s, box-shadow 0.2s, transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1);
 }
-.help:active { transform: scale(0.93); }
-.help.on { background: #f4f4f2; color: #060403; box-shadow: none; }
-@media (hover: hover) { .help:not(.on):hover { background: rgba(20, 16, 10, 0.7); } }
+.full { right: calc(max(24px, env(safe-area-inset-right)) + 44px); }
+.snd { right: calc(max(24px, env(safe-area-inset-right)) + 88px); }
+body.nofull .snd { right: calc(max(24px, env(safe-area-inset-right)) + 44px); }
+.full svg, .snd svg { display: block; }
+.help:active, .full:active, .snd:active { transform: scale(0.93); }
+/* sound off: the ring goes faint, the glyph is struck through */
+.snd.off { box-shadow: inset 0 0 0 1.5px rgba(244, 244, 242, 0.35); color: rgba(244, 244, 242, 0.6); }
+body.nosound .snd { display: none; }
+/* open, or on: the ring at full strength, and the faintest wash inside it */
+.help.on, .full.on { box-shadow: inset 0 0 0 1.5px #f4f4f2; background: rgba(244, 244, 242, 0.14); }
+@media (hover: hover) { .help:hover, .full:hover, .snd:hover { background: rgba(244, 244, 242, 0.12); } }
+/* where the page cannot have the whole screen (an iPhone), there is no button for it */
+body.nofull .full { display: none; }
+/* the whole screen is the scene's: the plate goes */
+body.fullscreen .plate { display: none; }
 
 /* the controls, over the scene and under the plate, the help and the lock: at the start, and from the help. The scene
    is dimmed under them, not blurred: a blur the size of the screen costs frames, and slow frames cost the scene its pixels */
@@ -144,7 +157,7 @@ body.touch .veil.open { pointer-events: auto; cursor: pointer; }
   display: inline-flex; align-items: center; height: 18px; padding: 0 7px; box-sizing: border-box;
   border: 1px solid currentColor; border-radius: 5px; font: inherit; font-size: 9px; letter-spacing: 0.06em;
 }
-body.locked .lockpill, body.locked .help { display: none; }
+body.locked .lockpill, body.locked .help, body.locked .full, body.locked .snd { display: none; }
 body.locked .unlock { display: inline-flex; }
 body.locked canvas, body.locked canvas:active { cursor: none; }
 /* none of it on a phone (the media query for the moment before the script has said so) */
@@ -152,7 +165,10 @@ body.touch .lockpill, body.touch .unlock { display: none; }
 @media (pointer: coarse) { .lockpill, .unlock { display: none; } }
 
 @media (max-width: 640px) {
-  .help { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+  .help, .full, .snd { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+  .full { right: calc(max(16px, env(safe-area-inset-right)) + 44px); }
+  .snd { right: calc(max(16px, env(safe-area-inset-right)) + 88px); }
+  body.nofull .snd { right: calc(max(16px, env(safe-area-inset-right)) + 44px); }
 }
 
 /* the little the game says, at the foot of the view */
@@ -185,4 +201,4 @@ body.touch .lockpill, body.touch .unlock { display: none; }
 .clean .note { display: none; }
 
 /* ?clean: the scene alone */
-.clean .plate, .clean .help, .clean .veil, .clean .lockpill, .clean .unlock { display: none; }
+.clean .plate, .clean .help, .clean .full, .clean .snd, .clean .veil, .clean .lockpill, .clean .unlock { display: none; }

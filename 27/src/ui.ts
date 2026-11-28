@@ -38,7 +38,7 @@ const CARD = `
  * Wires the furniture that index.html lays out. `start`: show the controls now (not for a clip that crawls by itself
  * or starts somewhere else). ?clean shows none of it; ?touch gives a desktop the phone's furniture, for screenshots.
  */
-export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean }) {
+export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean; sound?: (on: boolean) => void }) {
   const params = new URLSearchParams(location.search);
   const touch = params.has('touch') || matchMedia('(pointer: coarse)').matches;
   document.body.classList.toggle('touch', touch);
@@ -59,6 +59,53 @@ export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean }) {
   };
   help.addEventListener('click', () => { show(!open); help.blur(); });
 
+  // the whole screen (and with it the plate goes: body.fullscreen). Not everywhere: an iPhone has none to give
+  const full = document.querySelector<HTMLButtonElement>('.full')!;
+  type FS = { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void; webkitFullscreenEnabled?: boolean };
+  type FSEl = { webkitRequestFullscreen?: () => void };
+  const doc = document as Document & FS, root = document.documentElement as HTMLElement & FSEl;
+  const isFull = () => !!(document.fullscreenElement ?? doc.webkitFullscreenElement);
+  const corners = (d: string) => svg(16, 16, '0 0 16 16', `<path d="${d}" />`);
+  const paint = () => {
+    const on = isFull();
+    document.body.classList.toggle('fullscreen', on);
+    full.classList.toggle('on', on);
+    full.setAttribute('aria-pressed', String(on));
+    // corners opening out, or drawn back in
+    full.innerHTML = corners(on ? 'M6 2.5V6H2.5M10 2.5V6h3.5M13.5 10H10v3.5M6 13.5V10H2.5' : 'M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10');
+  };
+  if (!(document.fullscreenEnabled || doc.webkitFullscreenEnabled)) document.body.classList.add('nofull');
+  full.addEventListener('click', () => {
+    full.blur();
+    try {
+      if (isFull()) (document.exitFullscreen ?? doc.webkitExitFullscreen)?.call(document);
+      else (root.requestFullscreen ?? root.webkitRequestFullscreen)?.call(root);
+    } catch { /* refused: nothing changes */ }
+  });
+  document.addEventListener('fullscreenchange', paint);
+  document.addEventListener('webkitfullscreenchange', paint);
+  paint();
+
+  // sound on or off, remembered from one visit to the next (the engine is told; it keeps no memory of its own)
+  const snd = document.querySelector<HTMLButtonElement>('.snd')!;
+  if (params.has('mute')) document.body.classList.add('nosound');
+  let heard = true;
+  try { heard = localStorage.getItem('burrow-sound') !== 'off'; } catch { /* no storage: sound on */ }
+  const speaker = '<path d="M2.5 6.2h2.3L8 3.4v9.2L4.8 9.8H2.5z" />';
+  const voice = () => {
+    snd.classList.toggle('off', !heard);
+    snd.setAttribute('aria-pressed', String(heard));
+    snd.innerHTML = svg(16, 16, '0 0 16 16', speaker + (heard ? '<path d="M10.4 5.6a3.4 3.4 0 0 1 0 4.8M12.3 3.8a6 6 0 0 1 0 8.4" />' : '<path d="M10.6 6 14 9.4M14 6l-3.4 3.4" />'));
+    opts.sound?.(heard);
+  };
+  snd.addEventListener('click', () => {
+    snd.blur();
+    heard = !heard;
+    try { localStorage.setItem('burrow-sound', heard ? 'on' : 'off'); } catch { /* not remembered then */ }
+    voice();
+  });
+  voice();
+
   if (touch) {
     // a phone: the card takes the tap that sends it away, so that tap is not also a dash into the hole
     veil.addEventListener('click', () => show(false));
@@ -67,7 +114,7 @@ export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean }) {
     // click is not: the first click only says "I am here" (focus, and the sound's leave to start), and nobody sets
     // off at a run from it. main.ts asks firstPress() before it takes a press on the canvas
     const away = (ev: Event) => {
-      if (!open || help.contains(ev.target as Node)) return;
+      if (!open || (ev.target as Element).closest?.('.help, .full, .snd')) return;
       show(false);
       if (ev.type === 'pointerdown') swallow = true;
     };
