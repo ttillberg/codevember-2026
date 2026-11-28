@@ -265,8 +265,8 @@ canvas.addEventListener('pointermove', (ev) => {
 });
 const release = (ev: PointerEvent) => {
   if (ev.pointerId !== input.id) return;
-  if (!input.mode && performance.now() - input.t < 260) {
-    // a tap: one short dash
+  if (input.touch && !input.mode && performance.now() - input.t < 260) {
+    // a tap: one short dash (a finger's: a click of the mouse is not a step, the button is held to run)
     nav.step = 1.4;
     nav.way = input.low ? -1 : 1;
     nav.sx = (ev.clientX / innerWidth) * 2 - 1;
@@ -282,7 +282,7 @@ const key = (ev: KeyboardEvent, on: boolean) => {
   // (with Cmd, Ctrl or Alt down the key is the browser's, not ours: Cmd+R reloads, Cmd+D bookmarks)
   if (on && (ev.metaKey || ev.ctrlKey || ev.altKey)) return;
   switch (ev.code) {
-    case 'KeyW': case 'ArrowUp': input.fwd = on; break;
+    case 'KeyW': case 'ArrowUp': case 'Space': input.fwd = on; break;
     case 'KeyS': case 'ArrowDown': input.back = on; break;
     case 'KeyA': case 'ArrowLeft': input.left = on; break;
     case 'KeyD': case 'ArrowRight': input.right = on; break;
