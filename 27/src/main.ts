@@ -8,6 +8,7 @@ import { Flora } from './flora';
 import { Dust } from './dust';
 import { buildGrass, buildHerbs } from './outside';
 import { buildFungi } from './fungi';
+import { Beast } from './beast';
 import { Den, buildDebris } from './den';
 import { Fog } from './fog';
 import { Growth } from './growth';
@@ -115,6 +116,11 @@ const casters: { obj: THREE.Mesh | THREE.Points | THREE.LineSegments; depth: THR
   { obj: fungi.mesh, depth: fungi.depth },
 ];
 const noShadow: THREE.Object3D[] = [sky, dust.motes, dust.crumbs, grass, herbs, soilPre, ...grown];
+// and the other thing that lives here (beast.ts): it comes when its model has loaded
+const beast = new Beast(world, mulberry32(666));
+scene.add(beast.group);
+beast.onReady = () => { casters.push(...beast.casters); noShadow.push(...beast.noShadow); };
+beast.onSnap = (p) => fog.puff(p, 0.9, 0.06, 0.3, 3.5, -0.1);
 
 // ---- look, crawl ----
 const SPEED = 1.05;
@@ -239,6 +245,8 @@ function crawl(dt: number) {
   }
   if (nav.step > 0 && !want) want = 1;
   if (auto && clock > 1.2 && !want) want = 1;
+  // it has us: no running
+  if (beast.holds) { want = 0; nav.v *= Math.exp(-dt / 0.05); }
   if (want) nav.sign = want;
   nav.v += ((want ? SPEED : 0) - nav.v) * (1 - Math.exp(-dt / 0.18));
   if (nav.v < 1e-4) return;
@@ -304,7 +312,9 @@ function updateCamera(dt: number, time: number) {
   const yawG = 0.02 * Math.sin(g + 1.0) * m;
   const pitchG = (0.013 * Math.sin(2 * g - 0.4) - 0.02) * m; // and the head carried a little down
   gaitOff.set(-0.013 * Math.sin(g + 0.3) * m, (-0.011 * Math.cos(2 * g - 0.9) - 0.0035 * Math.cos(4 * g - 1.2)) * m, 0);
-  camQ.setFromEuler(new THREE.Euler(look.pitch + pitchG, look.yaw + yawG, roll, 'YXZ'));
+  // (and when the jaws shut on us the head is shaken)
+  const sk = beast.shake;
+  camQ.setFromEuler(new THREE.Euler(look.pitch + pitchG + sk * 0.07 * Math.sin(time * 61), look.yaw + yawG + sk * 0.06 * Math.sin(time * 47 + 1), roll + sk * 0.1 * Math.sin(time * 53 + 2), 'YXZ'));
   // sideways along the shoulders, up and down in the world
   tmpB.set(1, 0, 0).applyQuaternion(camQ);
   camPos.copy(basePos).addScaledVector(tmpB, gaitOff.x);
@@ -380,7 +390,8 @@ function meter(dt: number) {
   // the first moments: no adapting from a guess, the frame opens already metered and fades up from black
   if (clock < 0.4) exposure = target;
   exposure *= Math.exp(Math.log(target / exposure) * (1 - Math.exp(-dt / tau)));
-  post.exposure = exposure * sstep(0.1, 1.1, clock);
+  // (with it on the lens the meter knows nothing of it: stopped down by hand; and after the bite, dark)
+  post.exposure = exposure * sstep(0.1, 1.1, clock) * (1 - 0.3 * beast.close) * (1 - beast.dark);
 }
 
 let resScale = 1;
@@ -467,6 +478,7 @@ function tick(dt: number) {
   U.uStir.value += (stirTo - U.uStir.value) * (1 - Math.exp(-dt / (stirTo > U.uStir.value ? 0.18 : 1.1)));
   crawl(dt);
   updateCamera(dt, time);
+  beast.update(dt, camPos, lookDir, nav.entered);
   updateTorch(dt, time);
   meter(dt);
   disturb(dt);
@@ -504,7 +516,7 @@ requestAnimationFrame(frame);
 // dev: jump somewhere. burrow.go('B', 0, yawDeg, pitchDeg) puts the eye on the first edge at node B.
 Object.assign(window, {
   burrow: {
-    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim, fungi, hillside,
+    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim, fungi, hillside, beast,
     go(name: string, along = 0, yaw?: number, pitch = 0) {
       const n = world.nodes.findIndex((x) => x.name === name);
       // arrive on the last edge listed at the node (the one that leads to it), looking the way it runs

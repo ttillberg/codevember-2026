@@ -1094,6 +1094,84 @@ export function fungusDepthMaterial() {
   return new THREE.ShaderMaterial({ vertexShader: FUNGUS_VERT, fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }', side: THREE.DoubleSide, colorWrite: false });
 }
 
+// ---- the beast (model/beast.py): a skinned hide, and its wiry fur as shells of the same skinned mesh ----
+const BEAST_VERT = /* glsl */ `
+attribute vec4 color;
+attribute float _fur;
+uniform float uShell; // 0: the hide itself. Above: how far up the fur this layer is
+#include <skinning_pars_vertex>
+varying vec3 vP; varying vec3 vN; varying vec3 vRest; varying vec3 vCol; varying float vFur;
+void main() {
+  vec3 objectNormal = normal;
+  vec3 transformed = position + normal * (uShell * 0.024 * _fur);
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  #include <skinning_vertex>
+  vec4 wp = modelMatrix * vec4(transformed, 1.0);
+  wp.y -= uShell * uShell * 0.009 * _fur; // it hangs
+  vP = wp.xyz;
+  vN = normalize(mat3(modelMatrix) * objectNormal);
+  vRest = position; vCol = color.rgb; vFur = _fur;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const BEAST_FRAG = COMMON + /* glsl */ `
+uniform sampler3D uCells;
+uniform float uShell;
+uniform vec4 uPart; // roughness, f0, how much light comes through, kind (0 skin, 1 hide under fur, 2 mouth, 3 teeth, 4 claws, 5 eye)
+varying vec3 vP; varying vec3 vN; varying vec3 vRest; varying vec3 vCol; varying float vFur;
+void main() {
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  float kind = uPart.w;
+  vec3 alb = vCol;
+  Surf s;
+  s.rough = uPart.x; s.f0 = uPart.y; s.trans = uPart.z; s.glint = 0.0; s.ao = 1.0;
+  // (it is seen from a hand's breadth, in the lamp: the inverse square is levelled off a good deal)
+  s.near = 0.1;
+  if (uShell > 0.0) {
+    // wiry fur: each strand a cell in the hide's own space, the same cell in every layer, thinning to its tip
+    vec4 c = texture(uCells, vRest * 42.0);
+    if (vFur < 0.2 || 1.0 - c.r * 2.3 < uShell * 0.95 + (1.0 - vFur) * 0.5) discard;
+    alb = mix(vec3(0.012, 0.01, 0.008), mix(vec3(0.06, 0.047, 0.034), vec3(0.17, 0.14, 0.105), c.b), uShell * uShell);
+    s.ao = mix(0.3, 1.0, uShell); s.rough = 0.6; s.trans = 0.4;
+  } else if (kind < 0.5) {
+    // bald and scaly: pebbled, every scale a cell with a dark seam round it
+    vec4 c = texture(uCells, vRest * 17.0);
+    float seam = smoothstep(0.0, 0.13, c.g);
+    alb *= mix(0.4, 1.0, seam) * (0.75 + 0.5 * c.b);
+    s.rough = mix(0.8, 0.42, seam);
+    s.ao = mix(0.55, 1.0, seam);
+  } else if (kind < 1.5) {
+    alb *= 0.6;
+  } else if (kind < 2.5) {
+    // wet
+    alb *= 0.85 + 0.3 * nz(vRest * 60.0).a;
+  }
+  s.alb = alb; s.N = N;
+  vec3 col = shade(vP, s, N, 0.0);
+  if (kind > 4.5) {
+    // clouded over, but something at the back of it still sends the lamp home
+    vec3 V = normalize(cameraPosition - vP);
+    vec3 Lv = uLightPos - vP;
+    float d2 = dot(Lv, Lv);
+    vec3 l = Lv * inversesqrt(d2);
+    float back = pow(max(dot(N, V), 0.0), 3.0) * pow(max(dot(l, V), 0.0), 24.0);
+    col += vec3(0.7, 0.85, 0.82) * uLightCol * (uLightI * cookie(dot(-l, uLightDir)) / (d2 + 0.06)) * back * 0.1;
+  }
+  gl_FragColor = vec4(col, 1.0);
+}`;
+const BEAST_PARTS = [[0.55, 0.04, 0.0], [0.8, 0.03, 0.2], [0.2, 0.05, 0.35], [0.25, 0.05, 0.25], [0.35, 0.05, 0.1], [0.12, 0.05, 0.3]];
+export function beastMaterial(kind: number, shell = 0) {
+  const p = BEAST_PARTS[kind];
+  return new THREE.ShaderMaterial({
+    uniforms: { ...U, uShell: { value: shell }, uPart: { value: new THREE.Vector4(p[0], p[1], p[2], kind) } },
+    vertexShader: BEAST_VERT, fragmentShader: BEAST_FRAG, side: THREE.DoubleSide,
+  });
+}
+export function beastDepthMaterial() {
+  return new THREE.ShaderMaterial({ uniforms: { uShell: { value: 0 } }, vertexShader: BEAST_VERT, fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }', side: THREE.DoubleSide, colorWrite: false });
+}
+
 export function soilMaterial(flat = false) {
   return new THREE.ShaderMaterial({
     uniforms: { ...U, uFlat: { value: flat ? 1 : 0 } },
