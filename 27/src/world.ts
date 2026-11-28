@@ -82,6 +82,8 @@ export class World {
   entrance = new THREE.Vector3();
   /** the nest chamber past the last node: its centre, the way further in (level), and its floor */
   den = { c: new THREE.Vector3(), back: new THREE.Vector3(), floor: 0 };
+  /** where water stands: the middle of each shallow bowl in the floor, the level of its surface, how far it can reach */
+  puddles: { x: number; y: number; z: number; r: number }[] = [];
   nx: number; ny: number; nz: number;
   x0: number; y0: number; z0: number;
   h = CELL;
@@ -237,6 +239,51 @@ export class World {
           air[q] = a;
         }
       }
+    }
+
+    // 4. a few shallow bowls in the floor, well in and low down, for water to stand in. Not many
+    const cand: { e: RailEdge; s: number; k: number }[] = [];
+    for (const e of this.edges) {
+      if (e.open) continue;
+      for (let s = 0.45; s < e.len - 0.45; s += 0.25) if (this.railPoint(e, s, pa).y < -0.6) cand.push({ e, s, k: rnd() });
+    }
+    cand.sort((a, b) => a.k - b.k);
+    const down = new THREE.Vector3(0, -1, 0);
+    for (const c of cand) {
+      if (this.puddles.length >= 6) break;
+      this.railPoint(c.e, c.s, pa);
+      this.railTangent(c.e, c.s, pb);
+      // a little off the middle of the run, where feet have not levelled it
+      const off = (rnd() - 0.5) * 0.2;
+      pa.x += -pb.z * off; pa.z += pb.x * off;
+      if (this.puddles.some((p) => Math.hypot(p.x - pa.x, p.z - pa.z) < 1.4)) continue;
+      const t = this.march(pa, down, 0.6);
+      if (t >= 0.6) continue;
+      const fy = pa.y - t, r = 0.13 + rnd() * 0.11, deep = 0.03 + rnd() * 0.018;
+      const m = r * 1.7;
+      const i0 = Math.max(0, Math.floor((pa.x - m - this.x0) / h)), i1 = Math.min(nx - 1, Math.ceil((pa.x + m - this.x0) / h));
+      const j0 = Math.max(0, Math.floor((fy - 0.1 - this.y0) / h)), j1 = Math.min(ny - 1, Math.ceil((fy + 0.1 - this.y0) / h));
+      const k0 = Math.max(0, Math.floor((pa.z - m - this.z0) / h)), k1 = Math.min(nz - 1, Math.ceil((pa.z + m - this.z0) / h));
+      for (let k = k0; k <= k1; k++)
+        for (let j = j0; j <= j1; j++)
+          for (let i = i0; i <= i1; i++) {
+            const dx = this.x0 + i * h - pa.x, dz = this.z0 + k * h - pa.z;
+            air[i + nx * (j + ny * k)] -= deep * Math.exp((-2 * (dx * dx + dz * dz)) / (r * r));
+          }
+      // filled a little over half way up; but never so full that it floods the run: where the floor slopes away the
+      // level comes down until no more than a fifth of the ground within reach is under it
+      const R = r * 1.35, hs: number[] = [];
+      for (let a = -1; a <= 1; a += 0.125)
+        for (let b = -1; b <= 1; b += 0.125) {
+          if (a * a + b * b > 1) continue;
+          pb.set(pa.x + a * R, fy + 0.1, pa.z + b * R);
+          if (this.sample(pb.x, pb.y, pb.z) > -0.01) continue;
+          hs.push(pb.y - this.march(pb, down, 0.4));
+        }
+      hs.sort((u, v) => u - v);
+      const level = Math.min(fy - deep * 0.45, hs[Math.floor(hs.length * 0.2)] ?? fy);
+      if (level - hs[0] > 0.045 || level - hs[0] < 0.008) continue; // a drop, or a damp patch: not a puddle
+      this.puddles.push({ x: pa.x, y: level, z: pa.z, r: R });
     }
   }
 

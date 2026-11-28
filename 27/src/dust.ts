@@ -101,7 +101,11 @@ export class Dust {
       if (state[i] !== 1) continue;
       any = true;
       // whatever is still rattling about after a few seconds has found its place
-      if ((this.age[i] += dt) > 4) { state[i] = 2; continue; }
+      if ((this.age[i] += dt) > 4) {
+        state[i] = 2;
+        for (const p of world.puddles) if (pos[i * 3 + 1] < p.y + 0.004 && (pos[i * 3] - p.x) ** 2 + (pos[i * 3 + 2] - p.z) ** 2 < p.r * p.r) { state[i] = 0; this.data[i * 4 + 2] = 0; }
+        continue;
+      }
       const j = i * 3;
       const size = this.data[i * 4];
       // the smallest ones feel the air
@@ -116,7 +120,11 @@ export class Dust {
           // bounce, losing most of it; what is left carries it on down any slope
           vel[j] = (vel[j] - 1.25 * vn * n.x) * 0.6; vel[j + 1] = (vel[j + 1] - 1.25 * vn * n.y) * 0.6; vel[j + 2] = (vel[j + 2] - 1.25 * vn * n.z) * 0.6;
         }
-        if (n.y > 0.45 && vel[j] * vel[j] + vel[j + 1] * vel[j + 1] + vel[j + 2] * vel[j + 2] < 0.12) state[i] = 2;
+        if (n.y > 0.45 && vel[j] * vel[j] + vel[j + 1] * vel[j + 1] + vel[j + 2] * vel[j + 2] < 0.12) {
+          state[i] = 2;
+          // what comes to rest under water is gone from sight
+          for (const p of world.puddles) if (y < p.y + 0.004 && (x - p.x) ** 2 + (z - p.z) ** 2 < p.r * p.r) { state[i] = 0; this.data[i * 4 + 2] = 0; }
+        }
       } else { pos[j] = x; pos[j + 1] = y; pos[j + 2] = z; }
     }
     if (any || this.emitters.length) this.posAttr.needsUpdate = this.dataAttr.needsUpdate = true;

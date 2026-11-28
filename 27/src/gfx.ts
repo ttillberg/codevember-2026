@@ -24,6 +24,9 @@ export const U = {
   uGround: { value: new THREE.Vector3(0.2, 0.19, 0.13) },
   uDay: { value: 3.2 },
   uEye: { value: new THREE.Vector3() },
+  /** standing water: x, the level of its surface, z, reach (0: none) */
+  uPuddle: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
+  uRipple: { value: 0 },
 };
 
 /** The torch's beam profile by angle off its axis (radians). Kept in step with cookie() in the GLSL below. */
@@ -99,7 +102,8 @@ vec3 torch(vec3 P, vec3 V, Surf s, vec3 Ng) {
   float spec = D * G * F * 0.25 * nl;
   // mineral glints: a few grains that flash when the beam and the eye line up
   spec += s.glint * pow(ndh, 180.0) * 40.0 * nl;
-  vec3 e = uLightCol * (uLightI * ck * sh / (d2 + 0.004 + s.near));
+  // (the lamp has a face a few centimetres across: right up against it the inverse square levels off)
+  vec3 e = uLightCol * (uLightI * ck * sh / (d2 + 0.012 + s.near));
   return min(e * (s.alb / PI * diff * mix(1.0, s.ao, 0.35) + spec), vec3(600.0));
 }
 
@@ -133,6 +137,11 @@ float keep(float feature, float px) { return sat(feature / (px * 2.5) - 0.6); }
 
 const SOIL = /* glsl */ `
 uniform sampler3D uCells;
+uniform vec4 uPuddle[8];
+uniform float uRipple;
+// how much of this pixel is under standing water (soil() sets it, the fragment shader adds what the water mirrors)
+float soilWater = 0.0;
+float soilDepth = 0.0;
 vec4 cz(vec3 p) { return texture(uCells, p); }
 // The noise volumes tile, and a wall shows it: the same lump every hand's breadth, in rows. So every octave looks at
 // the ground through its own rotation, the middle ones twice over at scales that share no measure, and all of them
@@ -167,7 +176,19 @@ Surf soil(vec3 P, vec3 N, float ao, float sky) {
   float flr = smoothstep(0.45, 0.8, N.y) * under;                            // trodden: its own dust lies over whatever layer it cuts
   float steep = 1.0 - N.y * N.y;                                             // a layer shows as a line on a wall, as a smear on a ledge
   float sand = sat(band(yy, -0.69, 0.028) + band(yy, -1.2, 0.034)) * (1.0 - gravel) * (1.0 - 0.9 * flr) * (0.35 + 0.65 * steep) * under;                  // thin pale seams
-  float damp = sat(smoothstep(-1.2, -1.6, yy) * 0.8 + sat(-wB.a * 2.4 - 0.9)) * under;                      // deep down, and in patches
+  // standing water: in a few bowls in the floor, up to a level. The floor's own lumps draw its shoreline
+  float depth = -1.0;
+  for (int i = 0; i < 8; i++) {
+    vec4 q = uPuddle[i];
+    if (q.w <= 0.0) continue;
+    vec2 d = P.xz - q.xz;
+    float rr = dot(d, d) / (q.w * q.w);
+    if (rr < 1.0) depth = max(depth, (q.y - P.y) - 0.03 * smoothstep(0.6, 1.0, rr));
+  }
+  float water = smoothstep(0.0, 0.003, depth) * smoothstep(0.2, 0.6, N.y) * under;
+  float mud = smoothstep(-0.022, 0.0, depth) * under; // the wet rim, a finger's width above the water
+  soilWater = water; soilDepth = depth;
+  float damp = sat(smoothstep(-1.2, -1.6, yy) * 0.8 + sat(-wB.a * 2.4 - 0.9) + mud) * under;                      // deep down, and in patches
   float clay = (1.0 - top) * (1.0 - sand);
   float cracked = clay * sat(wA.a * 2.2 - 0.2) * (1.0 - flr) * (1.0 - damp) * (1.0 - gravel);
 
@@ -248,13 +269,21 @@ Surf soil(vec3 P, vec3 N, float ao, float sky) {
     vec3 thatch = mix(vec3(0.05, 0.045, 0.022), vec3(0.04, 0.062, 0.018), sat(n1.a + 0.4)) * (0.6 + 0.8 * cav);
     alb = mix(alb, thatch, turf * 0.85);
   }
+  if (water > 0.0) {
+    // the bed, seen through the water: everything on it is still there, wet, darker the deeper, a little murky,
+    // its relief softened by the surface it is seen through
+    alb *= mix(vec3(1.0), mix(vec3(0.6, 0.57, 0.48), vec3(0.3, 0.27, 0.2), sat(depth / 0.035)), water);
+    s.N = normalize(mix(s.N, N, 0.55 * water));
+  }
   s.alb = alb;
   s.rough = mix(mix(0.97, 0.6, damp), 0.66, stone);
   s.f0 = mix(0.018 + 0.022 * damp, 0.04, stone);
   s.ao = ao * mix(0.55, 1.0, cav) * (1.0 - 0.6 * crack) * (1.0 - 0.8 * pit);
   s.trans = 0.0; s.near = 0.0;
   vec3 cell = floor(P * 1400.0);
-  s.glint = step(0.992 - 0.012 * sand, hash13(cell)) * keep(0.0012, px);
+  // (each a round grain, soft at the edge: up close the bare cells were little squares)
+  s.glint = step(0.992 - 0.012 * sand, hash13(cell)) * smoothstep(0.5, 0.22, length(fract(P * 1400.0) - 0.5)) * keep(0.0012, px) * (1.0 - water);
+  s.f0 *= 1.0 - water; // (the shine is the surface's, added where the soil is drawn)
   return s;
 }
 `;
@@ -275,7 +304,40 @@ void main() {
   vec3 Ng = normalize(vN);
   Surf s = soil(vP, Ng, vAO, vSky);
   if (uFlat > 0.5) { s.near = 0.0; s.N = Ng; s.alb = vec3(0.18, 0.11, 0.065); s.rough = 0.9; s.glint = 0.0; s.ao = vAO; }
-  gl_FragColor = vec4(shade(vP, s, Ng, vSky), 1.0);
+  vec3 col = shade(vP, s, Ng, vSky);
+  if (soilWater > 0.0) {
+    vec3 V = normalize(cameraPosition - vP);
+    // all but flat: just enough unrest that the lamp's image is a soft spot and not a pin
+    vec4 rp = nz(vec3(vP.x * 7.0, uTime * 0.12, vP.z * 7.0));
+    float amp = 0.003 + 0.012 * uRipple;
+    vec3 Nw = normalize(vec3(rp.r * amp, 1.0, rp.b * amp));
+    // the meniscus: at the shore the surface climbs the bank, and that edge catches the light
+    float rim = smoothstep(0.0035, 0.0, soilDepth);
+    Nw = normalize(mix(Nw, Ng, 0.65 * rim));
+    float F = 0.02 + 0.98 * pow(1.0 - max(dot(Nw, V), 0.0), 5.0);
+    // The surface is a mirror, and the only light is the torch. So it shows two things. The lamp itself, from the
+    // one angle where the surface sends it back to the eye: looking down into the water under our own nose. And,
+    // at a flat angle, whatever of the roof beyond the torch happens to light. No patterns of light on it or off it.
+    Surf w;
+    float film = 0.35 + 0.65 * smoothstep(-0.25, 0.45, nz(vec3(vP.x * 5.0, uTime * 0.02, vP.z * 5.0)).a);
+    w.alb = vec3(0.035, 0.027, 0.019) * film; w.N = Nw; w.rough = 0.1; w.f0 = 0.02; w.ao = 1.0; w.trans = 0.0; w.glint = 0.0; w.near = 0.0;
+    vec3 top = torch(vP, V, w, Ng) + bounce(vP, w);
+    vec3 R = reflect(-V, Nw);
+    vec3 Q = vP + R * min(0.42 / max(R.y, 0.08), 2.5);
+    vec3 L = uLightPos - Q;
+    float d2 = dot(L, L);
+    float e = uLightI * cookie(dot(-L * inversesqrt(d2), uLightDir)) / (d2 + 0.02);
+    vec3 roof = uLightCol * vec3(0.14, 0.085, 0.045) * (e * 0.3);
+    col = mix(col, col * (1.0 - F) * (1.0 - 0.2 * film) + top + roof * F, soilWater);
+    // (faint, and broken: it shows where the bank happens to be turned right, not as a ring drawn round the puddle)
+    vec3 Lp = uLightPos - vP;
+    float dp2 = dot(Lp, Lp);
+    float ep = uLightI * cookie(dot(-Lp * inversesqrt(dp2), uLightDir)) / (dp2 + 0.03);
+    float shore = smoothstep(0.0, 0.001, soilDepth) * smoothstep(0.003, 0.0012, soilDepth);
+    shore *= smoothstep(0.1, 0.6, nz(vec3(vP.x * 23.0, 0.3, vP.z * 23.0)).a + 0.25);
+    col += uLightCol * (ep * shore * 0.014);
+  }
+  gl_FragColor = vec4(col, 1.0);
 }`;
 
 
@@ -354,9 +416,9 @@ void main() {
   float rough = gran * 0.78 + sandst * 0.96 + slate * 0.58 + quartz * 0.42 + iron * 0.9 + flint * mix(0.92, 0.3, heart);
   s.rough = mix(rough, 0.96, dirt);
   s.f0 = mix(0.04 + 0.012 * quartz, 0.02, dirt);
-  s.trans = 0.22 * quartz * (1.0 - dirt); s.near = 0.0;
+  s.trans = 0.22 * quartz * (1.0 - dirt); s.near = 0.035;
   s.ao = (0.7 + 0.3 * sat(0.5 + n2.a)) * (1.0 - 0.6 * pit);
-  s.glint = step(0.985 - 0.02 * quartz, hash13(floor(O * 1100.0))) * keep(0.0012, px) * (1.0 - dirt) * (gran + sandst * 0.6 + 2.0 * quartz);
+  s.glint = step(0.985 - 0.02 * quartz, hash13(floor(O * 1100.0))) * smoothstep(0.5, 0.22, length(fract(O * 1100.0) - 0.5)) * keep(0.0012, px) * (1.0 - dirt) * (gran + sandst * 0.6 + 2.0 * quartz);
   gl_FragColor = vec4(shade(vP, s, Ng, vSky), 1.0);
 }`;
 
@@ -636,7 +698,7 @@ void main() {
   Surf s;
   s.N = normalize(R * c.x * 0.9 - Uu * c.y * 0.9 + V * sqrt(max(1.0 - rr * rr, 0.05)));
   s.alb = mix(vec3(0.10, 0.055, 0.028), vec3(0.24, 0.14, 0.07), fract(vSeed * 13.7));
-  s.rough = 0.95; s.f0 = 0.02; s.ao = 1.0; s.trans = 0.0; s.glint = 0.0; s.near = 0.03;
+  s.rough = 0.95; s.f0 = 0.02; s.ao = 1.0; s.trans = 0.0; s.glint = 0.0; s.near = 0.08;
   gl_FragColor = vec4(shade(vP, s, V, 0.0), 1.0);
 }`;
 

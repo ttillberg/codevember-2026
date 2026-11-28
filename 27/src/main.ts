@@ -62,6 +62,7 @@ scene.add(debris.mesh);
 console.log(`burrow: ${world.nx}×${world.ny}×${world.nz} cells, ${soil.geometry.index!.count / 3} triangles, ${(performance.now() - t0) | 0} ms`);
 
 U.uMouth.value.copy(world.entrance).add(new THREE.Vector3(0, 0.12, 0.2));
+world.puddles.forEach((p, i) => U.uPuddle.value[i].set(p.x, p.y, p.z, p.r));
 
 // the sky seen from the hole: an overcast gradient, far brighter than anything the torch can do
 const sky = new THREE.Mesh(
@@ -343,7 +344,7 @@ function meter(dt: number) {
         tmpC.copy(tmpB).sub(lightPos);
         const d2 = tmpC.lengthSq();
         const ang = Math.acos(Math.min(1, tmpC.dot(lightDir) / Math.sqrt(d2)));
-        lum += (I * cookie(ang) / (d2 + 0.004)) * 0.04;
+        lum += (I * cookie(ang) / (d2 + 0.012)) * 0.04;
       }
       const w = gx === 0 && gy === 0 ? 3 : 1;
       sum += w * Math.sqrt(lum);
@@ -352,7 +353,7 @@ function meter(dt: number) {
   // metered like a camera does: centre-weighted, and the bright part of the frame counts for more than the dark
   let target = Math.max(0.12, Math.min(90, 0.3 / (sum / wsum) ** 2));
   // and never so open that the pool of light itself burns out, however much dark there is around it
-  target = Math.min(target, 1.0 / ((I * 1.16 * 0.04) / (hotspotDist * hotspotDist + 0.004) + 1e-5));
+  target = Math.min(target, 1.0 / ((I * 1.16 * 0.04) / (hotspotDist * hotspotDist + 0.012) + 1e-5));
   if (!Number.isFinite(target)) target = exposure;
   const tau = target < exposure ? 0.22 : 0.85;
   // the first moments: no adapting from a guess, the frame opens already metered and fades up from black
@@ -432,6 +433,8 @@ function tick(dt: number) {
   clock += dt;
   const time = clock;
   U.uTime.value = time;
+  // our running shivers whatever water is near
+  U.uRipple.value += (nav.v / SPEED - U.uRipple.value) * (1 - Math.exp(-dt / 0.6));
   crawl(dt);
   updateCamera(dt, time);
   updateTorch(dt, time);
@@ -471,7 +474,7 @@ requestAnimationFrame(frame);
 // dev: jump somewhere. burrow.go('B', 0, yawDeg, pitchDeg) puts the eye on the first edge at node B.
 Object.assign(window, {
   burrow: {
-    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer,
+    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim,
     go(name: string, along = 0, yaw?: number, pitch = 0) {
       const n = world.nodes.findIndex((x) => x.name === name);
       // arrive on the last edge listed at the node (the one that leads to it), looking the way it runs
