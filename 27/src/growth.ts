@@ -46,11 +46,16 @@ export class Growth {
     let root = 0, rock = 0;
     if (l)
       for (const t of l) {
-        const v = 1 - sstep(0.01, 0.12, Math.hypot(x - t.x, y - t.y, z - t.z) - t.r);
+        // (most of what shares the cell is more than a hand's breadth off, and counts for nothing: no root taken)
+        const dx = x - t.x, dy = y - t.y, dz = z - t.z, d2 = dx * dx + dy * dy + dz * dz, far = t.r + 0.121;
+        if (d2 >= far * far) continue;
+        const v = 1 - sstep(0.01, 0.12, Math.sqrt(d2) - t.r);
         if (t.root) root = Math.max(root, v); else rock = Math.max(rock, v);
       }
-    return [root, rock];
+    this.nearOut[0] = root; this.nearOut[1] = rock;
+    return this.nearOut;
   }
+  private nearOut: [number, number] = [0, 0];
 
   /** What grows at a point of a surface facing n, and how much: moss, root felt, mould. */
   at(x: number, y: number, z: number, ny: number, open: number, out: number[]): number[] {

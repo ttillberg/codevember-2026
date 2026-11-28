@@ -131,7 +131,8 @@ const noShadow: THREE.Object3D[] = [sky, dust.motes, dust.crumbs, grass, herbs, 
 // and the other thing that lives here (beast.ts): it comes when its model has loaded
 const beast = new Beast(world, mulberry32(666));
 scene.add(beast.group);
-beast.onReady = () => { casters.push(...beast.casters); noShadow.push(...beast.noShadow); };
+// (its shaders are built as soon as its file has come, not on the frame it first shows)
+beast.onReady = () => { casters.push(...beast.casters); noShadow.push(...beast.noShadow); void renderer.compileAsync(beast.group, camera, scene).catch(() => {}); };
 beast.onSnap = (p) => fog.puff(p, 0.9, 0.06, 0.3, 3.5, -0.1);
 // what there is to do down here (game.ts): its nest, the one egg in it, and getting out with that
 const game = new Game(world, beast, mulberry32(808));
@@ -143,7 +144,7 @@ game.onWin = () => { showWin(); setTimeout(() => { halted = true; }, 3400); };
 // what is left of the meals (bones.ts): in the old bed, round the nest, one here and there. They come with their file
 const bones = new Bones(world, mulberry32(4242), game.nest);
 scene.add(bones.group);
-bones.onReady = () => { casters.push(...bones.casters); };
+bones.onReady = () => { casters.push(...bones.casters); void renderer.compileAsync(bones.group, camera, scene).catch(() => {}); };
 // the small life: silk, spiders, beetles, worms (life.ts). Too small to throw a shadow worth the drawing
 const life = new Life(world, mulberry32(1331));
 scene.add(life.group);
@@ -556,8 +557,8 @@ let resScale = 1;
 function resize() {
   const dpr = Math.min(window.devicePixelRatio, 1.5) * resScale;
   const w = window.innerWidth, h = window.innerHeight;
-  renderer.setPixelRatio(dpr);
-  renderer.setSize(w, h, false);
+  // (in one go: setPixelRatio and then setSize would each give the canvas a new store, tens of milliseconds apiece)
+  renderer.setDrawingBufferSize(w, h, dpr);
   camera.aspect = w / h;
   // a phone held upright still gets a usable width of view
   camera.fov = Math.min(96, (2 * Math.atan(Math.tan((62 * Math.PI) / 360) * Math.max(1, 1.25 / camera.aspect)) * 180) / Math.PI);
@@ -664,7 +665,10 @@ function tick(dt: number) {
   // out in front of the hole the lens has a depth of field, focused on the hole; it is gone by a body length in
   post.dof = sstep(-0.9, 0.25, camPos.z);
   post.focus = Math.max(0.25, camPos.distanceTo(U.uMouth.value) - 0.1);
-  post.render(time, fog.render(renderer, post.scene, camera), camera);
+  // the picture comes up over the drawing, once (loading, below)
+  if (stage === 2 && reveal < 1) reveal = Math.min(1, reveal + dt / REVEAL);
+  post.render(time, fog.render(renderer, post.scene, camera), camera, reveal * reveal * (3 - 2 * reveal), reveal < 1 ? drawWire : null);
+  if (reveal === 1 && !wireFreed) { wireFreed = true; post.endWire(); wireMat.dispose(); hideMat.dispose(); }
   sound.update(dt);
 }
 let last = performance.now();
@@ -704,15 +708,85 @@ function pace(raw: number, now: number) {
 }
 function frame(now: number) {
   const raw = (now - last) / 1000;
-  // Before the frame is drawn, not after: a change of size empties the canvas, and one emptied after its frame was
-  // drawn is shown empty, a black flash. (a hidden tab ticks slowly too, that is not the GPU's fault)
-  if (!document.hidden && raw < 0.2) pace(raw, now);
-  tick(Math.min(0.05, raw));
   last = now;
-  if (raw > longest) longest = raw;
+  if (stage === 0) {
+    // the drawing alone: nothing of the picture is touched, so nothing of it is built on the thread
+    updateCamera(Math.min(0.05, raw), clock);
+    post.drawing(drawWire);
+  } else if (stage === 1) {
+    // the picture drawn under the drawing, unseen: what is left to make on a first draw is made here
+    tick(1 / 60);
+    // (and the frames of the reveal, with the drawing still drawn under them, are not what the frame size should be
+    // judged by)
+    if (--unseen <= 0) { stage = 2; began = clock; settle = Math.ceil(REVEAL * 60) + 10; document.body.classList.remove('loading'); }
+  } else {
+    // Before the frame is drawn, not after: a change of size empties the canvas, and one emptied after its frame was
+    // drawn is shown empty, a black flash. (a hidden tab ticks slowly too, that is not the GPU's fault)
+    if (!document.hidden && raw < 0.2) pace(raw, now);
+    tick(Math.min(0.05, raw));
+    if (raw > longest) longest = raw;
+  }
   afterFrame();
   if (!halted) requestAnimationFrame(frame);
 }
+
+// ---- loading ----
+// The place shows at once as a drawing: its wireframe in the ink of the title, on the page's own dark (as day 24's
+// knot does, and day 12's bird). Behind it the shaders are built off the thread, then the picture is drawn a few
+// times unseen so that nothing is left for its first frames to make, and then it fades in over the drawing.
+// ?loader holds on the drawing; ?clean goes without it (grabs, clips, timings).
+const REVEAL = 1.6; // seconds
+/** 0: the drawing alone; 1: the picture under it, unseen; 2: the picture (coming up over the drawing, then alone) */
+let stage = params.has('clean') ? 2 : 0;
+let reveal = stage === 2 ? 1 : 0, unseen = 0, wireFreed = false;
+const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+// lines are never culled: the far side of everything would show through. So the ground goes into the depth first, a
+// hair further back than it is, and only the lines in front of it get drawn
+const hideMat = new THREE.MeshBasicMaterial({ colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+// (the ink thins with distance: the hillside's far end is so fine a mesh it would draw solid)
+const wireFog = new THREE.Fog(0x000000, 0.5, 8);
+// the drawing: the ground, the stones, the roots. Not what grows, not the air, not the sky; and nothing that is put
+// in its place by its own shader (the bedding, the litter, the fungi, the grass): under a plain material that is one
+// card at the origin
+const drawn: THREE.Object3D[] = [soil, ...rockMeshes, flora.roots];
+function drawWire() {
+  const was = scene.children.map((c) => c.visible);
+  for (const c of scene.children) c.visible = c.visible && drawn.includes(c);
+  scene.fog = wireFog;
+  scene.overrideMaterial = hideMat;
+  renderer.render(scene, camera);
+  const ac = renderer.autoClear;
+  renderer.autoClear = false;
+  scene.overrideMaterial = wireMat;
+  renderer.render(scene, camera);
+  renderer.autoClear = ac;
+  scene.overrideMaterial = null;
+  scene.fog = null;
+  scene.children.forEach((c, i) => (c.visible = was[i]));
+}
+const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+async function load() {
+  // two frames of the drawing first: where the browser cannot build off the thread, the page stands still on it, not
+  // on black
+  await nextFrame();
+  await nextFrame();
+  if (params.has('loader')) return;
+  try {
+    const jobs: Promise<unknown>[] = [renderer.compileAsync(scene, camera)];
+    // (and the shadow's: the same scene in its depth-only materials, as renderShadow() draws it)
+    for (const c of casters) { c.keep = c.obj.material; c.obj.material = c.depth; }
+    jobs.push(renderer.compileAsync(scene, lightCam));
+    for (const c of casters) c.obj.material = c.keep!;
+    jobs.push(post.compile(), fog.compile(renderer));
+    await Promise.all(jobs);
+  } catch {
+    /* built on the first frame then */
+  }
+  unseen = 3;
+  stage = 1;
+}
+if (stage === 0) void load();
+else document.body.classList.remove('loading');
 
 window.addEventListener('resize', resize);
 resize();

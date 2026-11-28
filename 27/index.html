@@ -19,11 +19,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
     <link rel="stylesheet" href="./src/style.css" />
+    <!-- the two models are asked for at once, not after the ground has been built: they come while it is -->
+    <link rel="preload" as="fetch" crossorigin href="/beast.glb" />
+    <link rel="preload" as="fetch" crossorigin href="/bones.glb" />
   </head>
-  <body>
+  <body class="loading">
     <canvas id="c"></canvas>
     <!-- the title plate (docs/DESIGN.md) -->
-    <div class="plate"><div class="head"><b>27 Burrow</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">巣穴</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
+    <div class="plate"><div class="head"><b>27 Burrow</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">巣穴</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i><i class="loading-label">Loading <span>…</span></i></div></div>
     <!-- top right: the help, brings the controls back -->
     <button class="help" type="button" aria-label="Controls" aria-expanded="false">?</button>
     <!-- beside it: the whole screen, and then the plate goes too (src/ui.ts) -->

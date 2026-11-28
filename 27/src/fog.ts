@@ -143,6 +143,12 @@ export class Fog {
     });
   }
 
+  /** both passes built ahead of their first frame, off the thread where the browser can */
+  compile(renderer: THREE.WebGLRenderer) {
+    const plane = new THREE.PlaneGeometry(2, 2), cam = new THREE.Camera();
+    return Promise.all([this.march, this.blend].map((m) => renderer.compileAsync(new THREE.Mesh(plane, m), cam)));
+  }
+
   /** how many steps the march takes (the shader is built again for it) */
   setSteps(n: number) {
     if (this.march.defines!.STEPS === n) return;

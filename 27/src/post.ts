@@ -72,6 +72,12 @@ void main() {
   gl_FragColor = vec4(c, 1.0);
 }`;
 
+// (in the screen's own colours: laid on after everything else)
+const DRAWING = /* glsl */ `
+const vec3 PAPER = vec3(0.0235, 0.0157, 0.0118);
+const vec3 INK = vec3(0.957, 0.957, 0.949);
+const float INK_A = 0.42;`;
+
 const FINAL = /* glsl */ `
 precision highp float;
 varying vec2 vUv;
@@ -79,6 +85,9 @@ uniform sampler2D tScene, tBlurA, tBlurB;
 uniform float uExposure, uTime;
 uniform vec2 uRes;
 uniform float uAA;        // 1: the frame came with one sample a pixel, and its edges are smoothed here instead
+uniform sampler2D tWire;  // the loading drawing: ink where red
+uniform float uReveal;    // 0 the drawing alone, 1 the picture alone
+${DRAWING}
 uniform vec4 uGrain;      // how much, how big (pixels), how much less of it in the lights, how coloured (0 grey, 1 each channel its own)
 uniform float uGrainRate; // new grain how many times a second (0: every frame)
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -131,8 +140,19 @@ void main() {
   col += gc * uGrain.x * (1.0 - uGrain.z * l);
   col = max(col, 0.0);
   col = mix(col * 12.92, 1.055 * pow(col, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, col));
+  // the picture comes up over the drawing it was loaded behind
+  if (uReveal < 1.0) col = mix(mix(PAPER, INK, texture2D(tWire, vUv).r * INK_A), col, uReveal);
   gl_FragColor = vec4(col, 1.0);
 }`;
+
+// The loading drawing by itself, before there is a picture: the place as a wireframe, in the ink of the title on the
+// page's own dark. As little a shader as can be, so that nothing stands between the page and its first frame.
+const DRAWN = /* glsl */ `
+precision highp float;
+uniform sampler2D tWire;
+varying vec2 vUv;
+${DRAWING}
+void main() { gl_FragColor = vec4(mix(PAPER, INK, texture2D(tWire, vUv).r * INK_A), 1.0); }`;
 
 export class Post {
   scene: THREE.WebGLRenderTarget;
@@ -152,6 +172,10 @@ export class Post {
   private lay: THREE.ShaderMaterial;
   private soft: THREE.WebGLRenderTarget;
   private softH: THREE.WebGLRenderTarget;
+  /** the loading drawing: multisampled (the canvas itself is not, and a wireframe shows it), freed once the picture is up */
+  private wire: THREE.WebGLRenderTarget | null;
+  private drawn: THREE.ShaderMaterial;
+  private tri: THREE.BufferGeometry;
   exposure = 1;
   /** the film's grain: how much, how big in pixels, how much less of it in the lights (0 to 1), how coloured (0 to 1), and how many new grains a second (0: every frame). ?debug has sliders for these */
   grain = { amount: 0.026, size: 1, lights: 0.6, colour: 0, rate: 0 };
@@ -181,7 +205,11 @@ export class Post {
       tScene: { value: null }, tBlurA: { value: null }, tBlurB: { value: null },
       uExposure: { value: 1 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2() },
       uGrain: { value: new THREE.Vector4() }, uGrainRate: { value: 0 }, uAA: { value: 0 },
+      tWire: { value: null }, uReveal: { value: 1 },
     });
+    this.wire = new THREE.WebGLRenderTarget(4, 4, { samples: matchMedia('(pointer: coarse)').matches ? 2 : 4 });
+    this.drawn = mat(DRAWN, { tWire: { value: this.wire.texture } });
+    this.tri = tri;
     const dofU = () => ({
       tSrc: { value: null }, tDepth: { value: null }, uTexel: { value: new THREE.Vector2() },
       uFocus: { value: 1 }, uAmount: { value: 0 }, uMax: { value: 14 }, uNear: { value: 0.012 }, uFar: { value: 80 },
@@ -203,6 +231,29 @@ export class Post {
     this.qA.setSize(w >> 2, h >> 2); this.qB.setSize(w >> 2, h >> 2);
     this.eA.setSize(w >> 4, h >> 4); this.eB.setSize(w >> 4, h >> 4);
     this.final.uniforms.uRes.value.set(w, h);
+    this.wire?.setSize(w, h);
+  }
+
+  /** The loading drawing alone on the screen. draw: draws the wireframe (into the target bound for it). */
+  drawing(draw: () => void) {
+    if (!this.wire) return;
+    this.renderer.setRenderTarget(this.wire);
+    this.renderer.clear();
+    draw();
+    this.pass(this.drawn, null);
+  }
+
+  /** the picture is up: the drawing's target is given back */
+  endWire() {
+    this.wire?.dispose();
+    this.wire = null;
+    this.final.uniforms.tWire.value = null;
+    this.drawn.dispose();
+  }
+
+  /** Every pass built ahead of its first frame, off the thread where the browser can (KHR_parallel_shader_compile). */
+  compile() {
+    return Promise.all([this.down, this.blur, this.final, this.dofMat, this.lay].map((m) => this.renderer.compileAsync(new THREE.Mesh(this.tri, m), this.cam)));
   }
 
   /** how many samples a pixel the scene is drawn with (4 as built; 0: one, and then `aa` wants to be on) */
@@ -233,8 +284,16 @@ export class Post {
     this.pass(this.blur, a);
   }
 
-  /** src: the frame to finish, the scene's own unless something (the air) has been laid over it since */
-  render(time: number, src: THREE.WebGLRenderTarget = this.scene, camera?: THREE.PerspectiveCamera) {
+  /**
+   * src: the frame to finish, the scene's own unless something (the air) has been laid over it since. reveal: 0 the
+   * loading drawing alone, 1 the picture alone; draw: draws the wireframe, for as long as any of it shows.
+   */
+  render(time: number, src: THREE.WebGLRenderTarget = this.scene, camera?: THREE.PerspectiveCamera, reveal = 1, draw: (() => void) | null = null) {
+    if (draw && this.wire) {
+      this.renderer.setRenderTarget(this.wire);
+      this.renderer.clear();
+      draw();
+    }
     if (this.dof > 0.004 && camera) {
       const m = this.dofHalf ? this.dofHalfMat : this.dofMat;
       const d = m.uniforms, px = src.height / 800;
@@ -268,6 +327,8 @@ export class Post {
     u.uGrain.value.set(this.grain.amount, this.grain.size, this.grain.lights, this.grain.colour);
     u.uGrainRate.value = this.grain.rate;
     u.uAA.value = this.aa ? 1 : 0;
+    u.tWire.value = this.wire?.texture ?? null;
+    u.uReveal.value = this.wire ? reveal : 1;
     this.pass(this.final, null);
   }
 }

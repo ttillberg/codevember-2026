@@ -320,7 +320,9 @@ export class World {
         const py = this.y0 + j * h;
         for (let i = 0; i < nx; i++, q++) {
           const ground = Math.max(-BIG, Math.min(BIG, (hcol[i + nx * k] - py) * 0.8));
-          let a = smin(air[q], ground, 0.12);
+          // (where the two are further apart than the blend reaches, which is most of the grid, it is the lower one)
+          const dug = air[q], gap = dug - ground;
+          let a = gap >= 0.12 || gap <= -0.12 ? (dug < ground ? dug : ground) : smin(dug, ground, 0.12);
           if (a > -0.14 && a < 0.14) {
             const px = this.x0 + i * h;
             a += 0.042 * P.n(px * 2.3, py * 2.3, pz * 2.3) + 0.022 * P.n(px * 6.1 + 7.3, py * 6.1, pz * 6.1) + 0.011 * P.n(px * 14.3, py * 14.3 + 3.1, pz * 14.3);
@@ -450,8 +452,12 @@ export class World {
     const dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z;
     const ll = Math.max(dx * dx + dy * dy + dz * dz, 1e-9);
     const ridge = open ? 0 : 0.009;
+    // (the ridges' waver is the same down a whole column, and the same along a whole row: worked out once for each)
+    const wxz = new Float64Array(i1 - i0 + 1), wy = new Float64Array(j1 - j0 + 1);
+    for (let j = j0; j <= j1; j++) wy[j - j0] = 1.7 * Math.sin((y0 + j * h) * 6.3);
     for (let k = k0; k <= k1; k++) {
       const pz = z0 + k * h;
+      for (let i = i0; i <= i1; i++) wxz[i - i0] = 2.2 * Math.sin((x0 + i * h) * 4.7 + pz * 3.1);
       for (let j = j0; j <= j1; j++) {
         const py = y0 + j * h;
         let q = i0 + nx * (j + ny * k);
@@ -461,9 +467,13 @@ export class World {
           t = t < 0 ? 0 : t > 1 ? 1 : t;
           const cx = pa.x + dx * t, cy = pa.y + dy * t, cz = pa.z + dz * t;
           const r = ra + (rb - ra) * t;
-          const dist = Math.hypot(px - cx, py - cy, pz - cz);
+          // (most of the box is out of this run's reach, or has been dug deeper already: the ridges can take no more
+          // than `ridge` off, so what could not get under the value that is there is left alone, cheaply)
+          const ex = px - cx, ey = py - cy, ez = pz - cz;
+          const dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
+          if (dist - (r + ridge) >= air[q]) continue;
           const s = s0 + t * segLen;
-          const rr = r + ridge * Math.sin(s * 52 + 2.2 * Math.sin(px * 4.7 + pz * 3.1) + 1.7 * Math.sin(py * 6.3));
+          const rr = r + ridge * Math.sin(s * 52 + wxz[i - i0] + wy[j - j0]);
           const d = smax(dist - rr, cy - 0.6 * r - py, 0.07);
           if (d < air[q]) air[q] = d;
         }
@@ -540,10 +550,20 @@ export class World {
     const grid = new Float32Array(8);
     const x = [0, 0, 0];
     const v = [0, 0, 0];
+    // Most of the grid is deep in the ground or up in the open: whole rows of one sign. Where the four rows round a row
+    // of cells are all the one sign there is no surface in it, and it is stepped over. 1 all ground, 2 all open, 0 both
+    const rows = new Uint8Array(ny * nz);
+    for (let r = 0, q = 0; r < rows.length; r++) {
+      let neg = 0;
+      for (let i = 0; i < nx; i++, q++) neg += air[q] < 0 ? 1 : 0;
+      rows[r] = neg === 0 ? 1 : neg === nx ? 2 : 0;
+    }
     let n = 0, bufNo = 1, count = 0;
     for (x[2] = 0; x[2] < nz - 1; ++x[2], n += nx, bufNo ^= 1, R[2] = -R[2]) {
       let m = 1 + (nx + 1) * (1 + bufNo * (ny + 1));
-      for (x[1] = 0; x[1] < ny - 1; ++x[1], n++, m += 2)
+      for (x[1] = 0; x[1] < ny - 1; ++x[1], n++, m += 2) {
+        const r0 = x[1] + ny * x[2], one = rows[r0];
+        if (one !== 0 && rows[r0 + 1] === one && rows[r0 + ny] === one && rows[r0 + ny + 1] === one) { n += nx - 1; m += nx - 1; continue; }
         for (x[0] = 0; x[0] < nx - 1; ++x[0], n++, m++) {
           let mask = 0, g = 0, q = n;
           for (let k = 0; k < 2; ++k, q += nx * (ny - 2))
@@ -581,6 +601,7 @@ export class World {
             if (mask & 1) index.push(a, b, c, a, c, d); else index.push(a, d, c, a, c, b);
           }
         }
+      }
     }
     void dims;
 
