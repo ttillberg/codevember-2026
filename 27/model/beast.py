@@ -1,5 +1,5 @@
-# What lives further in: a low burrowing mammal with a deep-sea fish's mouth, built parametrically, rigged and
-# animated, for public/beast.glb.
+# What lives further in: a low, starved, bare thing with a deep-sea fish's mouth, built parametrically, rigged and
+# animated, for public/beast.glb. (It began as a burrowing mammal in fur: FUR below is what is left of that, none.)
 #
 #   /Applications/Blender.app/Contents/MacOS/Blender -b -P 27/model/beast.py             # build and export
 #   /Applications/Blender.app/Contents/MacOS/Blender -b -P 27/model/beast.py -- render   # and process/beast-*.png
@@ -39,6 +39,7 @@ TAU = math.pi * 2
 rnd = random.Random(27)
 
 VOXEL = 0.0034        # the remesh grid
+FUR = 0.0             # how much of the fur it was first given is left: none, it is bare
 SKIN_TRIS = 21000     # the fused skin after decimation
 FPS = 60
 
@@ -84,29 +85,32 @@ REST_GAPE = 35.0
 SKULL_LEN, JAW_LEN = 0.140, 0.160     # the lower jaw is the longer, its fangs pass in front of the snout
 
 # body: z, centre height, half width, height above the centre, below it
+# (starved: narrow hips, a belly drawn up behind a deeper chest, and a head wider than any of it. The front of it is
+# left as it was: that is the back of the mouth)
 BODY = [
-    (-0.335, 0.098, 0.030, 0.030, 0.030),
-    (-0.310, 0.102, 0.072, 0.066, 0.060),
-    (-0.250, 0.108, 0.100, 0.086, 0.076),
-    (-0.150, 0.112, 0.107, 0.088, 0.082),
-    (-0.030, 0.113, 0.105, 0.087, 0.083),
-    (0.050, 0.116, 0.098, 0.084, 0.080),
-    (0.100, 0.114, 0.078, 0.064, 0.064),
-    (0.130, 0.106, 0.045, 0.042, 0.040),
+    (-0.335, 0.098, 0.020, 0.022, 0.020),
+    (-0.310, 0.102, 0.042, 0.044, 0.034),
+    (-0.250, 0.108, 0.058, 0.058, 0.042),
+    (-0.150, 0.112, 0.054, 0.058, 0.038),
+    (-0.030, 0.113, 0.064, 0.064, 0.056),
+    (0.050, 0.116, 0.062, 0.070, 0.062),
+    (0.100, 0.114, 0.054, 0.066, 0.060),
+    (0.130, 0.106, 0.040, 0.044, 0.040),
 ]
-# skull: along the tooth line from the hinge, half width, height above the tooth line. Tall and blunt, a
-# fangtooth's rather than a snout
-SKULL = [(-0.040, 0.050, 0.050), (0.0, 0.072, 0.072), (0.036, 0.072, 0.071), (0.076, 0.062, 0.058), (0.112, 0.050, 0.043), (SKULL_LEN, 0.040, 0.030)]
+# skull: along the tooth line from the hinge, half width, height above the tooth line. A fish's head, not a
+# crocodile's: narrow from side to side, twice as tall as it is wide, a high forehead that drops steeply to a blunt
+# snout
+SKULL = [(-0.040, 0.038, 0.072), (0.0, 0.047, 0.100), (0.036, 0.048, 0.102), (0.076, 0.044, 0.088), (0.112, 0.036, 0.058), (SKULL_LEN, 0.027, 0.032)]
 # jaw: along its tooth line, half width, depth below it. Narrower than the skull all the way, so the upper
 # teeth pass outside it, and a narrow chin, so the four upper fangs pass beside it
-JAW = [(-0.035, 0.044, 0.034), (0.0, 0.063, 0.048), (0.045, 0.058, 0.041), (0.090, 0.040, 0.031), (0.128, 0.0170, 0.022), (JAW_LEN, 0.0115, 0.015)]
+JAW = [(-0.035, 0.031, 0.036), (0.0, 0.041, 0.052), (0.045, 0.039, 0.046), (0.090, 0.029, 0.035), (0.128, 0.0150, 0.024), (JAW_LEN, 0.0105, 0.016)]
 PALATE, TROUGH = 0.42, 0.34           # how far the palate is vaulted and the jaw hollowed, of their heights
 
 # limbs, the left one (+x); the right is mirrored
 SHOULDER, ELBOW, WRIST, KNUCKLE = V(0.070, 0.118, 0.050), V(0.112, 0.088, 0.030), V(0.100, 0.030, 0.125), V(0.100, 0.018, 0.176)
 HIP, KNEE, ANKLE, TOE = V(0.060, 0.105, -0.250), V(0.105, 0.065, -0.175), V(0.100, 0.030, -0.255), V(0.105, 0.012, -0.190)
-TAIL0, TAIL1 = V(0, 0.100, -0.322), V(0, 0.086, -0.360)
-EYE_S, EYE_U, EYE_V, EYE_R = 0.048, 0.0615, 0.033, 0.0145
+TAIL0, TAIL1 = V(0, 0.100, -0.322), V(0, 0.072, -0.500)   # a whip of a tail, half as long again as it was thick
+EYE_S, EYE_U, EYE_V, EYE_R = 0.046, 0.0290, 0.058, 0.0195   # a big eye, high on the side of the head
 
 
 def frame(angle):
@@ -147,7 +151,7 @@ def body_at(z):
 
 def eye(sx):
     """an eye's centre and the way it looks: out, a little forward and up"""
-    return skull_pt(EYE_S, sx * EYE_U, EYE_V), unit(V(sx * 1.0, 0.22, 0.40))
+    return skull_pt(EYE_S, sx * EYE_U, EYE_V), unit(V(sx * 1.0, 0.12, 0.22))
 
 
 def finger(i, sx):
@@ -262,9 +266,9 @@ def build_pile():
 
     # shoulders and haunches, the muscle over each
     for sx, side in ((1, 'L'), (-1, 'R')):
-        P.ellipsoid(V(sx * 0.050, 0.148, 0.030), (0.050, 0.046, 0.075), 'shoulder_' + side)
-        P.ellipsoid(V(sx * 0.062, 0.112, -0.225), (0.056, 0.062, 0.078), 'haunch_' + side)
-    P.capsule(TAIL0, 0.024, TAIL1, 0.010, 'tail')
+        P.ellipsoid(V(sx * 0.046, 0.140, 0.030), (0.036, 0.034, 0.058), 'shoulder_' + side)
+        P.ellipsoid(V(sx * 0.050, 0.112, -0.225), (0.036, 0.044, 0.060), 'haunch_' + side)
+    P.capsule(TAIL0, 0.017, TAIL1, 0.0045, 'tail')
 
     # the ridge down the back: bare knobs, a big one and a small one each side, from the skull to the rump
     z, i = -0.305, 0
@@ -272,11 +276,29 @@ def build_pile():
         cy, a, bt, bb = body_at(z)
         top = cy + bt
         big = 1.0 + 0.22 * math.sin(i * 2.4)
-        P.ellipsoid(V(rnd.uniform(-0.002, 0.002), top - 0.002, z), (0.0105 * big, 0.0090 * big, 0.0145 * big), 'ridge', n=12, m=8)
+        P.ellipsoid(V(rnd.uniform(-0.002, 0.002), top - 0.001, z), (0.0085 * big, 0.0125 * big, 0.0125 * big), 'ridge', n=12, m=8)
         for sx in (1, -1):
             P.ellipsoid(V(sx * (0.0170 + rnd.uniform(-0.002, 0.002)), top - 0.0055, z + 0.013), (0.0078, 0.0064, 0.0108), 'ridge', n=10, m=6)
         z += 0.0265
         i += 1
+
+    # the ribs: there is nothing on them. Each a thin hoop standing proud of the flank, from beside the ridge down
+    # and back to the edge of the belly, from behind the shoulder to in front of the haunch
+    z = -0.205
+    while z < 0.02:
+        for sx in (1, -1):
+            pts = []
+            for k in range(8):
+                th = math.radians(lerp(66, -58, k / 7))
+                zz = z - 0.016 * (1 - math.sin(th))          # raked back as it comes down
+                cy, a, bt, bb = body_at(zz)
+                c, sn = math.cos(th), math.sin(th)
+                u = (a + 0.0028) * abs(c) ** 0.9
+                v = ((bt if sn >= 0 else bb) + 0.0028) * math.copysign(abs(sn) ** 0.9, sn)
+                pts.append(V(sx * u, cy + v, zz))
+            for k, (p0, p1) in enumerate(zip(pts, pts[1:])):
+                P.capsule(p0, lerp(0.0050, 0.0036, k / 6), p1, lerp(0.0050, 0.0036, (k + 1) / 6), 'rib', n=8)
+        z += 0.029
 
     # skull and jaw: a dome over the tooth line and hollow on the other side of it
     def shell(rows, length, pt, sign, hollow, crown):
@@ -313,7 +335,7 @@ def build_pile():
         P.capsule(pt(length, a, vv), r1, pt(length, -a, vv), r1, part, n=10, t0=1.0, t1=1.0)
 
     # the ends of both made solid: the hollow would leave the snout and the chin paper thin
-    P.ellipsoid(skull_pt(SKULL_LEN - 0.006, 0, 0.012), (0.034, 0.013, 0.013), 'skull', axes=(X, SK_N, SK_F), n=14, m=8, t=1.0)
+    P.ellipsoid(skull_pt(SKULL_LEN - 0.006, 0, 0.012), (0.023, 0.013, 0.013), 'skull', axes=(X, SK_N, SK_F), n=14, m=8, t=1.0)
     lip(SKULL, SKULL_LEN, skull_pt, -0.002, 0.0064, 0.0054, 'lip_u', 0.0040)
     lip(JAW, JAW_LEN, jaw_pt, 0.002, 0.0060, 0.0050, 'lip_l', 0.0035)
 
@@ -324,13 +346,14 @@ def build_pile():
         h = table(SKULL, s)[1]
         P.ellipsoid(skull_pt(s, 0, h - 0.002), (0.0090 - 0.0005 * i, 0.0080 - 0.0006 * i, 0.0125), 'plate', axes=sk_axes, n=12, m=8)
     for sx in (1, -1):
-        for s, u, v, r in ((0.024, 0.054, 0.058, 0.011), (0.047, 0.057, 0.056, 0.012), (0.070, 0.053, 0.048, 0.010)):
+        for s, u, v, r in ((0.020, 0.033, 0.086, 0.010), (0.046, 0.036, 0.086, 0.011), (0.072, 0.034, 0.072, 0.009)):
             P.ellipsoid(skull_pt(s, sx * u, v), (r, r * 0.75, r * 1.25), 'plate', axes=sk_axes, n=12, m=8)
-        P.capsule(skull_pt(0.078, sx * 0.050, 0.044), 0.0078, skull_pt(0.134, sx * 0.032, 0.027), 0.0056, 'plate', n=10)
-        P.ellipsoid(skull_pt(0.030, sx * 0.0690, 0.008), (0.0070, 0.0110, 0.0240), 'plate', axes=sk_axes, n=12, m=8)
-        P.ellipsoid(skull_pt(0.085, sx * 0.0565, 0.012), (0.0060, 0.0085, 0.0170), 'plate', axes=sk_axes, n=12, m=8)
-        P.ellipsoid(jaw_pt(0.022, sx * 0.058, -0.018), (0.0080, 0.0140, 0.0260), 'plate_j', axes=jw_axes, n=12, m=8)
-        P.ellipsoid(jaw_pt(0.075, sx * 0.043, -0.014), (0.0060, 0.0090, 0.0180), 'plate_j', axes=jw_axes, n=12, m=8)
+        P.capsule(skull_pt(0.080, sx * 0.034, 0.064), 0.0070, skull_pt(0.134, sx * 0.021, 0.029), 0.0052, 'plate', n=10)
+        # the gill cover: one broad thin plate behind and under the eye, most of the side of the head
+        P.ellipsoid(skull_pt(-0.004, sx * 0.0440, 0.034), (0.0065, 0.0400, 0.0360), 'plate', axes=sk_axes, n=16, m=10)
+        P.ellipsoid(skull_pt(0.088, sx * 0.0370, 0.014), (0.0055, 0.0085, 0.0170), 'plate', axes=sk_axes, n=12, m=8)
+        P.ellipsoid(jaw_pt(0.022, sx * 0.038, -0.020), (0.0070, 0.0140, 0.0260), 'plate_j', axes=jw_axes, n=12, m=8)
+        P.ellipsoid(jaw_pt(0.075, sx * 0.029, -0.015), (0.0055, 0.0090, 0.0180), 'plate_j', axes=jw_axes, n=12, m=8)
         # the socket: a thick wrinkled lid round the eye, and a fold outside that
         c, ax = eye(sx)
         P.torus(c + ax * 0.0040, ax, EYE_R - 0.0006, 0.0056, 'socket')
@@ -341,16 +364,16 @@ def build_pile():
         side = 'L' if sx > 0 else 'R'
         mx = V(sx, 1, 1)
         # foreleg: out and down to the elbow, forward and down to the wrist, a broad flat paw
-        P.capsule(SHOULDER * mx, 0.040, ELBOW * mx, 0.030, 'arm_upper_' + side)
-        P.capsule(ELBOW * mx, 0.030, WRIST * mx, 0.022, 'arm_lower_' + side)
-        P.ellipsoid(V(0.107, 0.064, 0.072) * mx, (0.024, 0.026, 0.038), 'arm_lower_' + side, t=0.4)
+        P.capsule(SHOULDER * mx, 0.026, ELBOW * mx, 0.019, 'arm_upper_' + side)
+        P.capsule(ELBOW * mx, 0.019, WRIST * mx, 0.015, 'arm_lower_' + side)
+        P.ellipsoid(V(0.107, 0.064, 0.072) * mx, (0.015, 0.017, 0.030), 'arm_lower_' + side, t=0.4)
         P.ellipsoid(V(0.100, 0.021, 0.153) * mx, (0.035, 0.0145, 0.036), 'paw_' + side)
         for i in range(4):
             p0, p1 = finger(i, sx)
             P.capsule(p0, 0.0098, p1, 0.0080, f'finger{i}_' + side, n=12)
         # hind leg: thigh forward to the knee, shank back to the hock, the foot flat and forward
-        P.capsule(HIP * mx, 0.050, KNEE * mx, 0.034, 'leg_upper_' + side)
-        P.capsule(KNEE * mx, 0.032, ANKLE * mx, 0.019, 'leg_lower_' + side)
+        P.capsule(HIP * mx, 0.030, KNEE * mx, 0.021, 'leg_upper_' + side)
+        P.capsule(KNEE * mx, 0.020, ANKLE * mx, 0.014, 'leg_lower_' + side)
         P.ellipsoid(V(0.103, 0.015, -0.218) * mx, (0.024, 0.0125, 0.044), 'foot_' + side)
         for i in range(4):
             p0, p1 = toe(i, sx)
@@ -420,7 +443,7 @@ def relax(val, edges, factor, iters):
     return val
 
 
-SOFTEN = {'body': 1.0, 'shoulder': 1.0, 'haunch': 1.0, 'tail': 0.8, 'arm': 0.8, 'leg': 0.8, 'paw': 0.45, 'finger': 0.35, 'foot': 0.4, 'skull': 0.3, 'jaw': 0.3, 'lip': 0.3, 'plate': 0.3, 'ridge': 0.55, 'socket': 0.22}
+SOFTEN = {'body': 1.0, 'shoulder': 1.0, 'haunch': 1.0, 'tail': 0.8, 'arm': 0.8, 'leg': 0.8, 'paw': 0.45, 'finger': 0.35, 'foot': 0.4, 'skull': 0.3, 'jaw': 0.3, 'lip': 0.3, 'plate': 0.3, 'ridge': 0.55, 'rib': 0.3, 'socket': 0.22}
 
 
 def fuse(pile, look):
@@ -496,8 +519,12 @@ def srgb(r, g, b):
     return V(r, g, b) ** 2.2
 
 
-C_SKIN, C_SKIN_PALE, C_KNOB, C_SOCKET, C_PAW = srgb(0.36, 0.32, 0.28), srgb(0.44, 0.39, 0.34), srgb(0.40, 0.37, 0.33), srgb(0.07, 0.055, 0.05), srgb(0.34, 0.28, 0.25)
+# One colour all over, a greyish yellow: skin, ridge, ribs, plates, limbs. Only the lids round the eyes are a shade
+# darker, so that there is an eye to find
+C_SKIN = C_SKIN_PALE = C_KNOB = C_PAW = srgb(0.58, 0.54, 0.42)
+C_SOCKET = srgb(0.36, 0.33, 0.25)
 C_HIDE = srgb(0.10, 0.08, 0.07)
+C_LIMB = C_SKIN
 C_GUM, C_THROAT, C_TONGUE = srgb(0.80, 0.42, 0.44), srgb(0.34, 0.08, 0.10), srgb(0.86, 0.47, 0.50)
 C_TOOTH0, C_TOOTH1 = srgb(0.84, 0.74, 0.52), srgb(0.95, 0.92, 0.82)
 C_CLAW0, C_CLAW1 = srgb(0.30, 0.22, 0.15), srgb(0.70, 0.60, 0.42)
@@ -516,9 +543,9 @@ def describe(part, t, ins, p):
     x, y, z = p
     side = part[-1]
     rel = p - HINGE
-    if part in ('body', 'ridge'):
+    if part in ('body', 'ridge', 'rib'):
         w = spine_weights(z)
-        if part == 'ridge':
+        if part != 'body':
             return False, 0.0, C_KNOB, w
         cy = body_at(z)[0]
         fur = 1.0 - ss(0.090, 0.125, z)
@@ -534,7 +561,7 @@ def describe(part, t, ins, p):
     if part.startswith('haunch'):
         return False, 1.0, C_SKIN, {**{k: v * 0.6 for k, v in spine_weights(z).items()}, 'leg_upper_' + side: 0.4}
     if part == 'tail':
-        return False, 0.7, C_SKIN, {'tail': ss(0.0, 0.5, t), 'spine1': 1 - ss(0.0, 0.5, t)}
+        return False, 0.7, C_LIMB, {'tail': ss(0.0, 0.5, t), 'spine1': 1 - ss(0.0, 0.5, t)}
     if part in ('skull', 'plate', 'socket'):
         return bool(ins), 0.0, C_SOCKET if part == 'socket' else C_KNOB if part == 'plate' else C_SKIN, {'head': 1}
     if part in ('jaw', 'plate_j'):
@@ -548,23 +575,23 @@ def describe(part, t, ins, p):
         return gum, 0.0, C_SKIN if part == 'lip_u' else C_SKIN_PALE, {'head' if part == 'lip_u' else 'jaw': 1}
     if part.startswith('arm_upper'):
         s3, lo = 1 - ss(0.05, 0.40, t), 0.5 * ss(0.75, 1.0, t)
-        return False, lerp(1.0, 0.45, ss(0.2, 1.0, t)), C_SKIN, {'spine3': s3, 'arm_lower_' + side: lo * (1 - s3), 'arm_upper_' + side: (1 - lo) * (1 - s3)}
+        return False, lerp(1.0, 0.45, ss(0.2, 1.0, t)), C_LIMB, {'spine3': s3, 'arm_lower_' + side: lo * (1 - s3), 'arm_upper_' + side: (1 - lo) * (1 - s3)}
     if part.startswith('arm_lower'):
         up, pw = 0.5 * (1 - ss(0.0, 0.25, t)), 0.5 * ss(0.8, 1.0, t)
-        return False, 0.45 * (1 - ss(0.0, 0.6, t)), C_SKIN, {'arm_upper_' + side: up, 'paw_' + side: pw, 'arm_lower_' + side: 1 - up - pw}
+        return False, 0.45 * (1 - ss(0.0, 0.6, t)), C_LIMB, {'arm_upper_' + side: up, 'paw_' + side: pw, 'arm_lower_' + side: 1 - up - pw}
     if part.startswith('paw'):
-        return False, 0.0, C_PAW, {'paw_' + side: 1}
+        return False, 0.0, C_LIMB, {'paw_' + side: 1}
     if part.startswith('finger'):
         claws = ('claws_in_' if part[6] in '01' else 'claws_out_') + side
-        return False, 0.0, C_PAW, {'paw_' + side: 1 - ss(0.1, 0.7, t), claws: ss(0.1, 0.7, t)}
+        return False, 0.0, C_LIMB, {'paw_' + side: 1 - ss(0.1, 0.7, t), claws: ss(0.1, 0.7, t)}
     if part.startswith('leg_upper'):
         s1, lo = 1 - ss(0.05, 0.45, t), 0.5 * ss(0.75, 1.0, t)
-        return False, 1.0, C_SKIN, {'spine1': s1, 'leg_lower_' + side: lo * (1 - s1), 'leg_upper_' + side: (1 - lo) * (1 - s1)}
+        return False, 1.0, C_LIMB, {'spine1': s1, 'leg_lower_' + side: lo * (1 - s1), 'leg_upper_' + side: (1 - lo) * (1 - s1)}
     if part.startswith('leg_lower'):
         up, ft = 0.5 * (1 - ss(0.0, 0.25, t)), 0.5 * ss(0.8, 1.0, t)
-        return False, lerp(1.0, 0.12, ss(0.1, 1.0, t)), C_SKIN, {'leg_upper_' + side: up, 'foot_' + side: ft, 'leg_lower_' + side: 1 - up - ft}
+        return False, lerp(1.0, 0.12, ss(0.1, 1.0, t)), C_LIMB, {'leg_upper_' + side: up, 'foot_' + side: ft, 'leg_lower_' + side: 1 - up - ft}
     if part.startswith('foot'):
-        return False, 0.0, C_PAW, {'foot_' + side: 1}
+        return False, 0.0, C_LIMB, {'foot_' + side: 1}
     raise KeyError(part)
 
 
@@ -629,11 +656,20 @@ def skin(model, me, look):
         for b, x in w.items():
             W[i, idx[b]] = x
     head = np.array([p.startswith(('skull', 'jaw', 'lip', 'plate', 'socket', 'paw', 'finger', 'foot', 'ridge')) for p in part])
-    fur = relax(fur, edges, 0.5, 6)[:, 0]
+    fur = relax(fur, edges, 0.5, 6)[:, 0] * FUR
     fur = np.where(head, np.minimum(fur, 0.35) * (fur > 0.02), fur)   # only a fringe of it reaches on to bare parts
     fur[mouth > 0.5] = 0.0
     fur = np.clip(relax(fur, edges, 0.5, 1)[:, 0], 0, 1)
     fur[(mouth > 0.5) | (fur < 0.02)] = 0.0
+    # The seams: where one piece of it meets another (a rib and the flank, a plate and the skull, a limb and the
+    # body), which is where a skeleton has them. One at the vertices either side of such an edge, softened by a
+    # ring. With no fur left this is what goes out in `_FUR`, and the page draws its lines from it
+    name = np.array([PARTS[p] for p in part])
+    cut = name[edges[:, 0]] != name[edges[:, 1]]
+    seam = np.zeros(n)
+    seam[edges[cut, 0]] = seam[edges[cut, 1]] = 1.0
+    seam = relax(seam, edges, 0.35, 1)[:, 0]
+    seam[mouth > 0.5] = 0.0
     # bones: blended well where limbs meet the body, hardly at all on the head, where the jaw has to stay the jaw
     stiff = np.array([p.startswith(('skull', 'jaw', 'lip', 'plate', 'socket')) for p in part])
     W = relax(W, edges, np.where(stiff, 0.2, 0.5), 9)
@@ -650,7 +686,7 @@ def skin(model, me, look):
     tri = tri.reshape(-1, 3)
     base = len(model.v)
     for i in range(n):
-        model.v.append(pos[i]); model.col.append(col[i]); model.fur.append(float(fur[i]))
+        model.v.append(pos[i]); model.col.append(col[i]); model.fur.append(float(fur[i] if FUR else seam[i]))
         model.w.append({BONES[k]: W[i, k] for k in np.nonzero(W[i] > 1e-4)[0]})
     # winding: the remesh and the turn of axes both keep it outward
     for a, b, c in tri:
@@ -685,24 +721,24 @@ def teeth(model):
     for sx in (1, -1):
         out = X * sx
         a = table(SKULL, 0.128)[0]
-        tooth(model, skull_pt(0.139, sx * 0.0200, -0.005), -SK_N + SK_F * 0.30 + out * 0.10, 0.062, 0.0038, back * 0.42, 'head', n=6)
-        tooth(model, skull_pt(0.128, sx * (a - 0.0035), -0.005), -SK_N + SK_F * 0.18 + out * 0.16, 0.052, 0.0036, back * 0.40, 'head', n=6)
+        tooth(model, skull_pt(0.139, sx * 0.0150, -0.005), -SK_N + SK_F * 0.30 + out * 0.10, 0.078, 0.0036, back * 0.42, 'head', n=6)
+        tooth(model, skull_pt(0.128, sx * (a - 0.0035), -0.005), -SK_N + SK_F * 0.18 + out * 0.16, 0.064, 0.0034, back * 0.40, 'head', n=6)
         k = 11
         for i in range(k):
             s = lerp(0.112, 0.020, i / (k - 1)) + rnd.uniform(-0.002, 0.002)
             a = table(SKULL, s)[0]
-            length = (0.009 + 0.014 * rnd.random() ** 1.5) * lerp(1.15, 0.6, i / (k - 1)) * (1.35 if i % 3 == 0 else 1.0)
+            length = (0.012 + 0.019 * rnd.random() ** 1.5) * lerp(1.15, 0.6, i / (k - 1)) * (1.35 if i % 3 == 0 else 1.0)
             tooth(model, skull_pt(s, sx * (a - 0.0040), -0.006), -SK_N + SK_F * 0.10 + out * rnd.uniform(0.08, 0.24), length, 0.0013 + length * 0.055, back * 0.35, 'head')
     # lower: two long fangs from the tip of the jaw, then the rows, shorter
     back = -JW_F
     for sx in (1, -1):
         out = X * sx
-        tooth(model, jaw_pt(0.155, sx * 0.0062, 0.004), JW_N + JW_F * 0.12 + out * 0.10, 0.056, 0.0036, back * 0.38, 'jaw', n=6)
+        tooth(model, jaw_pt(0.155, sx * 0.0062, 0.004), JW_N + JW_F * 0.12 + out * 0.10, 0.072, 0.0034, back * 0.38, 'jaw', n=6)
         k = 11
         for i in range(k):
             s = lerp(0.138, 0.028, i / (k - 1)) + rnd.uniform(-0.002, 0.002)
             a = table(JAW, s)[0]
-            length = (0.007 + 0.011 * rnd.random() ** 1.5) * lerp(1.25, 0.6, i / (k - 1)) * (1.4 if i % 3 == 1 else 1.0)
+            length = (0.010 + 0.015 * rnd.random() ** 1.5) * lerp(1.25, 0.6, i / (k - 1)) * (1.4 if i % 3 == 1 else 1.0)
             tooth(model, jaw_pt(s, sx * (a - 0.0035), 0.006), JW_N + JW_F * 0.06 + out * rnd.uniform(0.02, 0.16), length, 0.0013 + length * 0.055, back * 0.32, 'jaw')
 
 
@@ -734,6 +770,25 @@ def claws(model):
             p0, p1 = toe(i, sx)
             d = unit((p1 - p0) * V(1, 0, 1))
             claw(model, p1 - d * 0.002 + up * 0.0008, d, up, 0.021, 0.0040, 0.0050, math.radians(20), math.radians(75), 'foot_' + side, n=5)
+
+
+def spines(model):
+    """a needle out of every knob of the ridge, raked back, longest over the shoulders and the hips; and smaller down the tail"""
+    up, back = V(0, 1, 0), V(0, 0, -1)
+    z, i = -0.305, 0
+    while z < 0.094:
+        cy, a, bt, bb = body_at(z)
+        w = spine_weights(z)
+        bone = max(w, key=w.get)
+        tall = 0.6 + 0.4 * max(math.exp(-((z - 0.02) / 0.07) ** 2), math.exp(-((z + 0.22) / 0.07) ** 2))
+        length = 0.034 * tall * (1.0 + 0.2 * math.sin(i * 2.4))
+        tooth(model, V(0, cy + bt + 0.004, z), up + back * 0.6, length, 0.0034, back * 0.45, bone, n=6)
+        z += 0.0265
+        i += 1
+    for k in range(9):
+        t = 0.08 + 0.88 * k / 8
+        c = lerp(TAIL0, TAIL1, t)
+        tooth(model, c + up * (lerp(0.017, 0.0045, t) - 0.001), up + back * 0.9, lerp(0.020, 0.006, t), lerp(0.0026, 0.0012, t), back * 0.5, 'tail' if t > 0.25 else 'spine1')
 
 
 def eyes(model):
@@ -1061,8 +1116,10 @@ SETTLE = sym({'spine1@': (0, -0.011, -0.004), 'spine3': (-2, 0, 0), 'head': (-4,
 # the pairs; the spine bends from side to side with it, hips one way and shoulders the other.
 CRAWL_T = 1.1                         # seconds a cycle
 CRAWL_STRIDE = 0.264                  # metres of ground a cycle
-CRAWL_DUTY = 0.64                     # of the cycle each paw is on the ground
-CRAWL_LIFT = {'arm_L': 0.10, 'leg_R': 0.04, 'arm_R': 0.60, 'leg_L': 0.54}   # when each paw leaves the ground, of the cycle
+CRAWL_DUTY = 0.56                     # of the cycle each paw is on the ground
+# when each paw leaves the ground, of the cycle (they come down at 0.46, 0.40, 0.96 and 0.90: the page times its
+# footfalls by that)
+CRAWL_LIFT = {'arm_L': 0.02, 'leg_R': 0.96, 'arm_R': 0.52, 'leg_L': 0.46}
 CRAWL_MID = {'arm': 0.090 - WRIST[2], 'leg': -0.270 - ANKLE[2]}             # the middle of its stance, from where it rests
 
 
@@ -1076,7 +1133,8 @@ def crawl_foot(limb, tau):
         # planted: straight back, at the speed the ground goes by
         return mid + half - CRAWL_STRIDE * (u - swing), None
     s = u / swing
-    q = s * s * s * (s * (6 * s - 15) + 10)          # over the ground it leaves and arrives at rest
+    # over the ground it leaves and arrives at rest; and unhurried in between: a paw is carried forward, not thrown
+    q = lerp(s * s * (3 - 2 * s), s * s * s * (s * (6 * s - 15) + 10), 0.25)
     return mid - half + CRAWL_STRIDE * (q - u), s
 
 
@@ -1084,7 +1142,7 @@ def crawl(t):
     tau = t / CRAWL_T
     wave = lambda lag: math.cos(TAU * (tau - lag))
     # each girdle is turned furthest as its paw comes down: the hip or shoulder of the reaching leg forward
-    hips, chest = 7.5 * wave(0.40), -8.5 * wave(0.46)
+    hips, chest = 9.5 * wave(0.40), -10.5 * wave(0.46)
     roll1, roll3 = 2.0 * math.sin(TAU * (tau - 0.04)), -2.5 * math.sin(TAU * (tau - 0.10))   # dipping to the lifted paw
     pose = {
         # low, and kept over its feet: the bend alone would throw the chest sideways
@@ -1094,7 +1152,8 @@ def crawl(t):
         'head': (-2.0 + 0.6 * math.sin(2 * TAU * tau), -0.85 * chest, -0.7 * roll3),
         'jaw': (-14 + 3.0 * math.sin(2 * TAU * tau + 0.5), 0, 0),
         'tongue1': (-2, 2 * wave(0.2), 0), 'tongue2': (-3 * math.sin(2 * TAU * tau), 3 * wave(0.3), 0),
-        'tail': (-5, -13 * wave(0.47), 0),
+        # (the tail comes after the hips, a beat late)
+        'tail': (-3, -17 * wave(0.56), 0),
     }
     for limb in CRAWL_LIFT:
         side = limb[-1]
@@ -1207,6 +1266,180 @@ def assemble(model, rig):
     return ob
 
 
+# ---- the skin's own map ---------------------------------------------------------------------------------------------------
+# It is not well, and all of that is small: boils, warts, sores, wrinkles, pores. None of it is in the mesh. It is
+# worked out here, once, for every point of the skin, from noise that never comes round again (the page's own noise
+# does, every few centimetres, and on something this size that shows as a pattern), and written into one picture
+# that the skin is unwrapped on to: public/beast-skin.webp.
+#   red    how high the skin stands: 0 is SKIN_LOW mm, 1 is SKIN_LOW + SKIN_SPAN mm. The page takes its slope
+#   green  its tone: 0.5 as it is, above paler (the head of a boil), below darker (a pore, a crease, a seam)
+#   blue   how sore: the ring round a boil, and all the way up where one has opened
+SKIN_MAP = os.path.abspath(os.path.join(HERE, '..', 'public', 'beast-skin.webp'))
+BAKE = 1024 if 'draft' in ARGS else 2048
+SKIN_LOW, SKIN_SPAN = -4.6, 11.5    # (the page has the same two numbers: BEAST_FRAG in gfx.ts)
+
+
+def hash3(ix, iy, iz, seed):
+    """a number from 0 to 1 for every point of the whole-number grid, the same every time it is asked"""
+    h = (ix.astype(np.int64) * 73856093) ^ (iy.astype(np.int64) * 19349663) ^ (iz.astype(np.int64) * 83492791) ^ (seed * 2654435761)
+    h &= 0xFFFFFFFF
+    h = ((h ^ (h >> 15)) * 2246822519) & 0xFFFFFFFF
+    h = ((h ^ (h >> 13)) * 3266489917) & 0xFFFFFFFF
+    h ^= h >> 16
+    return (h & 0xFFFFFF).astype(np.float32) / np.float32(1 << 24)
+
+
+def vnoise(p, seed):
+    """smooth noise, -1 to 1, a lump a unit"""
+    i = np.floor(p).astype(np.int64)
+    f = (p - i).astype(np.float32)
+    u = f * f * f * (f * (f * 6 - 15) + 10)
+    out = np.zeros(len(p), dtype=np.float32)
+    for dx in (0, 1):
+        for dy in (0, 1):
+            for dz in (0, 1):
+                w = (u[:, 0] if dx else 1 - u[:, 0]) * (u[:, 1] if dy else 1 - u[:, 1]) * (u[:, 2] if dz else 1 - u[:, 2])
+                out += w * hash3(i[:, 0] + dx, i[:, 1] + dy, i[:, 2] + dz, seed)
+    return out * 2 - 1
+
+
+def worley(p, seed):
+    """cells a unit across: how far to the nearest centre, to the next nearest, and two dice of the nearest's own"""
+    i = np.floor(p).astype(np.int64)
+    f = (p - i).astype(np.float32)
+    f1 = np.full(len(p), 9.0, dtype=np.float32)
+    f2 = f1.copy()
+    r1, r2 = np.zeros(len(p), dtype=np.float32), np.zeros(len(p), dtype=np.float32)
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                cx, cy, cz = i[:, 0] + dx, i[:, 1] + dy, i[:, 2] + dz
+                ox = dx + hash3(cx, cy, cz, seed) - f[:, 0]
+                oy = dy + hash3(cx, cy, cz, seed + 1) - f[:, 1]
+                oz = dz + hash3(cx, cy, cz, seed + 2) - f[:, 2]
+                d = ox * ox + oy * oy + oz * oz
+                near = d < f1
+                f2 = np.where(near, f1, np.minimum(f2, d))
+                r1 = np.where(near, hash3(cx, cy, cz, seed + 3), r1)
+                r2 = np.where(near, hash3(cx, cy, cz, seed + 4), r2)
+                f1 = np.where(near, d, f1)
+    return np.sqrt(f1), np.sqrt(f2), r1, r2
+
+
+def nss(a, b, x):
+    t = np.clip((x - a) / (b - a), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def sick(p):
+    """the skin at points p (metres, the page's axes): how high it stands (mm), its tone, how sore"""
+    P = p.astype(np.float64)
+    swell, lump = vnoise(P * 34, 11), vnoise(P * 95, 12)
+    # it comes in patches: where it is bad it is all bad
+    bad = nss(-0.3, 0.25, vnoise(P * 15, 13) + 0.35 * swell)
+    # boils: tight domes, a pale head on each and a sore ring; a few have opened
+    b1, _, br, bs = worley(P * 150, 20)
+    q = b1 / (0.26 + 0.26 * bs)
+    boil = np.sqrt(np.maximum(1 - q * q, 0)) * (br < 0.16 + 0.42 * bad)
+    opened = (br > 0.9) * bad
+    sore = nss(1.0, 0.45, q) * opened
+    head = nss(0.62, 0.93, boil)
+    # warts crowded between them
+    w1, _, wr, ws = worley(P * 420, 30)
+    q = w1 / (0.24 + 0.22 * ws)
+    wart = np.sqrt(np.maximum(1 - q * q, 0)) * (wr < 0.08 + 0.4 * bad)
+    # pores, all over
+    p1, _, pr, _ = worley(P * 900, 40)
+    pore = nss(0.26, 0.1, p1) * (pr > 0.3)
+    # the skin's own fine lines: a net of creases a millimetre and a half across
+    c1, c2, _, _ = worley(P * 650, 50)
+    net = nss(0.13, 0.0, c2 - c1)
+    # wrinkles: running round the body, in fields, never straight
+    Q = P.copy()
+    Q[:, 2] += 0.004 * vnoise(P * 60, 60)
+    Q *= (55.0, 55.0, 420.0)
+    field = nss(-0.15, 0.4, vnoise(P * 22, 61))
+    wrinkle = (1 - np.abs(vnoise(Q, 62))) ** 4 * field
+    # and the long thin seams of the plates under it
+    seam = nss(0.03, 0.008, np.abs(vnoise(P * 17, 70)))
+    h = 1.9 * swell * (0.6 + 0.6 * bad) + 0.8 * lump + 3.0 * boil + 1.2 * wart - 1.7 * sore \
+        - 0.3 * pore - 0.22 * net - 0.4 * wrinkle - 0.6 * seam
+    tone = 0.5 + 0.38 * head - 0.22 * seam - 0.3 * pore - 0.1 * net - 0.1 * wrinkle - 0.08 * wart
+    raw = np.maximum(0.6 * boil * (1 - head), sore)
+    return h, tone, raw
+
+
+def bake_skin(ob, model):
+    """unwrap the skin (only the skin), and write its map"""
+    me = ob.data
+    me.uv_layers.new(name='UVMap')
+    bpy.context.view_layer.objects.active = ob
+    for o in bpy.context.scene.objects:
+        o.select_set(o is ob)
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(me)
+    bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+    for f in bm.faces:
+        f.select = f.material_index == SKIN
+    bm.select_flush_mode()
+    bmesh.update_edit_mesh(me)
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.004, area_weight=0.0, correct_aspect=True, scale_to_bounds=True)
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    n = BAKE
+    nl = len(me.loops)
+    uv = np.empty(nl * 2, dtype=np.float32)
+    me.uv_layers.active.data.foreach_get('uv', uv)
+    uv = uv.reshape(nl, 2) * n - 0.5
+    lv = np.empty(nl, dtype=np.int64)
+    me.loops.foreach_get('vertex_index', lv)
+    V3 = np.array(model.v, dtype=np.float64)
+    pos = np.zeros((n, n, 3), dtype=np.float32)
+    got = np.zeros((n, n), dtype=bool)
+    mats = np.array(model.mat)
+    for t in np.nonzero(mats == SKIN)[0]:
+        a, b, c = uv[3 * t], uv[3 * t + 1], uv[3 * t + 2]
+        x0, x1 = int(max(0, math.floor(min(a[0], b[0], c[0])) - 1)), int(min(n - 1, math.ceil(max(a[0], b[0], c[0])) + 1))
+        y0, y1 = int(max(0, math.floor(min(a[1], b[1], c[1])) - 1)), int(min(n - 1, math.ceil(max(a[1], b[1], c[1])) + 1))
+        det = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
+        if abs(det) < 1e-9 or x1 < x0 or y1 < y0:
+            continue
+        gx, gy = np.meshgrid(np.arange(x0, x1 + 1, dtype=np.float32), np.arange(y0, y1 + 1, dtype=np.float32))
+        w1 = ((gx - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (gy - a[1])) / det
+        w2 = ((b[0] - a[0]) * (gy - a[1]) - (gx - a[0]) * (b[1] - a[1])) / det
+        w0 = 1 - w1 - w2
+        # (a texel whose middle is a little outside still gets this triangle's skin: the edges of an island are
+        # filled, not left to the island next door)
+        ins = (w0 > -0.6) & (w1 > -0.6) & (w2 > -0.6) & ~got[y0:y1 + 1, x0:x1 + 1] | ((w0 >= 0) & (w1 >= 0) & (w2 >= 0))
+        pa, pb, pc = V3[lv[3 * t]], V3[lv[3 * t + 1]], V3[lv[3 * t + 2]]
+        pt = w0[..., None] * pa + w1[..., None] * pb + w2[..., None] * pc
+        pos[y0:y1 + 1, x0:x1 + 1][ins] = pt[ins]
+        got[y0:y1 + 1, x0:x1 + 1] |= ins
+    h, tone, raw = sick(pos[got])
+    px = np.zeros((n, n, 4), dtype=np.float32)
+    px[..., 3] = 1
+    px[..., 0] = -SKIN_LOW / SKIN_SPAN
+    px[..., 1] = 0.5
+    px[got, 0] = np.clip((h - SKIN_LOW) / SKIN_SPAN, 0, 1)
+    px[got, 1] = np.clip(tone, 0, 1)
+    px[got, 2] = np.clip(raw, 0, 1)
+    # out past the edges of every island, so that a blurred or shrunken reading of it finds skin and not nothing
+    have = got.copy()
+    for _ in range(10):
+        for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            src, hs = np.roll(px, (dy, dx), axis=(0, 1)), np.roll(have, (dy, dx), axis=(0, 1))
+            fill = hs & ~have
+            px[fill] = src[fill]
+            have |= fill
+    img = bpy.data.images.new('beast-skin', n, n, alpha=False)
+    img.colorspace_settings.name = 'Non-Color'
+    img.pixels.foreach_set(px.ravel())
+    img.filepath_raw = SKIN_MAP
+    img.file_format = 'WEBP'
+    img.save()
+    print(f'skin map: {n} x {n}, {got.mean():.0%} of it used, height {h.min():.2f} to {h.max():.2f} mm, wrote {SKIN_MAP} {os.path.getsize(SKIN_MAP) / 1024:.0f} kB')
+
+
 def export(ob, rig, acts):
     ad = rig.ob.animation_data
     ad.action = None
@@ -1226,7 +1459,7 @@ def export(ob, rig, acts):
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     bpy.ops.export_scene.gltf(
         filepath=OUT, export_format='GLB', use_selection=True, export_yup=True, export_apply=False,
-        export_texcoords=False, export_normals=True, export_tangents=False, export_materials='EXPORT',
+        export_texcoords=True, export_normals=True, export_tangents=False, export_materials='EXPORT',
         export_vertex_color='ACTIVE', export_all_vertex_colors=False, export_active_vertex_color_when_no_material=True,
         export_attributes=True, export_morph=False, export_cameras=False, export_lights=False, export_extras=False,
         export_skins=True, export_influence_nb=4, export_all_influences=False, export_def_bones=False, export_leaf_bone=False,
@@ -1314,9 +1547,11 @@ def main():
     skin(model, fused, look)
     teeth(model)
     claws(model)
+    spines(model)
     eyes(model)
     tongue(model)
     ob = assemble(model, rig)
+    bake_skin(ob, model)
     lo, hi = np.min(model.v, axis=0), np.max(model.v, axis=0)
     print('bounds (x, y, z):', np.round(lo, 3), np.round(hi, 3))
 

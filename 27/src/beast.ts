@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { World } from './world';
-import { beastMaterial, beastDepthMaterial, BEAST_EYES } from './gfx';
+import { beastMaterial, beastDepthMaterial, BEAST_EYES, BEAST_SKIN } from './gfx';
 
 const KIND: Record<string, number> = { skin: 0, fur_base: 1, mouth: 2, teeth: 3, claws: 4, eye: 5 };
 const FUR_LAYERS = 6;
@@ -108,6 +108,15 @@ export class Beast {
     this.group.visible = false;
     this.scout();
     this.survey();
+    // its skin's own map (not colour: numbers; and laid out as the model's file has it, the first row at the top)
+    new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}beast-skin.webp`).then((t) => {
+      t.flipY = false;
+      t.colorSpace = THREE.NoColorSpace;
+      t.anisotropy = 8;
+      t.needsUpdate = true;
+      BEAST_SKIN.value.dispose();
+      BEAST_SKIN.value = t;
+    }, () => { /* bare skin then */ });
     new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}beast.glb`).then((gltf) => {
       const depth = beastDepthMaterial();
       const meshes: THREE.SkinnedMesh[] = [];
@@ -507,7 +516,8 @@ export class Beast {
     // its nose across the view and a little away from us, down into us; the head shaken as it pulls
     const tug = Math.max(0, Math.sin(r * 31));
     g.rotation.set(down + 0.1 * tug, Math.atan2(-side * right.x + 0.35 * look.x, -side * right.z + 0.35 * look.z), 0.13 * Math.sin(r * 27) * side);
-    this.a.set(side * 0.05, 0.1, 0.17).applyQuaternion(g.quaternion);
+    // (the middle of its cheek, from the model's origin: the head is tall and narrow)
+    this.a.set(side * 0.045, 0.125, 0.16).applyQuaternion(g.quaternion);
     g.position.copy(eye).addScaledVector(look, near - 0.012 * tug).addScaledVector(up, -drop).addScaledVector(right, side * 0.02).sub(this.a);
   }
   private feeding = false;

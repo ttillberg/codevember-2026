@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { World, sstep } from './world';
-import { U, LIGHT_COL, SHADOW_RES, cookie, soilMaterial, soilDepthMaterial, depthMaterial } from './gfx';
+import { U, LIGHT_COL, SHADOW_RES, cookie, soilMaterial, soilDepthMaterial, depthMaterial, beastSkin } from './gfx';
 import { Post } from './post';
 import { mulberry32 } from './noise';
 import { Rocks } from './rocks';
@@ -25,6 +25,8 @@ if (params.has('clean') || params.get('debug') === 'beastanimation') document.bo
 const auto = params.has('auto');
 // ?debug=beastanimation: the thing on the lower level alone on a stage, to look at how it moves (the end of this file)
 const beastStage = params.get('debug') === 'beastanimation';
+// the beast is grey. ?skin=yellow, ?skin=dark: in another colour, to try (gfx.ts)
+beastSkin(params.get('skin') ?? 'grey');
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 // the controls, the help and the pointer lock (ui.ts); no controls at the start of a clip
@@ -727,7 +729,7 @@ function tick(dt: number) {
 // The beast by itself, out of the burrow and out of the game: stood in the open air over a grid that runs under it at
 // the pace it is walking, lit by the torch from wherever we look at it from. Drag turns round it, the wheel comes
 // nearer. The panel picks the clip, the pace, how fast time goes. Nothing else of the place is drawn or run.
-const show = { clip: 'idle', walk: true, speed: 0.24, rate: 1, floor: true, exposure: 1, dist: 0.8, yaw: 2.4, pitch: -0.25, lastYaw: 0, lastPitch: 0, walked: 0 };
+const show = { clip: 'idle', walk: true, speed: 0.24, rate: 1, floor: true, exposure: 1, dist: 0.85, yaw: 1.05, pitch: -0.22, lastYaw: 0, lastPitch: 0, walked: 0 };
 const stageAt = new THREE.Vector3(0, 1.6, 3.2);
 const stageFloor = new THREE.GridHelper(3, 30, 0x9a9a9a, 0x5a5a5a);
 if (beastStage) {
@@ -768,7 +770,7 @@ function tickStage(dt: number) {
   post.dof = 0;
   // metered by hand for the pool of light at the distance we stand off at (as meter() bounds it in the burrow), so
   // that coming nearer does not burn it out; the grid is drawn at the same grey whatever that comes to
-  post.exposure = show.exposure * 0.55 * (show.dist * show.dist + 0.012) / (1.16 * 0.04);
+  post.exposure = show.exposure * 1.9 * (show.dist * show.dist + 0.012) / (1.16 * 0.04);
   (stageFloor.material as THREE.LineBasicMaterial).color.setScalar(0.6 / post.exposure);
   post.render(clock, fog.render(renderer, post.scene, camera), camera, 1, null);
 }
@@ -968,6 +970,8 @@ if (params.has('debug')) {
       readout: () => `${show.clip}${show.walk ? ` + walk, ${show.speed.toFixed(2)} m/s` : ''} · cycle ${beast.cycle.toFixed(2)}`,
       buttons: ['idle', 'crouch', 'leap', 'bite', 'land', 'crawl'].map(clipButton),
     },
+    // (and what colour it is: ?skin=yellow and ?skin=dark start with one of the others, here and in the burrow)
+    { title: 'Skin', buttons: ['grey', 'yellow', 'dark'].map((name) => ({ label: name, run: () => beastSkin(name) })) },
   ];
   import('./debug').then(({ debugPanel }) => debugPanel([
     ...stagePanel,
