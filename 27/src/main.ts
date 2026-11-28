@@ -282,7 +282,7 @@ const key = (ev: KeyboardEvent, on: boolean) => {
   // (with Cmd, Ctrl or Alt down the key is the browser's, not ours: Cmd+R reloads, Cmd+D bookmarks)
   if (on && (ev.metaKey || ev.ctrlKey || ev.altKey)) return;
   switch (ev.code) {
-    case 'KeyW': case 'ArrowUp': input.fwd = on; break;
+    case 'KeyW': case 'ArrowUp': case 'Space': input.fwd = on; break;
     case 'KeyS': case 'ArrowDown': input.back = on; break;
     case 'KeyA': case 'ArrowLeft': input.left = on; break;
     case 'KeyD': case 'ArrowRight': input.right = on; break;
