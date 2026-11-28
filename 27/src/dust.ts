@@ -5,7 +5,7 @@ import type { World } from './world';
 import { moteMaterial, crumbMaterial } from './gfx';
 
 const MOTES = 1400;
-const CRUMBS = 3200;
+const CRUMBS = 7000;
 
 interface Emitter { p: THREE.Vector3; rate: number; left: number; spread: number; acc: number; size: number }
 
@@ -46,7 +46,7 @@ export class Dust {
 
   /** Dirt comes away from around p for a moment. */
   crumble(p: THREE.Vector3, amount = 1, size = 1) {
-    this.emitters.push({ p: p.clone(), rate: 240 * amount + 80 * Math.random(), left: 0.3 + Math.random() * 0.8 * amount, spread: 0.03 + 0.05 * amount, acc: 0, size });
+    this.emitters.push({ p: p.clone(), rate: 380 * amount + 120 * Math.random(), left: 0.35 + Math.random() * 1.0 * amount, spread: 0.03 + 0.05 * amount, acc: 0, size });
   }
 
   /** Grit thrown up and back from a point on the floor, as from under a paw. */
@@ -58,7 +58,7 @@ export class Dust {
       this.pos[j] = p.x + (Math.random() - 0.5) * 0.03; this.pos[j + 1] = p.y + Math.random() * 0.006; this.pos[j + 2] = p.z + (Math.random() - 0.5) * 0.03;
       this.vel[j] = back.x * out + (Math.random() - 0.5) * 0.5; this.vel[j + 1] = up; this.vel[j + 2] = back.z * out + (Math.random() - 0.5) * 0.5;
       const r = Math.random();
-      this.data[i * 4] = Math.random() < 0.6 ? 0.0004 + r * 0.0008 : 0.001 + r * r * 0.004;
+      this.data[i * 4] = Math.random() < 0.5 ? 0.0004 + r * 0.0008 : 0.001 + r * r * 0.007;
       this.data[i * 4 + 1] = Math.random(); this.data[i * 4 + 2] = 1; this.data[i * 4 + 3] = 0;
       this.state[i] = 1; this.age[i] = 0;
     }
@@ -79,7 +79,7 @@ export class Dust {
     this.vel[j + 2] = (Math.random() - 0.5) * 0.12;
     // mostly dust and grit, now and then a proper clod
     const r = Math.random();
-    this.data[i * 4] = (Math.random() < 0.55 ? 0.0004 + r * 0.0008 : 0.0012 + r * r * r * 0.009) * e.size;
+    this.data[i * 4] = (Math.random() < 0.5 ? 0.0004 + r * 0.0008 : Math.random() < 0.06 ? 0.008 + r * 0.014 : 0.0012 + r * r * r * 0.009) * e.size;
     this.data[i * 4 + 1] = Math.random();
     this.data[i * 4 + 2] = 1;
     this.data[i * 4 + 3] = 0;

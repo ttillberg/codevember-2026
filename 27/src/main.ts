@@ -7,7 +7,7 @@ import { Rocks } from './rocks';
 import { Flora } from './flora';
 import { Dust } from './dust';
 import { buildGrass } from './outside';
-import { Den } from './den';
+import { Den, buildDebris } from './den';
 import { Fog } from './fog';
 
 const params = new URLSearchParams(location.search);
@@ -57,6 +57,8 @@ flora.onTug = (p) => crumble(p, 0.25, 0.7);
 const den = new Den(world, rnd, flora.pixel);
 scene.add(den.group);
 den.onStir = (p) => crumble(p, 1.1);
+const debris = buildDebris(world, rnd);
+scene.add(debris.mesh);
 console.log(`burrow: ${world.nx}×${world.ny}×${world.nz} cells, ${soil.geometry.index!.count / 3} triangles, ${(performance.now() - t0) | 0} ms`);
 
 U.uMouth.value.copy(world.entrance).add(new THREE.Vector3(0, 0.12, 0.2));
@@ -88,6 +90,7 @@ const casters: { obj: THREE.Mesh | THREE.Points | THREE.LineSegments; depth: THR
   { obj: soil, depth: depthMat }, { obj: flora.roots, depth: depthMat }, { obj: flora.hairs, depth: flora.hairDepth },
   ...rockMeshes.map((obj) => ({ obj, depth: depthMat })),
   ...den.casters,
+  { obj: debris.mesh, depth: debris.depth },
 ];
 const noShadow: THREE.Object3D[] = [sky, dust.motes, dust.crumbs, grass, soilPre];
 
@@ -198,9 +201,9 @@ function footfall(side: number) {
   const t = world.march(pawPos, tmpC.set(0, -1, 0), 0.5);
   if (t >= 0.5) return;
   pawPos.y -= t - 0.006;
-  dust.kick(pawPos, pawBack.multiplyScalar(-nav.sign), 4 + Math.floor(Math.random() * 5));
+  dust.kick(pawPos, pawBack.multiplyScalar(-nav.sign), 9 + Math.floor(Math.random() * 10));
   // and a little cloud of it that we leave behind us
-  fog.puff(pawPos, 0.4, 0.05, 0.24, 2.4, 0.14);
+  fog.puff(pawPos, 0.5, 0.05, 0.27, 2.6, 0.14);
 }
 
 function crawl(dt: number) {
@@ -389,6 +392,7 @@ function renderShadow() {
 const prevPos = new THREE.Vector3().copy(camPos);
 const moveDir = new THREE.Vector3(0, 0, -1);
 let nextFall = 0.9;
+let trickle = 2;
 function disturb(dt: number) {
   tmpA.copy(camPos).sub(prevPos);
   prevPos.copy(camPos);
@@ -398,12 +402,24 @@ function disturb(dt: number) {
   flora.update(dt, camPos, moveDir, speed);
   // now and then the roof ahead lets some dirt go
   if (nav.entered && travelled > nextFall) {
-    nextFall = travelled + 1.1 + Math.random() * 2.2;
+    nextFall = travelled + 0.45 + Math.random() * 1.1;
     const e = world.edges[nav.e];
     world.railPoint(e, nav.s + nav.dir * nav.sign * (0.45 + Math.random() * 0.8), tmpA);
     tmpB.set(Math.random() * 0.7 - 0.35, 1, Math.random() * 0.7 - 0.35).normalize();
     const t = world.march(tmpA, tmpB, 1);
-    if (t < 1) crumble(tmpA.addScaledVector(tmpB, t - 0.01), 0.4 + Math.random() * 0.9);
+    if (t < 1) crumble(tmpA.addScaledVector(tmpB, t - 0.01), 0.5 + Math.random() * 1.1);
+  }
+  // and the place is never quite still: somewhere within the reach of the torch a little is always trickling down
+  if (nav.entered && (trickle -= dt) < 0) {
+    trickle = 0.7 + Math.random() * 2.2;
+    tmpB.set(Math.random() - 0.5, 0.25 + Math.random() * 0.9, Math.random() - 0.5).addScaledVector(lookDir, 0.9).normalize();
+    const t = world.march(camPos, tmpB, 3.2);
+    if (t < 3.2 && t > 0.3) {
+      // a point on the roof or high on a wall: the dirt is let go just clear of it
+      tmpA.copy(camPos).addScaledVector(tmpB, t - 0.02);
+      dust.crumble(tmpA, 0.12 + Math.random() * 0.25, 0.8);
+      fog.puff(tmpA, 0.25, 0.04, 0.16, 3, -0.25);
+    }
   }
   dust.update(dt);
   den.update(dt, clock, camPos);
@@ -455,7 +471,7 @@ requestAnimationFrame(frame);
 // dev: jump somewhere. burrow.go('B', 0, yawDeg, pitchDeg) puts the eye on the first edge at node B.
 Object.assign(window, {
   burrow: {
-    world, nav, look, camera, U, post, dust, flora, rocks, den, fog,
+    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer,
     go(name: string, along = 0, yaw?: number, pitch = 0) {
       const n = world.nodes.findIndex((x) => x.name === name);
       // arrive on the last edge listed at the node (the one that leads to it), looking the way it runs

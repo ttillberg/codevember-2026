@@ -121,7 +121,7 @@ export class Rocks {
     const list: { p: THREE.Vector3; s: number }[] = [];
     const c = new THREE.Vector3(), T = new THREE.Vector3(), side = new THREE.Vector3(), down = new THREE.Vector3(0, -1, 0), up = new THREE.Vector3(0, 1, 0);
     for (const e of world.edges) {
-      const count = Math.round(e.len * (e.open ? 20 : 13));
+      const count = Math.round(e.len * (e.open ? 24 : 30));
       for (let i = 0; i < count; i++) {
         const s = rnd() * e.len;
         world.railPoint(e, s, c);

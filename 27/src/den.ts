@@ -280,3 +280,64 @@ export class Den {
     });
   }
 }
+
+/**
+ * What lies about on the floors of the runs: bits of root and twig, husks, and near the mouth the leaves the wind
+ * has pushed in. The same bent strips as the bedding, only scattered thin and dirty.
+ */
+export function buildDebris(world: World, rnd: () => number): { mesh: THREE.Mesh; depth: THREE.Material } {
+  const SEG = 3;
+  const lp: number[] = [], li: number[] = [];
+  for (let i = 0; i <= SEG; i++) {
+    lp.push(-0.5, i / SEG, 0, 0.5, i / SEG, 0);
+    if (i < SEG) { const k = i * 2; li.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+  }
+  const g = new THREE.InstancedBufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(lp), 3));
+  g.setIndex(li);
+  const aPos: number[] = [], aDir: number[] = [], aUp: number[] = [], aShape: number[] = [], aLook: number[] = [];
+  const c = new THREE.Vector3(), T = new THREE.Vector3(), side = new THREE.Vector3(), n = new THREE.Vector3();
+  const down = new THREE.Vector3(0, -1, 0), up = new THREE.Vector3(0, 1, 0);
+  for (const e of world.edges) {
+    if (e.open) continue;
+    for (let i = Math.round(e.len * 75); i > 0; i--) {
+      const s = rnd() * e.len;
+      world.railPoint(e, s, c);
+      world.railTangent(e, s, T);
+      side.crossVectors(T, up).normalize();
+      // most of it has been swept to the sides by whoever runs here
+      const off = (rnd() < 0.5 ? -1 : 1) * (0.05 + Math.sqrt(rnd()) * 0.24);
+      c.addScaledVector(side, off);
+      if (world.sample(c.x, c.y, c.z) > -0.02) continue;
+      const t = world.march(c, down, 0.6);
+      if (t >= 0.6) continue;
+      c.y -= t;
+      world.normalAt(c.x, c.y, c.z, n);
+      if (n.y < 0.35) continue;
+      // how far in we are: leaves do not get far
+      const depth = c.distanceTo(world.entrance);
+      const leaf = rnd() < 0.3 * Math.exp(-depth / 1.8);
+      const yaw = rnd() * Math.PI * 2, tilt = (rnd() - 0.5) * 0.35;
+      aPos.push(c.x, c.y + 0.003 + rnd() * 0.004, c.z);
+      // lying along the floor, whatever way it slopes
+      const d = new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
+      d.addScaledVector(n, -d.dot(n)).normalize().addScaledVector(n, tilt).normalize();
+      aDir.push(d.x, d.y, d.z);
+      aUp.push(n.x + (rnd() - 0.5) * 0.5, n.y, n.z + (rnd() - 0.5) * 0.5);
+      if (leaf) aShape.push(0.05 + rnd() * 0.06, 0.01 + rnd() * 0.011, (rnd() - 0.5) * 0.8, 1);
+      else aShape.push(0.015 + rnd() * rnd() * 0.11, 0.0011 + rnd() * 0.0028, (rnd() - 0.5) * 0.9, 0);
+      // (dirty: it has been lying in this)
+      aLook.push(rnd(), 0.4 + rnd() * 0.45);
+    }
+  }
+  g.setAttribute('aPos', new THREE.InstancedBufferAttribute(new Float32Array(aPos), 3));
+  g.setAttribute('aDir', new THREE.InstancedBufferAttribute(new Float32Array(aDir), 3));
+  g.setAttribute('aUp', new THREE.InstancedBufferAttribute(new Float32Array(aUp), 3));
+  g.setAttribute('aShape', new THREE.InstancedBufferAttribute(new Float32Array(aShape), 4));
+  g.setAttribute('aLook', new THREE.InstancedBufferAttribute(new Float32Array(aLook), 2));
+  g.instanceCount = aPos.length / 3;
+  const mesh = new THREE.Mesh(g, litterMaterial());
+  mesh.frustumCulled = false;
+  console.log(`debris: ${g.instanceCount} bits on the floors`);
+  return { mesh, depth: litterDepthMaterial() };
+}

@@ -13,9 +13,9 @@ interface Puff { p: THREE.Vector3; r: number; grow: number; a: number; life: num
 
 export class Fog {
   /** scattering of the still air, per metre (with the phase function folded in) */
-  density = 0.0022;
+  density = 0.0036;
   /** how much thicker a full puff of dust is than that */
-  dust = 0.018;
+  dust = 0.026;
   on = true;
   private half = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
   private out = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
@@ -79,6 +79,8 @@ export class Fog {
             vec3 q = p * 0.7 + vec3(uTime * 0.011, -uTime * 0.018, uTime * 0.008);
             float n = texture(uNoise, q).a * 0.5 + texture(uNoise, q * 2.7 + 0.4).a * 0.5;
             float dens = uFog * max(0.12, 1.0 + 1.7 * n);
+            // dust is heavy: it hangs thickest below the eye, over the floor
+            dens *= 1.0 + 0.5 * smoothstep(0.05, -0.16, p.y - camPos.y);
             for (int k = 0; k < PUFFS; k++) {
               if (uPuffA[k] > 0.0) {
                 vec3 o = p - uPuff[k].xyz;

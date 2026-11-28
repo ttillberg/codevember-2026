@@ -175,7 +175,10 @@ Surf soil(vec3 P, vec3 N, float ao, float sky) {
   float k2 = keep(0.022, px), k3 = keep(0.0065, px), k4 = keep(0.0022, px), k5 = keep(0.0008, px);
   vec4 a2 = nz(R1 * Pw * 6.3), b2 = nz(R2 * Pw * 8.9 + 0.37);
   vec4 a3 = nz(R3 * Pw * 21.0 + 0.61), b3 = nz(R1 * Pw * 29.0 + 0.2);
-  vec4 n4 = nz(R2 * P * 67.0 + 0.23), n5 = nz(R3 * P * 183.0 + 0.5);
+  // (the finest octaves only exist within arm's reach: further off they are faded to nothing, so they are not fetched)
+  vec4 n4 = vec4(0.0), n5 = vec4(0.0);
+  if (k4 > 0.0) n4 = textureLod(uNoise, R2 * P * 67.0 + 0.23, 0.0);
+  if (k5 > 0.0) n5 = textureLod(uNoise, R3 * P * 183.0 + 0.5, 0.0);
   float h2 = (a2.a + b2.a) * 0.7, h3 = (a3.a + b3.a) * 0.7;
   vec3 g2 = ((a2.rgb * R1) * 6.3 + (b2.rgb * R2) * 8.9) * 0.7;
   vec3 g3 = ((a3.rgb * R3) * 21.0 + (b3.rgb * R1) * 29.0) * 0.7;
@@ -188,12 +191,15 @@ Surf soil(vec3 P, vec3 N, float ao, float sky) {
   float A4 = mix(0.0011, 0.0024, sand) * k4, A5 = mix(0.0004, 0.0009, sand) * k5; // sand is all grain
   vec3 g = A1 * 1.9 * (n1.rgb * R3) + A2 * (h2 / c2) * g2 + A3 * (h3 / c3) * g3 + A4 * 67.0 * (n4.rgb * R2) + A5 * 183.0 * (n5.rgb * R3);
   // the fine bedding inside a layer: thin level lines, laid down one at a time
-  vec4 st = nz(vec3(P.x * 1.7, yy * 31.0, P.z * 1.7) + 0.4);
   float lay = (clay * 0.8 + sand) * steep * steep * (1.0 - top);
+  vec4 st = vec4(0.0);
+  if (lay > 0.02) st = textureLod(uNoise, vec3(P.x * 1.7, yy * 31.0, P.z * 1.7) + 0.4, 0.0);
   g.y += 0.0011 * 31.0 * st.g * lay;
 
   // cells: stones each of their own, the cracks of clay drying, the holes of whatever lives in a wall
-  vec4 cl = cz(R2 * Pw * 5.5 + 0.3), cs = cz(R1 * P * 15.0 + 0.1), cc = cz(R3 * Pw * 2.3);
+  vec4 cl = cz(R2 * Pw * 5.5 + 0.3), cs = vec4(1.0, 1.0, 1.0, 0.0), cc = vec4(1.0);
+  if (keep(0.004, px) > 0.0) cs = textureLod(uCells, R1 * P * 15.0 + 0.1, 0.0);
+  if (cracked > 0.01) cc = textureLod(uCells, R3 * Pw * 2.3, 0.0);
   float s1 = step(cl.b, 0.025 + 0.7 * gravel + 0.14 * flr + 0.04 * top) * keep(0.01, px);
   float q1 = cl.r / (0.2 + 0.2 * cl.a);
   float dome1 = sqrt(max(1.0 - q1 * q1, 0.0)) * s1;
