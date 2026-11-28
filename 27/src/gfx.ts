@@ -1007,8 +1007,9 @@ void main() {
   if (push > 0.001) {
     vec3 right = normalize(cross(uWalkDir, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
     vec3 dir = normalize(dw / max(dist, 1e-4) * 0.5 + right * clamp(dot(dw, right) / 0.07, -1.0, 1.0) * 0.9 + uWalkDir * 0.4);
-    c += dir * push * min(aShape.x * 0.8, 0.2 + 0.12 * tall);
-    c.y -= push * push * aShape.x * 0.3;
+    // (not so far that the top of it is folded over: a blade pushed aside leans, it does not hook)
+    c += dir * push * min(aShape.x * 0.62, 0.17 + 0.1 * tall);
+    c.y -= push * push * aShape.x * 0.18;
   }
   vP = c + side * (position.x * aShape.y * (1.0 - 0.9 * t * t));
   vN = cross(side, tang);
