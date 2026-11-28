@@ -336,6 +336,35 @@ export class Beast {
     return extra + Math.min(ps + from(a.a), a.len - ps + from(a.b));
   }
 
+  /** Metres of tunnel between any two places on the rails (for the ear: how far off a sound is, round the corners). */
+  between(a: { e: number; s: number }, b: { e: number; s: number }): number {
+    const E = this.world.edges;
+    const inner = (w: { e: number; s: number }): [number, number, number] => {
+      // out under the sky counts from the mouth, plus the walk down to it
+      if (!E[w.e].open) return [w.e, w.s, 0];
+      const n = E[w.e].b, ei = this.world.adj[n].find((i) => !E[i].open) ?? w.e;
+      return [ei, E[ei].a === n ? 0 : E[ei].len, E[w.e].len - w.s];
+    };
+    const [ae, as, ax] = inner(a), [be, bs, bx] = inner(b);
+    if (ae === be) return ax + bx + Math.abs(as - bs);
+    const A = E[ae], B = E[be];
+    const from = (n: number) => Math.min(this.far[n][B.a] + bs, this.far[n][B.b] + B.len - bs);
+    return ax + bx + Math.min(as + from(A.a), A.len - as + from(A.b));
+  }
+
+  /** The place on the rails nearest a point in the burrow: for what is not on them (a puddle, a stone). */
+  nearest(p: { x: number; y: number; z: number }): { e: number; s: number } {
+    let best = { e: 0, s: 0 }, bd = Infinity;
+    this.world.edges.forEach((e, ei) => {
+      if (e.open) return;
+      e.pts.forEach((q, k) => {
+        const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2 + (q.z - p.z) ** 2;
+        if (d < bd) { bd = d; best = { e: ei, s: e.cum[k] }; }
+      });
+    });
+    return best;
+  }
+
   /** is there clear air from the eye to its head */
   private sees(eye: THREE.Vector3): boolean {
     this.a.copy(this.group.position); this.a.y += 0.15;

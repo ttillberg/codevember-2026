@@ -39,6 +39,9 @@ export interface SoundScene {
     moving?: number; cycle?: number;
     /** how far it is from us through the tunnels, metres: three metres of earth is not three of air */
     tunnelDistance?(where: { e: number; s: number }): number;
+    /** the place on the rails nearest a point, and the metres of tunnel between two such places */
+    nearest?(p: V3): { e: number; s: number };
+    between?(a: { e: number; s: number }, b: { e: number; s: number }): number;
   };
   /** the game: we have the egg; we are out with it, and that is the end */
   game?: { carrying: boolean; won: boolean };
@@ -52,6 +55,8 @@ export interface SoundScene {
 }
 
 const MUTE = new URLSearchParams(location.search).has('mute');
+/** the takes are re-cut now and then under the same names: this goes up with them, so no browser plays an old one */
+const TAKES = 4;
 const NAMES = ['outside', 'room', 'breath', 'presence', 'growl', 'snarl', 'groan', 'warn', 'alarm', 'steps', 'dirt', 'pebbles', 'drip', 'splash'] as const;
 type Name = (typeof NAMES)[number];
 
@@ -61,7 +66,8 @@ type Name = (typeof NAMES)[number];
  */
 const MIX = {
   master: 0.8, verb: 0.8,
-  outside: 0.8, room: 0.15, wind: 0.2, ambient: 0.5,
+  // (outside: the take of wind in grass is played as it came, never re-encoded, and it came very quiet: hence the 4)
+  outside: 4.4, crickets: 0.5, room: 0.15, wind: 0.2, ambient: 0.5,
   breath: 0.12, gasp: 0.12, heart: 0.16,
   steps: 0.45, dirt: 0.7, stone: 0.9, water: 0.55,
   presence: 2, drone: 0.18, growl: 0.12, snarl: 0.25, groan: 0.1, cry: 1.2, pads: 0.7, beast: 0.9,
@@ -186,7 +192,9 @@ class Sound {
   private breathPhase = 0;
   private nextBeat = 0;
   private nextAmbient = 3;
-  private nextDrip = 2;
+  /** every pool's own clock, and where on the rails it is (looked up the first time it is wanted) */
+  private poolNext = new Float32Array(0);
+  private poolAt: ({ e: number; s: number } | null)[] = [];
   private nextScrape = 0;
   private lastStep = -1;
   private lastPaw = -1;
@@ -212,6 +220,9 @@ class Sound {
   private nextGroan = 6;
   private tdTick = 0;
   private outG!: GainNode;
+  /** the crickets in the grass: made here, each one a sine that is let through in short pulses */
+  private crikG!: GainNode;
+  private crik: { g: GainNode; next: number; amp: number; every: number; pulses: number }[] = [];
   private outLP!: BiquadFilterNode;
   private ended = false;
 
@@ -220,7 +231,7 @@ class Sound {
     // the samples are fetched straight away and decoded once there is a context to decode them
     this.raw = Promise.all(
       NAMES.map((n) =>
-        fetch(`${import.meta.env.BASE_URL}audio/${n}.mp3`)
+        fetch(`${import.meta.env.BASE_URL}audio/${n}.mp3?v=${TAKES}`)
           .then((r) => (r.ok ? r.arrayBuffer() : null))
           .catch(() => null),
       ),
@@ -236,6 +247,10 @@ class Sound {
   /** the live objects of the scene, once */
   bind(scene: SoundScene) {
     this.scene = scene;
+    const n = scene.puddles.length;
+    this.poolNext = new Float32Array(n);
+    for (let i = 0; i < n; i++) this.poolNext[i] = 2 + 12 * rnd();
+    this.poolAt = new Array(n).fill(null);
   }
 
   /** the sound button's wish: off or on. It may come before there is anything to switch */
@@ -353,10 +368,24 @@ class Sound {
     // the beds: the room (when it has loaded), the wind over the hole
     this.roomG = gain(0, this.world);
     this.outG = gain(0, this.world);
-    this.outLP = filter('lowpass', 16000, 0.5, this.outG);
+    this.outLP = filter('lowpass', 20000, 0.707, this.outG);
     this.windG = gain(0, this.world);
     this.windLP = filter('lowpass', 500, 0.4, this.windG);
     this.loop(ac, this.noise, this.windLP);
+    // crickets: no take of them survives being turned up (they come as quiet as the wind, and coded), so they are
+    // made: five of them about the bank, each its own pitch, place and pace, a chirp being three or four quick pulses
+    this.crikG = gain(0, this.world);
+    for (let i = 0; i < 5; i++) {
+      const pan = ac.createStereoPanner();
+      pan.pan.value = (i / 4) * 1.7 - 0.85 + (rnd() - 0.5) * 0.2;
+      pan.connect(this.crikG);
+      const g = gain(0, pan);
+      const o = ac.createOscillator();
+      o.frequency.value = 4100 + 1300 * rnd();
+      o.connect(g);
+      o.start();
+      this.crik.push({ g, next: 0, amp: 0.25 + 0.75 * rnd() * rnd(), every: 0.42 + 0.5 * rnd(), pulses: rnd() < 0.5 ? 3 : 4 });
+    }
 
     // us: the breath (when it has loaded) and the heart, a low triangle that is struck twice a beat
     this.breathG = gain(0, this.pre);
@@ -738,13 +767,18 @@ class Sound {
     }
   }
 
-  private drip(t: number, g: number, pan: number, bus: AudioNode) {
+  /** A drop into a pool. `echo`: how much of it also goes down the tunnel and comes back (the far ones). */
+  private drip(t: number, g: number, pan: number, bus: AudioNode, echo: number) {
     const b = this.buf.drip;
-    if (b) this.shot(b, 0.04, 1.3, 0.8 + 0.55 * rnd(), g, pan, bus, t);
-    else {
+    if (b) {
+      const rate = 0.8 + 0.55 * rnd();
+      this.shot(b, 0.04, 1.3, rate, g, pan, bus, t);
+      if (echo > 0) this.shot(b, 0.04, 1.3, rate, g * echo, pan, this.echoIn, t);
+    } else {
       // the plink of a drop: a pitch that climbs as the hollow it made closes over
       const f = 900 + 700 * rnd();
       this.tone(t, 'sine', f, f * 2.1, 0.05, 0.002, g * 0.6, f * 1.5, 0.4, pan, bus);
+      if (echo > 0) this.tone(t, 'sine', f, f * 2.1, 0.05, 0.002, g * 0.6 * echo, f * 1.5, 0.4, pan, this.echoIn);
     }
   }
 
@@ -898,8 +932,25 @@ class Sound {
     // the meadow: all of it on the bank, dulled and going for the first metres in, none of it further down. Where
     // there is a take of it the made wind only fills in under it
     this.outG.gain.setTargetAtTime(MIX.outside * open, t, 0.3);
-    this.outLP.frequency.setTargetAtTime(500 + 15500 * open * open, t, 0.3);
-    this.windG.gain.setTargetAtTime(MIX.wind * open * this.gust * (this.buf.outside ? 0.4 : 1), t, 0.3);
+    // (wide open on the bank: nothing of the take's top is shaved there)
+    this.outLP.frequency.setTargetAtTime(Math.min(20000, 500 + 21500 * open * open), t, 0.3);
+    this.windG.gain.setTargetAtTime(MIX.wind * open * this.gust * (this.buf.outside ? 0.12 : 1), t, 0.3);
+    // the crickets: each chirps on its own time, and stops for a while now and then
+    this.crikG.gain.setTargetAtTime(MIX.crickets * open * open, t, 0.4);
+    if (open > 0.05) {
+      for (const c of this.crik) {
+        if (c.next < t) c.next = t + rnd() * c.every;
+        while (c.next < t + 0.25) {
+          for (let k = 0; k < c.pulses; k++) {
+            const ts = c.next + k * 0.031;
+            c.g.gain.setValueAtTime(0, ts);
+            c.g.gain.linearRampToValueAtTime(c.amp * (0.7 + 0.3 * rnd()), ts + 0.007);
+            c.g.gain.linearRampToValueAtTime(0, ts + 0.021);
+          }
+          c.next += c.every * (0.92 + 0.16 * rnd()) + (rnd() < 0.06 ? 1.5 + 5 * rnd() : 0);
+        }
+      }
+    }
     this.windLP.frequency.setTargetAtTime(220 + 620 * open * this.gust, t, 0.3);
 
     // ---- the other lodger ----
@@ -1038,18 +1089,27 @@ class Sound {
         this.nextAmbient = 2.5 + 6 * rnd();
         this.ambient(t);
       }
-      // water drips where there is water: off the roof into the nearest pool, more of them while we shake the place
-      let pool = -1, best = 8;
-      for (let i = 0; i < s.puddles.length; i++) {
-        const p = s.puddles[i], d = Math.sqrt((p.x - c.x) ** 2 + (p.y - c.y) ** 2 + (p.z - c.z) ** 2);
-        if (d < best) { best = d; pool = i; }
-      }
-      if (pool >= 0 && (this.nextDrip -= h * (1 + (best < 2.5 ? 1.5 * s.ripple.value : 0))) < 0) {
-        this.nextDrip = 0.9 + 4.5 * rnd() * rnd() + best * 0.25;
-        this.place(s.puddles[pool]);
-        // (a pool we are standing in is all round us)
-        this.drip(t, MIX.water * (0.5 + 0.5 * rnd()) * this.att * 1.6, this.pan + (rnd() - 0.5) * 0.3, this.dist > 2.2 ? this.far : this.fx);
-      }
+    }
+    // Water drips where there is water. Every pool keeps its own slow, uneven time (quicker while we run through it
+    // and shake the place), and each drop is heard from its pool: all of it within a metre, clearly less by three,
+    // a faint plink with the tunnel in it at six or eight, none past nine. The metres are the tunnel's (asked once a
+    // drop, not every pass), the side is the straight line to the pool, and only once it is near enough to have one.
+    // So going past a pool it comes up on one side, passes, and falls away behind
+    const P = s.puddles;
+    for (let i = 0; i < this.poolNext.length && i < P.length; i++) {
+      const p = P[i], d = Math.sqrt((p.x - c.x) ** 2 + (p.y - c.y) ** 2 + (p.z - c.z) ** 2);
+      if ((this.poolNext[i] -= h * (1 + (d < 2.5 ? 1.5 * s.ripple.value : 0))) > 0) continue;
+      // (a drop now and then, not a dripping tap: with several pools in earshot it was a patter)
+      this.poolNext[i] = 5 + 4 * rnd() + 10 * rnd() * rnd();
+      if (d > 6 || !s.nav.entered || dark) continue;
+      const td = b.nearest && b.between ? Math.max(d, b.between(s.nav, this.poolAt[i] ?? (this.poolAt[i] = b.nearest(p)))) : d;
+      if (td > 6) continue;
+      this.place(p);
+      const lvl = clamp01((6 - td) / 2) / (1 + Math.pow(Math.max(0, td - 1) / 1.8, 2)), off = clamp01((td - 2) / 4);
+      const g = MIX.water * (0.6 + 0.4 * rnd()) * lvl * 1.3;
+      // (a pool we are standing in is all round us)
+      // (no echo sent after it: one drop heard twice read as a fault)
+      this.drip(t, g, this.pan * clamp01((5 - td) / 2) + (rnd() - 0.5) * 0.25 * (1 - off), td > 2.2 ? this.far : this.fx, 0);
     }
   }
 }
