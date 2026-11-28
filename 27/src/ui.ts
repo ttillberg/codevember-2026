@@ -169,6 +169,46 @@ export function say(text: string, seconds = 4.5) {
 }
 
 /**
+ * What we are here for, typed out in the middle of the view a letter at a time, each line on its own (a narrow screen
+ * may break them again), held a while, then gone. Every letter is there from the start, unseen, so the lines do not
+ * shift about as they fill.
+ */
+let quest: HTMLElement | undefined, questT = 0;
+export function type(lines: string[], hold = 4.5) {
+  quest?.remove();
+  clearTimeout(questT);
+  const el = quest = document.createElement('p');
+  el.className = 'quest';
+  el.setAttribute('aria-label', lines.join(' '));
+  const letters: (HTMLElement | null)[] = [];
+  for (const line of lines) {
+    const row = document.createElement('span');
+    row.className = 'row';
+    row.setAttribute('aria-hidden', 'true');
+    // (letters of a word stay together: the line breaks between words only)
+    for (const word of line.split(' ')) {
+      const w = document.createElement('span');
+      w.className = 'word';
+      for (const ch of word) { const c = document.createElement('span'); c.textContent = ch; w.append(c); letters.push(c); }
+      row.append(w, ' ');
+    }
+    // a breath at the end of each line
+    letters.push(null, null, null, null, null, null, null, null);
+    el.append(row);
+  }
+  document.body.append(el);
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let i = 0;
+  const next = () => {
+    if (el !== quest) return;
+    do { letters[i]?.classList.add('on'); i++; } while (still && i < letters.length);
+    if (i < letters.length) questT = window.setTimeout(next, 42);
+    else questT = window.setTimeout(() => { el.classList.add('off'); questT = window.setTimeout(() => { el.remove(); if (quest === el) quest = undefined; }, 1400); }, hold * 1000);
+  };
+  questT = window.setTimeout(next, 500);
+}
+
+/**
  * The egg of the last screen. Its freckles are not a picture wrapped round it (that stretched them at the waist,
  * pinched them at the ends and left a seam down one side): they are worked out in the egg's own three dimensions,
  * a point here and there in a grid of cells, each with its own size and brown, thickest round the blunt end. So

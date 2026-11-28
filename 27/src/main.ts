@@ -10,11 +10,13 @@ import { buildGrass, buildHerbs } from './outside';
 import { buildFungi } from './fungi';
 import { Beast } from './beast';
 import { Den, buildDebris } from './den';
+import { Bones } from './bones';
 import { Fog } from './fog';
 import { sound } from './sound';
 import { Growth } from './growth';
-import { initUI, say, showWin, firstPress } from './ui';
+import { initUI, say, type, showWin, firstPress } from './ui';
 import { Game } from './game';
+import { Life } from './life';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -136,6 +138,14 @@ casters.push(...game.casters);
 noShadow.push(game.held);
 game.onTake = () => { beast.enrage(); say('You have the egg. Now get out'); };
 game.onWin = () => { showWin(); setTimeout(() => { halted = true; }, 3400); };
+// what is left of the meals (bones.ts): in the old bed, round the nest, one here and there. They come with their file
+const bones = new Bones(world, mulberry32(4242), game.nest);
+scene.add(bones.group);
+bones.onReady = () => { casters.push(...bones.casters); };
+// the small life: silk, spiders, beetles, worms (life.ts). Too small to throw a shadow worth the drawing
+const life = new Life(world, mulberry32(1331));
+scene.add(life.group);
+noShadow.push(life.group);
 /** the end has come and the fade is over: nothing more is drawn here */
 let halted = false;
 beast.onCaught = () => {
@@ -337,7 +347,11 @@ function crawl(dt: number) {
   tmpB.copy(lookDir).multiplyScalar(nav.sign);
   if (nav.s > e.len) switchEdge(e.b, nav.s - e.len, tmpB);
   else if (nav.s < 0) switchEdge(e.a, -nav.s, tmpB);
-  if (!world.edges[nav.e].open && !nav.entered) { nav.entered = true; beenIn = true; document.body.classList.add('inside'); }
+  if (!world.edges[nav.e].open && !nav.entered) {
+    // the first time in, this go: what we have come for
+    if (!beenIn && !game.carrying) type(['Something lives at the bottom of this.', 'Find its egg and bring it out.']);
+    nav.entered = true; beenIn = true; document.body.classList.add('inside');
+  }
 }
 
 function wrapPi(a: number) { return a - Math.round(a / (2 * Math.PI)) * 2 * Math.PI; }
@@ -531,6 +545,8 @@ const prevPos = new THREE.Vector3().copy(camPos);
 const moveDir = new THREE.Vector3(0, 0, -1);
 let nextFall = 0.9;
 let trickle = 2;
+/** how long since we last moved, counted down from a couple of seconds: nothing comes down once it is spent */
+let stirred = 0;
 function disturb(dt: number) {
   tmpA.copy(camPos).sub(prevPos);
   prevPos.copy(camPos);
@@ -548,7 +564,10 @@ function disturb(dt: number) {
     if (t < 1) crumble(tmpA.addScaledVector(tmpB, t - 0.01), 0.5 + Math.random() * 1.1);
   }
   // and the place is never quite still: somewhere within the reach of the torch a little is always trickling down
-  if (nav.entered && (trickle -= dt) < 0) {
+  // (only while we are on the move, or have just stopped: it is our going through that shakes it loose. Stand still
+  // and the place settles)
+  stirred = speed > 0.05 ? 2.5 : stirred - dt;
+  if (nav.entered && stirred > 0 && (trickle -= dt) < 0) {
     trickle = 0.7 + Math.random() * 2.2;
     tmpB.set(Math.random() - 0.5, 0.25 + Math.random() * 0.9, Math.random() - 0.5).addScaledVector(lookDir, 0.9).normalize();
     const t = world.march(camPos, tmpB, 3.2);
@@ -584,8 +603,12 @@ function tick(dt: number) {
   U.uStir.value += (stirTo - U.uStir.value) * (1 - Math.exp(-dt / (stirTo > U.uStir.value ? 0.18 : 1.1)));
   crawl(dt);
   updateCamera(dt, time);
-  beast.update(dt, camPos, viewDir, nav.entered, nav);
+  // (?nobeast: it is not there: for looking at its nest in peace)
+  if (params.has('nobeast')) beast.group.visible = false;
+  else beast.update(dt, camPos, viewDir, nav.entered, nav);
   game.update(dt, time, camPos, camQ, nav.entered, nav.v / SPEED);
+  life.update(dt, camPos);
+  bones.update(camPos);
   updateTorch(dt, time);
   meter(dt);
   disturb(dt);
@@ -628,7 +651,7 @@ requestAnimationFrame(frame);
 // dev: jump somewhere. burrow.go('B', 0, yawDeg, pitchDeg) puts the eye on the first edge at node B.
 Object.assign(window, {
   burrow: {
-    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim, fungi, hillside, beast, game,
+    world, nav, look, camera, U, post, dust, flora, rocks, den, fog, scene, soil, renderer, aim, fungi, hillside, beast, game, life, bones,
     go(name: string, along = 0, yaw?: number, pitch = 0) {
       const n = world.nodes.findIndex((x) => x.name === name);
       // arrive on the last edge listed at the node (the one that leads to it), looking the way it runs
@@ -682,6 +705,18 @@ if (params.has('debug')) {
   if (way) {
     putAt(way.ei, way.s, way.at);
     console.log(`beast: ${way.sight.toFixed(1)} m down the tunnel`);
+  }
+  // ?web=2: start half a metre short of one of the webs, looking at it. ?bones=den, ?bones=nest: the same for those
+  const heap = params.get('bones');
+  const seen = life.webSpots[Number(params.get('web') ?? -1)] ?? (heap === 'den' ? world.den.c : heap === 'nest' ? game.nest : undefined);
+  if (seen) {
+    let best = { d: 1e9, ei: 0, s: 0 };
+    world.edges.forEach((e, ei) => {
+      if (e.open) return;
+      for (let s = 0; s <= e.len; s += 0.05) { const d = world.railPoint(e, s, tmpA).distanceTo(seen); if (d < best.d) best = { d, ei, s }; }
+    });
+    const len = world.edges[best.ei].len, back = Number(params.get('back') ?? 0.55);
+    putAt(best.ei, Math.max(0.05, Math.min(len - 0.05, best.s > back + 0.05 ? best.s - back : best.s + back)), seen);
   }
   // ?egg: start with the egg already in hand (the thing knows): for trying the way out. ?win: the last screen
   if (params.has('egg')) beast.onReady = ((ready) => () => { ready(); game.take(); })(beast.onReady);

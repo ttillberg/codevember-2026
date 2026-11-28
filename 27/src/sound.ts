@@ -1127,7 +1127,8 @@ class Sound {
     // ---- the place is never quite still ----
     if (s.nav.entered && !dark) {
       if ((this.nextAmbient -= h) < 0) {
-        this.nextAmbient = 2.5 + 6 * rnd();
+        // (standing still the place settles: a sound of it now and then, not a patter)
+        this.nextAmbient = (2.5 + 6 * rnd()) * (s.nav.v > 0.1 ? 1 : 5);
         this.ambient(t);
       }
     }

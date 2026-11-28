@@ -503,8 +503,9 @@ attribute vec3 aTan;
 attribute float aSide;
 attribute float aW;
 attribute float aSeed;
+attribute float aRootD; // metres along the strand from where it comes out of the roof
 uniform float uPixel;
-varying vec3 vP; varying vec3 vSideV; varying vec3 vEyeV; varying float vAcross; varying float vCover; varying float vSeed;
+varying vec3 vP; varying vec3 vSideV; varying vec3 vEyeV; varying float vAcross; varying float vCover; varying float vSeed; varying float vRootD;
 void main() {
   vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
   vec3 toEye = cameraPosition - wp;
@@ -514,12 +515,12 @@ void main() {
   float w = max(aW, dist * uPixel * 1.05);
   vCover = aW / w;
   vP = wp + side * (aSide * w * 0.5);
-  vSideV = side; vEyeV = toEye; vAcross = aSide; vSeed = aSeed;
+  vSideV = side; vEyeV = toEye; vAcross = aSide; vSeed = aSeed; vRootD = aRootD;
   gl_Position = projectionMatrix * viewMatrix * vec4(vP, 1.0);
 }`;
 
 const HAIR_FRAG = COMMON + /* glsl */ `
-varying vec3 vP; varying vec3 vSideV; varying vec3 vEyeV; varying float vAcross; varying float vCover; varying float vSeed;
+varying vec3 vP; varying vec3 vSideV; varying vec3 vEyeV; varying float vAcross; varying float vCover; varying float vSeed; varying float vRootD;
 uniform vec3 uHairA, uHairB;
 void main() {
   float x = clamp(vAcross, -1.0, 1.0);
@@ -529,7 +530,9 @@ void main() {
   s.alb = mix(uHairA, uHairB, fract(vSeed * 7.31)) * (0.8 + 0.4 * fract(vSeed * 3.17));
   s.rough = 0.7; s.f0 = 0.03; s.ao = 1.0; s.trans = 0.3; s.glint = 0.0; s.near = 0.09;
   float sky = smoothstep(-0.5, 0.05, vP.z);
-  gl_FragColor = vec4(shade(vP, s, vEyeV, sky), vCover);
+  // where it comes out of the roof it is in the roof's shadow: dark for its first centimetre, so that it grows out of
+  // the earth and is not stuck on it
+  gl_FragColor = vec4(shade(vP, s, vEyeV, sky) * mix(0.22, 1.0, smoothstep(0.0, 0.012, vRootD)), vCover);
 }`;
 
 const HAIR_DEPTH_FRAG = /* glsl */ `void main() { gl_FragColor = vec4(1.0); }`;
@@ -902,7 +905,8 @@ void main() {
   s.alb = k < 0.5 ? hair : k < 1.5 ? moss : k < 2.5 ? mould : k < 3.5 ? straw : dusk;
   s.N = N; s.rough = 0.7; s.f0 = 0.03; s.ao = mix(0.5, 1.0, vT); s.trans = 0.4; s.glint = 0.0; s.near = 0.07;
   float sky = smoothstep(-0.5, 0.05, vP.z);
-  gl_FragColor = vec4(shade(vP, s, N, sky), 1.0);
+  // (the same at the root of every strand: its first few millimetres are the dark of the roof it comes out of)
+  gl_FragColor = vec4(shade(vP, s, N, sky) * mix(0.22, 1.0, smoothstep(0.0, 0.1, vT)), 1.0);
 }`;
 export function tuftMaterial() {
   return new THREE.ShaderMaterial({ uniforms: { ...U }, vertexShader: TUFT_VERT, fragmentShader: TUFT_FRAG, side: THREE.DoubleSide });
@@ -1227,6 +1231,171 @@ void main() {
 /** dim: how much of its light it keeps (in the hand it is right under the lamp, and would burn out) */
 export function eggMaterial(dim = 1) {
   return new THREE.ShaderMaterial({ uniforms: { ...U, uDim: { value: dim } }, vertexShader: EGG_VERT, fragmentShader: EGG_FRAG });
+}
+
+// ---- bones (bones.ts): small, dry, old ivory. Their tone is in the vertex colours; here only the dirt of this place ----
+const BONE_VERT = /* glsl */ `
+attribute vec3 color;
+attribute vec3 aLook;
+varying vec3 vP; varying vec3 vN; varying vec3 vC; varying vec3 vLook;
+void main() {
+  vP = position; vN = normal; vC = color; vLook = aLook;
+  gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
+}`;
+const BONE_FRAG = COMMON + /* glsl */ `
+varying vec3 vP; varying vec3 vN; varying vec3 vC; varying vec3 vLook;
+void main() {
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  // vLook: how high this is above what the bone lies on (m), its own dice, how long it has lain
+  float cloud = nz(vP * 55.0 + vLook.y * 7.0).a, fine = nz(vP * 260.0).a;
+  vec3 alb = vC * (0.9 + 0.22 * cloud + 0.08 * fine);
+  // earth has crept up it from below, further the longer it has lain, and into its upward faces as dust
+  float crept = smoothstep(0.004 + 0.012 * vLook.z, 0.0, vLook.x + 0.004 * cloud);
+  float dust = vLook.z * smoothstep(0.1, 0.9, N.y) * smoothstep(-0.25, 0.3, cloud);
+  alb = mix(alb, vec3(0.13, 0.09, 0.06), max(crept * 0.75, dust * 0.45));
+  Surf s;
+  s.alb = alb; s.N = normalize(N + nz(vP * 180.0).rgb * 0.03);
+  s.rough = 0.5; s.f0 = 0.04; s.trans = 0.1; s.glint = 0.0; s.near = 0.06;
+  s.ao = mix(0.35, 1.0, smoothstep(0.0, 0.007, vLook.x));
+  gl_FragColor = vec4(shade(vP, s, N, 0.0), 1.0);
+}`;
+export function boneMaterial() {
+  return new THREE.ShaderMaterial({ uniforms: { ...U }, vertexShader: BONE_VERT, fragmentShader: BONE_FRAG, side: THREE.DoubleSide });
+}
+
+// ---- the small life of the place (life.ts): silk, the things that spun it, beetles, worms ----
+// Silk: old threads, most of them broken. Lines, added to the picture: a thread is too thin to shade, it only gives
+// back a little of whatever light is on it, and from more than a few metres off it is not there.
+const WEB_VERT = /* glsl */ `
+attribute vec2 aSway; // how free this point of the thread is to move (0 where it is fixed), and the thread's own number
+uniform float uTime;
+uniform vec3 uWalker;
+varying vec3 vP;
+void main() {
+  vec3 p = position;
+  // the air down here barely moves, but a thread shows it
+  p += vec3(sin(uTime * 0.9 + aSway.y * 20.0), 0.3 * sin(uTime * 1.3 + aSway.y * 7.0), cos(uTime * 0.7 + aSway.y * 13.0)) * (0.004 * aSway.x);
+  // and gives when we come through it
+  vec3 dw = p - uWalker;
+  float dist = length(dw);
+  p += (dw / max(dist, 1e-4)) * (smoothstep(0.32, 0.06, dist) * aSway.x * 0.07);
+  vP = p;
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+  if (distance(p, cameraPosition) > 4.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const WEB_FRAG = COMMON + /* glsl */ `
+varying vec3 vP;
+void main() {
+  vec3 L = uLightPos - vP;
+  float d2 = dot(L, L);
+  vec3 l = L * inversesqrt(d2);
+  float e = uLightI * cookie(dot(-l, uLightDir)) / (d2 + 0.06);
+  vec4 sc = uLightVP * vec4(vP + l * 0.01, 1.0);
+  if (sc.w > 0.0) {
+    vec3 q = sc.xyz / sc.w * 0.5 + 0.5;
+    if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0 && q.z < 1.0) e *= texture(uShadow, q);
+  }
+  // (and what day gets in at the mouth)
+  vec3 Lm = uMouth - vP;
+  float dm2 = dot(Lm, Lm);
+  vec3 day = uSky * (uDay * (0.05 / (0.05 + dm2)) * smoothstep(2.6, 0.4, sqrt(dm2)));
+  // A line on the screen is a pixel wide however far off it is, and a thread is not: so it is given less light the
+  // further it is, and never much. And silk does not shine evenly along its length: it glints, here and there.
+  float far = distance(vP, cameraPosition);
+  float fade = smoothstep(4.5, 2.2, far) * min(1.0, 0.7 / far);
+  float glint = 0.3 + 0.7 * smoothstep(-0.15, 0.75, nz(vP * 38.0).a) + 1.2 * smoothstep(0.82, 1.1, nz(vP * 95.0 + 0.3).a);
+  gl_FragColor = vec4((uLightCol * e * 0.05 + day * 0.03) * fade * glint, 1.0);
+}`;
+export function webMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...U }, vertexShader: WEB_VERT, fragmentShader: WEB_FRAG,
+    blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
+  });
+}
+
+// Spiders and beetles: a few millimetres each, one small mesh instanced. Their legs go when they walk.
+const BUG_VERT = /* glsl */ `
+attribute vec2 aLimb;  // which leg (its turn in the gait), and how far out along it (0 on the body)
+attribute float aStep; // how much this one is walking just now
+attribute float aSeed;
+uniform float uTime;
+varying vec3 vP; varying vec3 vN; varying float vLimb; varying float vSeed;
+void main() {
+  vec3 p = position;
+  float ph = uTime * 34.0 + aLimb.x * 3.14159 + aSeed * 10.0;
+  p.z += sin(ph) * 0.4 * aLimb.y * aStep;
+  p.y += max(0.0, cos(ph)) * 0.22 * aLimb.y * aStep;
+  vec4 wp = instanceMatrix * vec4(p, 1.0);
+  vP = wp.xyz;
+  vN = normalize(mat3(instanceMatrix) * normal);
+  vLimb = aLimb.y; vSeed = aSeed;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+  // (a thing this size is nothing at all from three metres)
+  if (distance(vP, cameraPosition) > 3.2) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const BUG_FRAG = COMMON + /* glsl */ `
+uniform float uKind; // 0 a spider, 1 a beetle
+varying vec3 vP; varying vec3 vN; varying float vLimb; varying float vSeed;
+void main() {
+  vec3 N = normalize(vN);
+  Surf s;
+  // a spider is nearly black; a beetle is black with a little bronze or green in its shine
+  // (dark: against a lit wall a pale one is not there at all)
+  vec3 spider = mix(vec3(0.006, 0.005, 0.004), vec3(0.02, 0.015, 0.011), vSeed);
+  vec3 beetle = mix(vec3(0.012, 0.012, 0.014), vec3(0.03, 0.022, 0.012), vSeed);
+  s.alb = mix(spider, beetle, uKind) * mix(1.0, 0.6, vLimb);
+  s.N = N;
+  s.rough = mix(0.7, 0.22, uKind * (1.0 - step(0.01, vLimb)));
+  s.f0 = mix(0.03, 0.09, uKind); s.ao = 1.0; s.trans = 0.0; s.glint = 0.0; s.near = 0.03;
+  gl_FragColor = vec4(shade(vP, s, N, smoothstep(-0.4, 0.3, vP.z)), 1.0);
+}`;
+export function bugMaterial(kind: number) {
+  return new THREE.ShaderMaterial({ uniforms: { ...U, uKind: { value: kind } }, vertexShader: BUG_VERT, fragmentShader: BUG_FRAG });
+}
+
+// Earthworms: a tube half out of the wet ground, lying on it, that draws itself along in waves.
+const WORM_VERT = /* glsl */ `
+attribute vec3 aShape; // length, thickness, its own number
+uniform float uTime;
+varying vec3 vP; varying vec3 vN; varying float vT; varying float vSeed;
+void main() {
+  // position: (cos, sin) round the ring, and z how far along, 0 to 1
+  float t = position.z, L = aShape.x, seed = aShape.z;
+  // the wave that goes down it: where it passes, the worm is short and thick; between, long and thin
+  float wave = sin(t * 13.0 - uTime * 1.5 + seed * 6.0);
+  float tt = t + 0.022 * wave;
+  float r = aShape.y * (1.0 + 0.24 * wave) * smoothstep(0.0, 0.05, t) * smoothstep(1.0, 0.86, t);
+  // lying on the ground in a lazy curve, its tail end still in it
+  float side = sin(tt * 3.4 + seed * 9.0 + 0.4 * sin(uTime * 0.5 + seed * 4.0)) * 0.16 * L * tt;
+  float up = aShape.y * 0.9 - max(0.0, 0.16 - tt) * L * 0.5 + 0.03 * L * sin(tt * 3.14159) * (0.5 + 0.5 * sin(uTime * 0.4 + seed * 3.0));
+  vec3 c = vec3(side, up, tt * L);
+  vec3 p = c + vec3(position.x, position.y, 0.0) * r;
+  vec4 wp = instanceMatrix * vec4(p, 1.0);
+  vP = wp.xyz;
+  vN = normalize(mat3(instanceMatrix) * vec3(position.x, position.y, 0.0));
+  vT = t; vSeed = seed;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+  if (distance(vP, cameraPosition) > 3.2) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const WORM_FRAG = COMMON + /* glsl */ `
+varying vec3 vP; varying vec3 vN; varying float vT; varying float vSeed;
+void main() {
+  vec3 N = normalize(vN);
+  // ringed all the way down, with the one pale saddle a third of the way along
+  float ring = smoothstep(0.0, 0.25, abs(fract(vT * 46.0) - 0.5) * 2.0);
+  // (the colour of the ground it lives in, with only a little flesh in it)
+  vec3 col = mix(vec3(0.15, 0.105, 0.085), vec3(0.22, 0.16, 0.13), vSeed);
+  col = mix(col, vec3(0.3, 0.24, 0.2), smoothstep(0.26, 0.3, vT) * smoothstep(0.42, 0.38, vT));
+  col *= mix(0.72, 1.0, ring) * mix(1.15, 0.85, vT);
+  Surf s;
+  s.alb = col; s.N = N;
+  // wet
+  s.rough = 0.26; s.f0 = 0.045; s.ao = 0.9; s.trans = 0.35; s.glint = 0.0; s.near = 0.03;
+  gl_FragColor = vec4(shade(vP, s, N, 0.0), 1.0);
+}`;
+export function wormMaterial() {
+  return new THREE.ShaderMaterial({ uniforms: { ...U }, vertexShader: WORM_VERT, fragmentShader: WORM_FRAG });
 }
 
 export function soilMaterial(flat = false) {

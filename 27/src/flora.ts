@@ -266,10 +266,16 @@ export class Flora {
     this.seg = new Float32Array(np);
     const hp = new Float32Array(np * 6), ht = new Float32Array(np * 6), hs = new Float32Array(np * 2), hw = new Float32Array(np * 2), hseed = new Float32Array(np * 2);
     const hidx: number[] = [];
+    // (how far along its strand each point is from where the strand comes out of the roof, metres: there it is in
+    // the roof's own shadow. A strand that grows off another one has no such place)
+    const hroot = new Float32Array(np * 2);
     for (const st of this.strands) {
+      let along = 0;
       for (let i = 0; i < st.n; i++) {
         const p = st.start + i;
         if (i > 0) this.seg[p] = Math.hypot(this.R[p * 3] - this.R[p * 3 - 3], this.R[p * 3 + 1] - this.R[p * 3 - 2], this.R[p * 3 + 2] - this.R[p * 3 - 1]);
+        along += this.seg[p];
+        hroot[p * 2] = hroot[p * 2 + 1] = st.parent < 0 ? along : 1;
         hs[p * 2] = -1; hs[p * 2 + 1] = 1;
         hw[p * 2] = hw[p * 2 + 1] = this.widths[p];
         hseed[p * 2] = hseed[p * 2 + 1] = this.seeds[p];
@@ -284,6 +290,7 @@ export class Flora {
     hg.setAttribute('aSide', new THREE.BufferAttribute(hs, 1));
     hg.setAttribute('aW', new THREE.BufferAttribute(hw, 1));
     hg.setAttribute('aSeed', new THREE.BufferAttribute(hseed, 1));
+    hg.setAttribute('aRootD', new THREE.BufferAttribute(hroot, 1));
     hg.setIndex(new THREE.BufferAttribute(new Uint32Array(hidx), 1));
     this.hairs = new THREE.Mesh(hg, hairMaterial(this.pixel));
     this.hairs.frustumCulled = false;

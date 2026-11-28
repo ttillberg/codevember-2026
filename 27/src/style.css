@@ -181,6 +181,18 @@ body.touch .lockpill, body.touch .unlock { display: none; }
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7); opacity: 0; transform: translateY(6px); transition: opacity 0.6s, transform 0.6s;
 }
 .note.on { opacity: 0.92; transform: none; }
+/* what we are here for, typed out mid-screen */
+.quest {
+  position: fixed; z-index: 6; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; width: max-content; max-width: min(30em, calc(100vw - 48px));
+  text-align: center; pointer-events: none; color: #f4f4f2; opacity: 0.94; transition: opacity 1.2s ease;
+  font: 600 clamp(15px, 2vw, 21px)/1.5 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.01em;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.quest.off { opacity: 0; }
+.quest .row { display: block; text-wrap: balance; }
+.quest .word { display: inline-block; }
+.quest .word span { opacity: 0; }
+.quest .word span.on { opacity: 1; }
 /* the end: the dark, the egg, a thought */
 .win {
   position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -198,7 +210,7 @@ body.touch .lockpill, body.touch .unlock { display: none; }
 .win.on .more { opacity: 0.8; transition-delay: 5.4s; }
 .win .more a { color: inherit; text-decoration: underline; text-decoration-color: rgba(244, 244, 242, 0.4); text-underline-offset: 3px; }
 @media (hover: hover) { .win .more a:hover { text-decoration-color: #f4f4f2; } }
-.clean .note { display: none; }
+.clean .note, .clean .quest { display: none; }
 
 /* ?clean: the scene alone */
 .clean .plate, .clean .help, .clean .full, .clean .snd, .clean .veil, .clean .lockpill, .clean .unlock { display: none; }
