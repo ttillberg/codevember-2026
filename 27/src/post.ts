@@ -32,8 +32,8 @@ void main() {
   float z0 = viewZ(texture2D(tDepth, vUv).x);
   float c0 = coc(z0);
   float turn = ign(gl_FragCoord.xy) * 6.2832;
-  vec3 sum = texture2D(tSrc, vUv).rgb;
-  float w = 1.0;
+  vec3 sum = vec3(0.0);
+  float w = 0.0;
   for (int i = 0; i < 30; i++) {
     float r = sqrt((float(i) + 0.5) / 30.0) * uMax;
     float th = float(i) * 2.39996 + turn;
@@ -45,7 +45,21 @@ void main() {
     sum += min(texture2D(tSrc, uv).rgb, vec3(64.0)) * k;
     w += k;
   }
-  gl_FragColor = vec4(sum / w, 1.0);
+#ifdef HALF
+  // at half size: only what was gathered from round about, and how much of the pixel that is. The pixel itself
+  // is put back at full size after (LAY), so what is sharp stays as sharp as it was
+  gl_FragColor = vec4(sum / max(w, 1e-4), w / (1.0 + w));
+#else
+  gl_FragColor = vec4((texture2D(tSrc, vUv).rgb + sum) / (1.0 + w), 1.0);
+#endif
+}`;
+
+const LAY = /* glsl */ `
+precision highp float;
+varying vec2 vUv; uniform sampler2D tSrc, tSoft;
+void main() {
+  vec4 s = texture2D(tSoft, vUv);
+  gl_FragColor = vec4(mix(texture2D(tSrc, vUv).rgb, s.rgb, s.a), 1.0);
 }`;
 
 const BLUR = /* glsl */ `
@@ -64,17 +78,42 @@ varying vec2 vUv;
 uniform sampler2D tScene, tBlurA, tBlurB;
 uniform float uExposure, uTime;
 uniform vec2 uRes;
+uniform float uAA;        // 1: the frame came with one sample a pixel, and its edges are smoothed here instead
 uniform vec4 uGrain;      // how much, how big (pixels), how much less of it in the lights, how coloured (0 grey, 1 each channel its own)
 uniform float uGrainRate; // new grain how many times a second (0: every frame)
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+// Edges, when the scene was drawn without its four samples a pixel (FXAA, the short one): where the frame steps,
+// it is averaged along the step. Done on the frame squeezed under one, so that a light does not swamp what is beside
+// it, and judged by eye, not by energy (the root).
+vec3 squeeze(vec3 c) { c *= max(uExposure, 1e-4); return c / (1.0 + max(c.r, max(c.g, c.b))); }
+vec3 spread(vec3 c) { return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-3) / max(uExposure, 1e-4); }
+float seen(vec3 c) { return sqrt(dot(c, vec3(0.3, 0.6, 0.1))); }
+vec3 smoothed(vec2 uv, vec3 mid) {
+  vec2 px = 1.0 / uRes;
+  vec3 m = squeeze(mid);
+  float lm = seen(m);
+  float lnw = seen(squeeze(texture2D(tScene, uv + vec2(-1.0, -1.0) * px).rgb)), lne = seen(squeeze(texture2D(tScene, uv + vec2(1.0, -1.0) * px).rgb));
+  float lsw = seen(squeeze(texture2D(tScene, uv + vec2(-1.0, 1.0) * px).rgb)), lse = seen(squeeze(texture2D(tScene, uv + vec2(1.0, 1.0) * px).rgb));
+  float lo = min(lm, min(min(lnw, lne), min(lsw, lse))), hi = max(lm, max(max(lnw, lne), max(lsw, lse)));
+  if (hi - lo < max(0.02, hi * 0.1)) return mid;
+  vec2 dir = vec2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));
+  float less = max((lnw + lne + lsw + lse) * 0.03125, 1.0 / 128.0);
+  dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + less), -8.0, 8.0) * px;
+  vec3 a = 0.5 * (squeeze(texture2D(tScene, uv + dir * (1.0 / 3.0 - 0.5)).rgb) + squeeze(texture2D(tScene, uv + dir * (2.0 / 3.0 - 0.5)).rgb));
+  vec3 b = a * 0.5 + 0.25 * (squeeze(texture2D(tScene, uv - dir * 0.5).rgb) + squeeze(texture2D(tScene, uv + dir * 0.5).rgb));
+  float lb = seen(b);
+  return spread(lb < lo || lb > hi ? a : b);
+}
 void main() {
   vec2 c = vUv - 0.5;
   float asp = uRes.x / uRes.y;
   vec2 cc = vec2(c.x * asp, c.y);
   float r2 = dot(cc, cc) / (0.25 * (asp * asp + 1.0));
   vec2 ca = c * r2 * 0.006;
-  vec3 col = vec3(texture2D(tScene, vUv + ca).r, texture2D(tScene, vUv).g, texture2D(tScene, vUv - ca).b);
+  vec3 mid = texture2D(tScene, vUv).rgb;
+  vec3 col = vec3(texture2D(tScene, vUv + ca).r, mid.g, texture2D(tScene, vUv - ca).b);
+  if (uAA > 0.5) col = max(col + smoothed(vUv, mid) - mid, 0.0);
   vec3 bA = texture2D(tBlurA, vUv).rgb, bB = texture2D(tBlurB, vUv).rgb;
   col = mix(col, bA, smoothstep(0.5, 1.15, r2) * 0.3);
   col += bA * 0.035 + bB * 0.06;
@@ -109,13 +148,20 @@ export class Post {
   private blur: THREE.ShaderMaterial;
   private final: THREE.ShaderMaterial;
   private dofMat: THREE.ShaderMaterial;
+  private dofHalfMat: THREE.ShaderMaterial;
+  private lay: THREE.ShaderMaterial;
   private soft: THREE.WebGLRenderTarget;
+  private softH: THREE.WebGLRenderTarget;
   exposure = 1;
   /** the film's grain: how much, how big in pixels, how much less of it in the lights (0 to 1), how coloured (0 to 1), and how many new grains a second (0: every frame). ?debug has sliders for these */
   grain = { amount: 0.026, size: 1, lights: 0.6, colour: 0, rate: 0 };
   /** depth of field: how much of it (0 none, and then the pass is not run at all), and the distance that is sharp, metres */
   dof = 0;
   focus = 1;
+  /** the gather run on a quarter of the pixels and laid back over the sharp frame (a debug switch: cheaper, a little rougher) */
+  dofHalf = false;
+  /** smooth the edges in the last pass: for when the scene is drawn with one sample a pixel (setSamples(0)) */
+  aa = false;
 
   constructor(private renderer: THREE.WebGLRenderer) {
     // (the scene's target keeps its depth as a texture: the light in the air is marched against it, fog.ts)
@@ -124,7 +170,7 @@ export class Post {
       ...(depth ? { depthTexture: new THREE.DepthTexture(4, 4) } : {}),
     });
     this.scene = mk(4, true);
-    this.half = mk(); this.qA = mk(); this.qB = mk(); this.eA = mk(); this.eB = mk(); this.soft = mk();
+    this.half = mk(); this.qA = mk(); this.qB = mk(); this.eA = mk(); this.eB = mk(); this.soft = mk(); this.softH = mk();
     const tri = new THREE.BufferGeometry();
     tri.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
     const mat = (frag: string, uniforms: Record<string, THREE.IUniform>) =>
@@ -134,12 +180,16 @@ export class Post {
     this.final = mat(FINAL, {
       tScene: { value: null }, tBlurA: { value: null }, tBlurB: { value: null },
       uExposure: { value: 1 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2() },
-      uGrain: { value: new THREE.Vector4() }, uGrainRate: { value: 0 },
+      uGrain: { value: new THREE.Vector4() }, uGrainRate: { value: 0 }, uAA: { value: 0 },
     });
-    this.dofMat = mat(DOF, {
+    const dofU = () => ({
       tSrc: { value: null }, tDepth: { value: null }, uTexel: { value: new THREE.Vector2() },
       uFocus: { value: 1 }, uAmount: { value: 0 }, uMax: { value: 14 }, uNear: { value: 0.012 }, uFar: { value: 80 },
     });
+    this.dofMat = mat(DOF, dofU());
+    this.dofHalfMat = mat(DOF, dofU());
+    this.dofHalfMat.defines = { HALF: 1 };
+    this.lay = mat(LAY, { tSrc: { value: null }, tSoft: { value: null } });
     this.quad = new THREE.Mesh(tri, this.down);
     this.quad.frustumCulled = false;
     this.qScene.add(this.quad);
@@ -148,10 +198,18 @@ export class Post {
   setSize(w: number, h: number) {
     this.scene.setSize(w, h);
     this.soft.setSize(w, h);
+    this.softH.setSize(w >> 1, h >> 1);
     this.half.setSize(w >> 1, h >> 1);
     this.qA.setSize(w >> 2, h >> 2); this.qB.setSize(w >> 2, h >> 2);
     this.eA.setSize(w >> 4, h >> 4); this.eB.setSize(w >> 4, h >> 4);
     this.final.uniforms.uRes.value.set(w, h);
+  }
+
+  /** how many samples a pixel the scene is drawn with (4 as built; 0: one, and then `aa` wants to be on) */
+  setSamples(n: number) {
+    if (this.scene.samples === n) return;
+    this.scene.samples = n;
+    this.scene.dispose();
   }
 
   private pass(m: THREE.ShaderMaterial, target: THREE.WebGLRenderTarget | null) {
@@ -178,7 +236,8 @@ export class Post {
   /** src: the frame to finish, the scene's own unless something (the air) has been laid over it since */
   render(time: number, src: THREE.WebGLRenderTarget = this.scene, camera?: THREE.PerspectiveCamera) {
     if (this.dof > 0.004 && camera) {
-      const d = this.dofMat.uniforms, px = src.height / 800;
+      const m = this.dofHalf ? this.dofHalfMat : this.dofMat;
+      const d = m.uniforms, px = src.height / 800;
       d.tSrc.value = src.texture;
       d.tDepth.value = this.scene.depthTexture;
       d.uTexel.value.set(1 / src.width, 1 / src.height);
@@ -186,7 +245,12 @@ export class Post {
       d.uAmount.value = 7 * px * this.dof;
       d.uMax.value = Math.max(2, 15 * px * this.dof);
       d.uNear.value = camera.near; d.uFar.value = camera.far;
-      this.pass(this.dofMat, this.soft);
+      if (this.dofHalf) {
+        this.pass(m, this.softH);
+        this.lay.uniforms.tSrc.value = src.texture;
+        this.lay.uniforms.tSoft.value = this.softH.texture;
+        this.pass(this.lay, this.soft);
+      } else this.pass(m, this.soft);
       src = this.soft;
     }
     this.downTo(src, this.half);
@@ -203,6 +267,7 @@ export class Post {
     u.uTime.value = time;
     u.uGrain.value.set(this.grain.amount, this.grain.size, this.grain.lights, this.grain.colour);
     u.uGrainRate.value = this.grain.rate;
+    u.uAA.value = this.aa ? 1 : 0;
     this.pass(this.final, null);
   }
 }

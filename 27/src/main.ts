@@ -39,7 +39,9 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, 1, 0.012, 80);
 const post = new Post(renderer);
 // the air: ?nofog for the frame without it
-const fog = new Fog(matchMedia('(pointer: coarse)').matches ? 12 : 20);
+const FOG_STEPS = matchMedia('(pointer: coarse)').matches ? 12 : 20;
+// (twelve is what it runs at: the `air` switch in ?debug goes back up to the full count)
+const fog = new Fog(Math.min(FOG_STEPS, 12));
 fog.on = !params.has('nofog');
 
 // ---- the world ----
@@ -418,16 +420,19 @@ function updateCamera(dt: number, time: number) {
   camera.updateMatrixWorld();
 }
 
+/** ?debug: the torch held still for looking at something. power: full, no sag, whatever is done to it. aim: dead ahead */
+const torchLock = { power: false, aim: false };
 function updateTorch(dt: number, time: number) {
   const tanV = Math.tan((camera.fov * Math.PI) / 360), tanH = tanV * camera.aspect;
-  const ax = aim.mouse ? aim.x : 0, ay = aim.mouse ? aim.y : 0;
+  const ax = aim.mouse && !torchLock.aim ? aim.x : 0, ay = aim.mouse && !torchLock.aim ? aim.y : 0;
   // carried, not mounted: it trails the stride by a beat and swings wider than the head does. And at a run nobody
   // holds a torch up: it drops to light the ground just ahead, and what is further on is left to the edge of the beam
-  const run = (nav.v / SPEED) ** 2;
+  const run = torchLock.aim ? 0 : (nav.v / SPEED) ** 2;
   tmpA.set(ax * tanH * 0.85 + 0.075 * Math.sin(gait - 0.5) * run, ay * tanV * 0.85 + (0.06 * Math.cos(2 * gait - 1.5) - 0.11) * run, -1).normalize().applyQuaternion(camQ);
   // a cheap torch on tired cells: every so often it sags to a fraction, stutters, and comes back. Sooner when it is
   // being shaken about
   torchNext -= dt * (1 + 1.5 * run);
+  if (torchLock.power) { torchSag = 0; torchNext = 9; }
   if (torchNext < 0 && torchSag <= 0) { torchSag = 0.5 + Math.random() * 1.6; torchDeep = 0.22 + Math.random() * 0.4; torchNext = 7 + Math.random() * 16; }
   let power = 1;
   if (torchSag > 0) {
@@ -437,10 +442,12 @@ function updateTorch(dt: number, time: number) {
   }
   torchPower += (power - torchPower) * (1 - Math.exp(-dt / (power < torchPower ? 0.05 : 0.25)));
   // (and what the thing on the lower level does to it: knocked about in the hand, and out)
-  U.uLightI.value = torchPower * (1 + 0.035 * Math.sin(time * 9.1) * run) * beast.lamp;
-  tmpA.x += Math.sin(time * 2.1) * 0.004 + Math.sin(time * 5.3) * 0.002;
-  tmpA.y += Math.sin(time * 1.7 + 1.0) * 0.004;
-  const fl = beast.flail;
+  U.uLightI.value = torchLock.power ? 1 : torchPower * (1 + 0.035 * Math.sin(time * 9.1) * run) * beast.lamp;
+  if (!torchLock.aim) {
+    tmpA.x += Math.sin(time * 2.1) * 0.004 + Math.sin(time * 5.3) * 0.002;
+    tmpA.y += Math.sin(time * 1.7 + 1.0) * 0.004;
+  }
+  const fl = torchLock.aim ? 0 : beast.flail;
   if (fl > 0.001) {
     // thrown about: over the walls, the roof, back across whatever is on top of us
     tmpB.set(Math.sin(time * 17.3) + 0.6 * Math.sin(time * 29.1 + 1), Math.sin(time * 13.7 + 2) + 0.6 * Math.sin(time * 23.9), Math.sin(time * 11.1 + 4) * 0.5);
@@ -509,6 +516,29 @@ function meter(dt: number) {
   exposure *= Math.exp(Math.log(target / exposure) * (1 - Math.exp(-dt / tau)));
   // (with it on the lens the meter knows nothing of it: stopped down by hand; and after the bite, dark)
   post.exposure = exposure * sstep(0.1, 1.1, clock - began) * (1 - 0.3 * beast.close) * (1 - beast.dark);
+}
+
+// ---- what a frame can do without (?debug has a switch for each and one for all; ?fast starts with them on) ----
+// Each gives up a little of the picture for time. Two are on from the start: the air, and the frame size.
+const fast = { layers: false, msaa2: false, edges: false, dof: false, air: true, pace: true };
+type Fast = keyof typeof fast;
+function setFast(key: Fast, on: boolean) {
+  fast[key] = on;
+  // the pile in seven layers for ten (a phone's six stay six)
+  if (key === 'layers') growth.layers(on ? Math.max(0, LAYERS - 7) : 0);
+  // the scene with two samples a pixel for four; or with one, its edges smoothed in the last pass instead and the fine
+  // roots stippled (with both thrown it is the one)
+  if (key === 'edges' || key === 'msaa2') {
+    post.setSamples(fast.edges ? 0 : fast.msaa2 ? 2 : 4);
+    post.aa = fast.edges;
+    U.uStipple.value = fast.edges ? 1 : 0;
+  }
+  // the depth of field out in front gathered on a quarter of the pixels
+  if (key === 'dof') post.dofHalf = on;
+  // the lit air in twelve steps for twenty
+  if (key === 'air') fog.setSteps(on ? Math.min(FOG_STEPS, 12) : FOG_STEPS);
+  // the size of the frame follows the time it takes, both ways (pace(), below). Off: back to full size
+  if (key === 'pace') { slowAcc = slowN = slowRuns = 0; probing = false; hold = 2; if (!on && resScale < 1) setScale(1); }
 }
 
 let resScale = 1;
@@ -628,21 +658,48 @@ function tick(dt: number) {
 }
 let last = performance.now();
 let slowAcc = 0, slowN = 0, slowRuns = 0;
+/** frames to let go by uncounted (the ones right after the frame changed size), and the last average, ms */
+let settle = 0, frameMs = 0;
+/** the `pace` switch: a step up is being tried; when the next may be; how long a failed one is waited out (s) */
+let probing = false, upAt = 0, hold = 2;
+/** for ?debug: the longest frame since it last looked (s), and something to call when a frame has been drawn */
+let longest = 0, afterFrame = () => {};
+function setScale(k: number) { resScale = k; settle = 8; resize(); }
+/** How the frames are going, and what size the frame should be for it. */
+function pace(raw: number, now: number) {
+  if (settle > 0) { settle--; return; }
+  slowAcc += raw;
+  if (++slowN < (fast.pace ? 30 : 60)) return;
+  const avg = slowAcc / slowN;
+  slowAcc = slowN = 0;
+  frameMs = avg * 1000;
+  if (!fast.pace) {
+    // two slow seconds in a row: give up some pixels
+    slowRuns = avg > 0.021 ? slowRuns + 1 : 0;
+    if (slowRuns >= 2 && resScale > 0.5) { setScale(Math.max(0.5, resScale * 0.82)); slowRuns = 0; }
+    return;
+  }
+  // Sixty a second, whatever it takes. The screen only says whether a frame made it, not by how much, so the way up
+  // is by trying: a step, and if frames are then missed, back down and wait twice as long before the next try
+  if (avg > 0.0175) {
+    if (probing) hold = Math.min(30, hold * 2);
+    if (resScale > 0.5) setScale(Math.max(0.5, resScale * (probing ? 1 / 1.08 : avg > 0.025 ? 0.8 : 0.9)));
+    probing = false;
+    upAt = now + hold * 1000;
+  } else {
+    if (probing) { probing = false; hold = 2; upAt = now + 500; }
+    if (resScale < 1 && now > upAt) { setScale(Math.min(1, resScale * 1.08)); probing = true; }
+  }
+}
 function frame(now: number) {
   const raw = (now - last) / 1000;
-  // Two slow seconds in a row: give up some pixels (a hidden tab ticks slowly too, that is not the GPU's fault).
   // Before the frame is drawn, not after: a change of size empties the canvas, and one emptied after its frame was
-  // drawn is shown empty, a black flash.
-  if (!document.hidden && raw < 0.2) {
-    slowAcc += raw;
-    if (++slowN >= 60) {
-      slowRuns = slowAcc / slowN > 0.021 ? slowRuns + 1 : 0;
-      if (slowRuns >= 2 && resScale > 0.5) { resScale = Math.max(0.5, resScale * 0.82); slowRuns = 0; resize(); }
-      slowAcc = slowN = 0;
-    }
-  }
+  // drawn is shown empty, a black flash. (a hidden tab ticks slowly too, that is not the GPU's fault)
+  if (!document.hidden && raw < 0.2) pace(raw, now);
   tick(Math.min(0.05, raw));
   last = now;
+  if (raw > longest) longest = raw;
+  afterFrame();
   if (!halted) requestAnimationFrame(frame);
 }
 
@@ -683,17 +740,70 @@ Object.assign(window, {
       return (performance.now() - t) / n;
     },
     input,
+    fast, setFast, pace, torchLock,
+    get resScale() { return resScale; },
   },
 });
 
-// ?debug: sliders for the film grain (post.ts), to turn it by eye and copy the numbers back
+// ?fast: start with all of the switches above thrown; ?fast=layers,edges with some of them
+{
+  const want = params.get('fast');
+  if (want !== null) for (const key of Object.keys(fast) as Fast[]) if (!want || want.split(',').includes(key)) setFast(key, true);
+}
+
+// ?debug: sliders for the film grain (post.ts), to turn it by eye and copy the numbers back; and the switches above,
+// with what a frame takes: as the screen shows it (which is never less than the screen's own beat), and measured
 if (params.has('debug')) {
-  import('./debug').then(({ debugPanel }) => debugPanel('Film grain', [
-    { label: 'amount', min: 0, max: 0.15, step: 0.001, get: () => post.grain.amount, set: (v) => { post.grain.amount = v; } },
-    { label: 'size (px)', min: 1, max: 4, step: 0.05, get: () => post.grain.size, set: (v) => { post.grain.size = v; } },
-    { label: 'less in the lights', min: 0, max: 1, step: 0.01, get: () => post.grain.lights, set: (v) => { post.grain.lights = v; } },
-    { label: 'colour', min: 0, max: 1, step: 0.01, get: () => post.grain.colour, set: (v) => { post.grain.colour = v; } },
-    { label: 'rate (per s, 0 = every frame)', min: 0, max: 60, step: 1, get: () => post.grain.rate, set: (v) => { post.grain.rate = v; } },
+  let measured = '';
+  // the old meter, bottom right: frames a second and the milliseconds between them, each drawn over time
+  import('three/addons/libs/stats.module.js').then(({ default: Stats }) => {
+    const stats = new Stats();
+    stats.dom.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:40;display:flex;opacity:0.9;pointer-events:none';
+    for (const panel of [...stats.dom.children].slice(0, 2) as HTMLElement[]) panel.style.display = 'block';
+    document.body.append(stats.dom);
+    afterFrame = () => stats.update();
+  });
+  const toggle = (label: string, key: Fast) => ({ label, get: () => fast[key], set: (on: boolean) => setFast(key, on) });
+  import('./debug').then(({ debugPanel }) => debugPanel([
+    {
+      title: 'Film grain',
+      knobs: [
+        { label: 'amount', min: 0, max: 0.15, step: 0.001, get: () => post.grain.amount, set: (v) => { post.grain.amount = v; } },
+        { label: 'size (px)', min: 1, max: 4, step: 0.05, get: () => post.grain.size, set: (v) => { post.grain.size = v; } },
+        { label: 'less in the lights', min: 0, max: 1, step: 0.01, get: () => post.grain.lights, set: (v) => { post.grain.lights = v; } },
+        { label: 'colour', min: 0, max: 1, step: 0.01, get: () => post.grain.colour, set: (v) => { post.grain.colour = v; } },
+        { label: 'rate (per s, 0 = every frame)', min: 0, max: 60, step: 1, get: () => post.grain.rate, set: (v) => { post.grain.rate = v; } },
+      ],
+    },
+    {
+      title: 'Torch',
+      all: 'locked',
+      toggles: [
+        { label: 'full power, no sag', get: () => torchLock.power, set: (on) => { torchLock.power = on; } },
+        { label: 'dead ahead, no sway', get: () => torchLock.aim, set: (on) => { torchLock.aim = on; } },
+      ],
+    },
+    {
+      title: 'Faster',
+      all: 'all of them',
+      toggles: [
+        toggle('growth in 7 layers, not 10', 'layers'),
+        toggle('MSAA 2×, not 4×', 'msaa2'),
+        toggle('no MSAA, edges smoothed after', 'edges'),
+        toggle('depth of field at half size', 'dof'),
+        toggle('lit air in 12 steps, not 20', 'air'),
+        toggle('frame size follows 60 fps', 'pace'),
+      ],
+      readout: () => {
+        const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+        // (the worst frame since the last look: a hitch shows there and not in the average)
+        const worst = longest * 1000;
+        longest = 0;
+        return `${frameMs.toFixed(1)} ms on screen, longest ${worst.toFixed(1)} · ${size.x}×${size.y} (${Math.round(resScale * 100)} %)${measured}`;
+      },
+      // (the GPU made to finish each frame, twenty of them: what a frame really takes, whatever the screen's beat)
+      buttons: [{ label: 'Measure', run: () => { measured = `\n${(window as unknown as { burrow: { bench(n: number): number } }).burrow.bench(20).toFixed(1)} ms measured`; } }],
+    },
   ]));
 }
 

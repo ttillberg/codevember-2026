@@ -154,8 +154,11 @@ export class Growth {
   shells(patch: THREE.BufferGeometry, layers: number, scale: number): THREE.Group {
     const group = new THREE.Group();
     const mat = shellMaterial(layers, scale);
+    const set = { mat, full: layers, meshes: [] as THREE.InstancedMesh[] };
+    this.sets.push(set);
     for (const geo of split(patch, 0.8)) {
       const m = new THREE.InstancedMesh(geo, mat, layers);
+      set.meshes.push(m);
       // (the layers stand out from the surface, and hang: a hand's breadth more than the surface itself)
       const sphere = geo.boundingSphere!.clone();
       sphere.radius += 0.1;
@@ -164,6 +167,16 @@ export class Growth {
       group.add(m);
     }
     return group;
+  }
+
+  private sets: { mat: THREE.ShaderMaterial; full: number; meshes: THREE.InstancedMesh[] }[] = [];
+  /** The same pile in fewer layers: `cut` of them less than it was built with, never under four. */
+  layers(cut: number) {
+    for (const s of this.sets) {
+      const n = Math.min(s.full, Math.max(4, s.full - cut));
+      s.mat.uniforms.uShells.value = n;
+      for (const m of s.meshes) m.count = n;
+    }
   }
 
   /** what of the growth is only drawn close up: each piece, where it is, how big, and from how far it shows at all */
