@@ -184,10 +184,11 @@ function putAt(ei: number, s: number, at: THREE.Vector3) {
 const SPEED = 1.05;
 /** one full cycle of the front paws, left then right, in metres of ground covered */
 const STRIDE = 0.55;
-const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0 };
+/** step: what is left of a tap's dash (m), and way: which way it goes, 1 on, -1 back */
+const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0, way: 1 };
 const look = { yaw: 0, pitch: 0, yawT: 0, pitchT: 0, yaw0: 0, pitch0: 0 };
 const aim = { x: 0, y: 0, mouse: false };
-const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, mode: '' as '' | 'look' | 'crawl', fwd: false, back: false, left: false, right: false, rear: false, wheel: 0 };
+const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, mode: '' as '' | 'look' | 'crawl', low: false, fwd: false, back: false, left: false, right: false, rear: false, wheel: 0 };
 /** the head turned to look behind us (E held): 0 ahead, 1 right round. Only the head: the legs go on as they were */
 let rear = 0;
 
@@ -226,6 +227,8 @@ canvas.addEventListener('pointerdown', (ev) => {
   // (a locked pointer cannot be captured, and need not be)
   if (document.pointerLockElement !== canvas) canvas.setPointerCapture(ev.pointerId);
   Object.assign(input, { down: true, id: ev.pointerId, x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, t: performance.now(), moved: 0, mode: '' });
+  // a finger put down low on the screen means backwards, tapped or held (a mouse has S for that)
+  input.low = (ev.pointerType !== 'mouse' || document.body.classList.contains('touch')) && ev.clientY > innerHeight * 0.75;
 });
 // the pointer locked (the pill, ui.ts): with no pointer to follow, the torch points where we look, from that moment on
 document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement === canvas) aim.x = aim.y = 0; });
@@ -250,13 +253,20 @@ canvas.addEventListener('pointermove', (ev) => {
   if (input.mode) {
     // (a finger has less room to move than a mouse has: it turns the view half as far again)
     const k = ((camera.fov * Math.PI) / 180 / innerHeight) * (ev.pointerType === 'mouse' ? 1.15 : 1.7);
-    look.yawT += dx * k;
-    look.pitchT += dy * k;
+    // A drag takes hold of the place and pulls it past. Held down and running it is the other way round, a steer:
+    // left turns left, up looks up
+    const way = input.mode === 'crawl' ? -1 : 1;
+    look.yawT += dx * k * way;
+    look.pitchT += dy * k * way;
   }
 });
 const release = (ev: PointerEvent) => {
   if (ev.pointerId !== input.id) return;
-  if (!input.mode && performance.now() - input.t < 260) nav.step = 1.4; // a tap: one short dash
+  if (!input.mode && performance.now() - input.t < 260) {
+    // a tap: one short dash
+    nav.step = 1.4;
+    nav.way = input.low ? -1 : 1;
+  }
   input.down = false;
   input.mode = '';
 };
@@ -319,13 +329,14 @@ function footfall(side: number) {
 function crawl(dt: number) {
   if (input.down && !input.mode && performance.now() - input.t > 240) input.mode = 'crawl';
   let want = 0;
-  if (input.mode === 'crawl' || input.fwd) want = 1;
+  if (input.mode === 'crawl' && input.low) want = -1;
+  else if (input.mode === 'crawl' || input.fwd) want = 1;
   else if (input.back) want = -1;
   if (Math.abs(input.wheel) > 0.01) {
     want = Math.sign(input.wheel);
     input.wheel -= Math.sign(input.wheel) * Math.min(Math.abs(input.wheel), dt * SPEED * 1.6);
   }
-  if (nav.step > 0 && !want) want = 1;
+  if (nav.step > 0 && !want) want = nav.way;
   if (auto && clock > 1.2 && !want) want = 1;
   // it has us: no running
   if (beast.holds) { want = 0; nav.v *= Math.exp(-dt / 0.05); }

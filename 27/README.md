@@ -4,7 +4,7 @@
 
 Into a burrow with a torch. It opens on the hole in a grassy bank under an overcast sky; inside, a small labyrinth of tunnels, roots through the roof, stones in the walls, and a hand-held beam that is never quite the right tool in a place this narrow.
 
-Drag to look, hold to run (or `W`/`↑`, the wheel, a tap for one short dash). At a fork you go where you look. With a mouse the torch follows the pointer.
+Drag to look, hold to run (or `W`/`↑`, the wheel, a tap for one short dash, a finger on the bottom quarter of the screen goes backwards, tapped or held); held down and running, moving the pointer steers: left turns left, up looks up. At a fork you go where you look. With a mouse the torch follows the pointer.
 
 ## How it is made
 
