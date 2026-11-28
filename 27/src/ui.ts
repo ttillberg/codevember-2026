@@ -11,18 +11,16 @@ const svg = (w: number, h: number, box: string, body: string) =>
 // a mouse, with the way it is moved to look about drawn either side of it
 const MOUSE = svg(44, 47, '0 0 44 47', '<rect x="12" y="6" width="20" height="36" rx="10" /><path d="M22 12v6" /><path d="M6.5 20l-4 4 4 4M37.5 20l4 4-4 4" />');
 
-// only what is needed to set off: the keys move, the mouse looks, E looks over the shoulder. The rest is found by doing
+// only what is needed to set off: the keys move, the mouse looks, and under the keys, smaller, E looks over the
+// shoulder. The rest is found by doing
 const KEYMAP = `
   <div class="row">
     <figure>
       <div class="clusters"><span class="cluster"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span></div>
       <figcaption>Move</figcaption>
     </figure>
-    <figure>
-      <div class="clusters"><span class="cluster one"><kbd>E</kbd></span></div>
-      <figcaption>Look back if followed</figcaption>
-    </figure>
     <figure>${MOUSE}<figcaption>Look around</figcaption></figure>
+    <figure class="also"><kbd>E</kbd><figcaption>Look back</figcaption></figure>
   </div>`;
 
 // the headphones of day 14's card
@@ -55,7 +53,8 @@ export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean; sound?
   veil.innerHTML = touch ? `<div class="card">${CARD}</div>` : `<div class="keymap">${KEYMAP}</div>`;
   const foot = veil.querySelector('em');
 
-  let open = false;
+  let open = false, asked = false;
+  let ask = (_on: boolean) => {};
   const show = (on: boolean, first = false) => {
     open = on;
     if (on && foot) foot.textContent = first ? 'Tap to begin' : 'Tap to close';
@@ -122,7 +121,11 @@ export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean; sound?
     const away = (ev: Event) => {
       if (!open || (ev.target as Element).closest?.('.help, .full, .snd')) return;
       show(false);
-      if (ev.type === 'pointerdown') swallow = true;
+      if (ev.type !== 'pointerdown') return;
+      swallow = true;
+      // and with ?lockask that first click is answered with the pointer lock, offered mid-screen (off unless asked
+      // for: the pill at the foot of the screen is the offer)
+      if (!asked && params.has('lockask')) ask(true);
     };
     addEventListener('pointerdown', away, true);
     addEventListener('pointerup', () => { swallow = false; }, true);
@@ -132,15 +135,39 @@ export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean; sound?
 
   // the pointer lock: the mouse itself is the look, no drag (main.ts reads document.pointerLockElement). Esc lets go
   const locked = () => document.pointerLockElement === canvas;
-  pill.addEventListener('click', () => {
-    pill.blur();
+  const lock = (from: HTMLElement) => {
+    from.blur();
     // (a browser may refuse, e.g. straight after an Esc: then nothing happens and the pill is still there)
     try { (canvas.requestPointerLock() as Promise<void> | undefined)?.catch?.(() => {}); } catch { /* no pointer lock here */ }
+  };
+  pill.addEventListener('click', () => lock(pill));
+  // ?lockask: the same offer once, in the middle of the screen, after the click that sent the key map away: a word, the button,
+  // and a way past it. Anything else is a way past it too: a press on the scene (which the scene takes), a key, the
+  // wheel. After that the pill at the foot of the screen is all there is of it
+  const prompt = document.createElement('div');
+  prompt.className = 'lockask';
+  prompt.innerHTML = `<p>For a better experience</p><button class="lock" type="button">${pill.innerHTML}</button><button class="skip" type="button">Skip</button>`;
+  document.body.append(prompt);
+  ask = (on: boolean) => {
+    asked = true;
+    prompt.classList.toggle('open', on);
+    document.body.classList.toggle('asking', on);
+  };
+  const lockBtn = prompt.querySelector<HTMLButtonElement>('.lock')!;
+  prompt.addEventListener('click', (ev) => {
+    if ((ev.target as Element).closest('.lock')) lock(lockBtn);
+    ask(false);
   });
+  const past = () => { if (prompt.classList.contains('open')) ask(false); };
+  addEventListener('keydown', past, true);
+  addEventListener('wheel', past, { capture: true, passive: true });
+  // (not the press that brought it up: that one is still going down through the page)
+  canvas.addEventListener('pointerdown', () => { if (!swallow) past(); });
   let lastId = -1;
   canvas.addEventListener('pointerdown', (ev) => { lastId = ev.pointerId; });
   document.addEventListener('pointerlockchange', () => {
     document.body.classList.toggle('locked', locked());
+    if (locked()) past();
     // a button still held when Esc let the pointer go comes up over the pill, not the canvas: let it up here
     if (!locked() && lastId >= 0) canvas.dispatchEvent(new PointerEvent('pointercancel', { pointerId: lastId }));
   });
