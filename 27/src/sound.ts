@@ -2,15 +2,16 @@
 // a press, so it starts on the first one (or the first key); it sleeps while the tab is hidden; ?mute leaves it out.
 //
 // Two kinds of sound, and they are kept apart on purpose:
-// - Texture is sampled. Twelve short takes made with ElevenLabs' sound effects model live in public/audio (the README
+// - Texture is sampled. Fourteen short takes made with ElevenLabs' sound effects model live in public/audio (the README
 //   has the prompt of each): the meadow outside, the room inside, our own breath, the other lodger's breath, growl,
-//   snarl and groan, a paw on packed earth, dirt coming down, pebbles, a drip, a splash. A take is never played the same way twice: a slice of it, at its own pitch.
+//   snarl, groan and its two calls, a paw on packed earth, dirt coming down, pebbles, a drip, a splash. A take is never played the
+//   same way twice: a slice of it, at its own pitch.
 // - What answers us is synthesised from two oscillators' worth of parts: the weight of each paw, the heart, the drone
 //   and the slow pulse of the thing as it nears, its lunge and its jaws, the torch's tired electronics, the wind at
 //   the mouth. Every sample has a synthetic stand-in as well, so a file that is missing costs texture and nothing else.
 //
 // main.ts hands over the live objects once (bind) and then calls update(dt) at the end of every frame; step, crumble
-// and stone are the three things that happen at a moment. Nothing is allocated per frame: update only reads numbers
+// and stone are the three things that happen at a moment; setMuted is the sound button's. Nothing is allocated per frame: update only reads numbers
 // and moves AudioParams, and at a third of the frame rate at that.
 //
 // The place itself is one short convolver: a third of a second of noise that goes dull as it dies, behind a handful of
@@ -34,6 +35,8 @@ export interface SoundScene {
     dead?: boolean; deadFor?: number;
     /** its egg has been taken */
     angry?: boolean;
+    /** how much it is walking, 0 to 1, and where it is in its walk's cycle, 0 to 1 */
+    moving?: number; cycle?: number;
     /** how far it is from us through the tunnels, metres: three metres of earth is not three of air */
     tunnelDistance?(where: { e: number; s: number }): number;
   };
@@ -49,7 +52,7 @@ export interface SoundScene {
 }
 
 const MUTE = new URLSearchParams(location.search).has('mute');
-const NAMES = ['outside', 'room', 'breath', 'presence', 'growl', 'snarl', 'groan', 'steps', 'dirt', 'pebbles', 'drip', 'splash'] as const;
+const NAMES = ['outside', 'room', 'breath', 'presence', 'growl', 'snarl', 'groan', 'warn', 'alarm', 'steps', 'dirt', 'pebbles', 'drip', 'splash'] as const;
 type Name = (typeof NAMES)[number];
 
 /**
@@ -61,7 +64,7 @@ const MIX = {
   outside: 0.8, room: 0.15, wind: 0.2, ambient: 0.5,
   breath: 0.12, gasp: 0.12, heart: 0.16,
   steps: 0.45, dirt: 0.7, stone: 0.9, water: 0.55,
-  presence: 2, drone: 0.18, growl: 0.16, snarl: 0.25, groan: 0.2, beast: 0.9,
+  presence: 2, drone: 0.18, growl: 0.12, snarl: 0.25, groan: 0.1, cry: 0.4, pads: 0.7, beast: 0.9,
   torch: 0.5,
 };
 
@@ -69,6 +72,8 @@ const MIX = {
 const STEPS = [0.7, 0.36, 0.8, 2.0, 0.48, 2.6, 3.88, 0.46, 1.5, 5.14, 0.44, 1.25];
 /** and the single stones in pebbles.mp3: start, length */
 const STONES = [0.56, 0.36, 0.95, 0.45, 1.48, 0.55, 2.4, 0.22];
+/** where in its walk's cycle the beast's paws come down: hind right, fore left, hind left, fore right */
+const PAWS = [0.4, 0.46, 0.9, 0.96];
 
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const rnd = Math.random;
@@ -194,6 +199,14 @@ class Sound {
   private unseen = 0;
   private td = Infinity;
   private snarlG!: GainNode;
+  private verbIn!: GainNode;
+  private echoIn!: GainNode;
+  private nextCry = 12;
+  private wasAngry = false;
+  private cyc = 0;
+  private lastPad = 0;
+  private padNear = 0;
+  private padPan = 0;
   private chase = 0;
   private nextGrowl = 2;
   private nextGroan = 6;
@@ -226,12 +239,32 @@ class Sound {
     this.scene = scene;
   }
 
+  /** the sound button's wish: off or on. It may come before there is anything to switch */
+  private off = false;
+  get muted(): boolean {
+    return this.off;
+  }
+
+  /**
+   * The sound off (true) or on again (false), from the button in the furniture. Not the same as ?mute, which leaves
+   * the engine out altogether: this one only shuts the way out, so it all carries on unheard and is there at once
+   * when asked for. Safe before the first press: the wish is kept, and the engine starts silent.
+   */
+  setMuted(on: boolean) {
+    this.off = on;
+    const ac = this.ac;
+    if (!ac) return;
+    const g = this.out.gain, t = ac.currentTime;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime(on || this.ended ? 0 : MIX.master, t, 0.05);
+  }
+
   /** 'muted', 'waiting' (no press yet), or the context's own state */
   get state(): string {
     return MUTE ? 'muted' : this.ac ? this.ac.state : 'waiting';
   }
 
-  /** what is going out now, RMS, after the limiter: for the console and for checks */
+  /** what is going out now, RMS, after everything: for the console and for checks */
   level(): number {
     if (!this.ac) return 0;
     this.meter.getFloatTimeDomainData(this.scope);
@@ -278,7 +311,7 @@ class Sound {
     // a gentle limiter last of all: the jaws are far louder than the rest. (A compressor makes up its own gain, some
     // 5 dB at these settings: `master` allows for it.) The whole thing fades up, it does not start with a bang
     this.out = gain(0, ac.destination);
-    this.out.gain.setTargetAtTime(MIX.master, ac.currentTime, 0.5);
+    this.out.gain.setTargetAtTime(this.off ? 0 : MIX.master, ac.currentTime, 0.5);
     const lim = ac.createDynamicsCompressor();
     lim.threshold.value = -10;
     lim.knee.value = 8;
@@ -288,7 +321,7 @@ class Sound {
     lim.connect(this.out);
     this.meter = ac.createAnalyser();
     this.meter.fftSize = 1024;
-    lim.connect(this.meter);
+    this.out.connect(this.meter);
     this.pre = gain(1, lim);
     this.world = gain(1, this.pre);
 
@@ -297,7 +330,14 @@ class Sound {
     const conv = ac.createConvolver();
     conv.buffer = tunnel(ac);
     conv.connect(filter('lowpass', 2600, 0.5, this.ret));
-    const send = gain(1, conv);
+    const send = (this.verbIn = gain(1, conv));
+    // and from further off the tunnel answers: one slap back, and what is left of that again (gone outside, like the rest)
+    const slap = ac.createDelay(0.5);
+    slap.delayTime.value = 0.21;
+    const slapLP = filter('lowpass', 1900, 0.5, this.ret);
+    slap.connect(slapLP);
+    slapLP.connect(gain(0.36, slap));
+    this.echoIn = gain(1, slap);
     this.fx = gain(1, this.world);
     const fxSend = gain(0.3, send);
     this.fx.connect(fxSend);
@@ -485,6 +525,71 @@ class Sound {
     this.send(g, 0, this.presLP, src, t + real + 0.02);
   }
 
+  /**
+   * Its call: thin, high, and the one thing of it that carries, out to twenty metres of tunnel. It is there to say
+   * where it is. So it is all the way to one side when the beast is to that side (the straight line to it), and by
+   * how far off it is through the tunnels it is quieter, duller, and has more of the tunnel in it: less of the call
+   * itself, more of the walls and of the slap coming back. `floor`: how much of it gets through however far.
+   */
+  private cry(name: 'warn' | 'alarm', t: number, gain: number, rate: number, floor: number, at: number, dur: number) {
+    const ac = this.ac!, s = this.scene!, b = s.beast;
+    if (this.live > 28) return;
+    this.place(b.group.position);
+    const td = Math.max(b.tunnelDistance ? b.tunnelDistance(s.nav) : this.dist, this.dist);
+    const lvl = Math.max(floor, (1 / (1 + Math.pow(td / 4, 1.6))) * clamp01((20 - td) / 4));
+    if (lvl < 0.004) return;
+    const off = clamp01(td / 14);
+    const inp = ac.createGain(), lp = ac.createBiquadFilter(), dry = ac.createGain(), wet = ac.createGain(), echo = ac.createGain();
+    inp.gain.value = MIX.cry * gain * lvl;
+    lp.type = 'lowpass';
+    lp.frequency.value = 1300 + 5200 / (1 + (td * td) / 30);
+    inp.connect(lp);
+    let tail: AudioNode = lp;
+    if (ac.createStereoPanner) {
+      const p = ac.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, this.pan * 1.2));
+      lp.connect(p);
+      tail = p;
+    }
+    dry.gain.value = 1 - 0.5 * off;
+    wet.gain.value = 0.25 + 0.9 * off;
+    echo.gain.value = 0.15 + 0.75 * off;
+    tail.connect(dry).connect(this.world);
+    tail.connect(wet).connect(this.verbIn);
+    tail.connect(echo).connect(this.echoIn);
+    const buf = this.buf[name];
+    if (buf) this.shot(buf, at, dur, rate, 1, 0, inp, t);
+    else {
+      // no take of it: a hiss through a tight band that climbs, and two high voices a hair apart that beat as they rise
+      const d = dur / rate;
+      this.burst(t, 'bandpass', 2400, 5200, 5, d, d * 0.6, 1.4, 0, inp);
+      this.tone(t, 'sine', 3000, 3900, d, d * 0.6, 0.25, 3500, 0.7, 0, inp);
+      this.tone(t, 'sine', 3170, 4120, d, d * 0.6, 0.25, 3600, 0.7, 0, inp);
+    }
+    // (taken apart once it and its echoes are over)
+    setTimeout(() => { dry.disconnect(); wet.disconnect(); echo.disconnect(); }, (dur / rate + 3) * 1000);
+  }
+
+  /**
+   * One of the beast's paws comes down (0 hind right, 1 fore left, 2 hind left, 3 fore right): a heavy soft pad, grit
+   * under it, and from the fore paws the click of the claws. The hind ones are duller. Scuttling, they come lighter
+   * the closer together they come.
+   */
+  private pad(t: number, k: number) {
+    const gap = t - this.lastPad;
+    if (gap < 0.055) return;
+    this.lastPad = t;
+    const fore = k === 1 || k === 3, quick = gap < 0.14;
+    const g = MIX.pads * this.padNear * Math.min(1, 0.3 + gap / 0.35) * (fore ? 1 : 0.7);
+    const pan = this.padPan + (k === 0 || k === 3 ? 0.06 : -0.06), bus = this.td > 2.5 ? this.far : this.fx;
+    this.thump(t, fore ? 96 : 72, fore ? 44 : 36, 0.1, g, pan, bus);
+    this.burst(t, 'bandpass', fore ? 950 : 620, 480, 0.8, 0.06, 0.004, g * 0.4, pan, bus);
+    if (fore) this.burst(t + 0.012, 'bandpass', 2600 + 900 * rnd(), 2600, 4, 0.012, 0.001, g * 0.6, pan, this.td > 6 ? this.far : this.fx);
+    // (our own paw, an octave down, for the weight of it)
+    const b = this.buf.steps;
+    if (b && fore && !quick) this.shot(b, STEPS[0], 0.3, 0.5 + 0.12 * rnd(), g * 0.5, pan, bus, t);
+  }
+
   /** a sine that falls: a weight landing */
   private thump(t: number, f0: number, f1: number, dur: number, gain: number, pan: number, bus: AudioNode) {
     if (this.live > 28 || gain < 0.002) return;
@@ -648,11 +753,6 @@ class Sound {
     this.burst(t, 'bandpass', 700, 1800, 1.2, 0.24, 0.1, MIX.gasp, 0, this.pre);
   }
 
-  /** the torch comes on for an instant in the black: the spark of it */
-  private zap(t: number) {
-    this.burst(t, 'highpass', 3200, 3200, 0.7, 0.03, 0.001, MIX.torch, 0.2, this.pre);
-    this.tone(t, 'sawtooth', 2600, 600, 0.06, 0.002, MIX.torch * 0.5, 1800, 0.8, 0.2, this.pre);
-  }
 
   /** Something in the earth, ahead or behind, out of the light: so the place is never silent. */
   private ambient(t: number) {
@@ -680,7 +780,12 @@ class Sound {
   private turn(t: number, from: string, to: string) {
     const s = this.scene!;
     if (to === 'away') this.sighted = false;
-    else if (to === 'stalk' && from === 'lurk') this.hold = Math.max(this.hold, 0.9); // it has started towards us
+    else if (to === 'stalk' && from === 'lurk') {
+      // it has started towards us, and says so
+      this.hold = Math.max(this.hold, 0.9);
+      this.cry('warn', t, 0.9, 1.08, 0, 0.9, 1.1);
+      this.nextCry = Math.max(this.nextCry, 8);
+    }
     else if (to === 'crouch') {
       // it gathers itself: a growl that rises, and the air it draws
       this.place(s.beast.group.position);
@@ -688,6 +793,8 @@ class Sound {
       this.tone(t, 'sawtooth', 33, 58, 0.5, 0.3, 0.6 * g, 300, 1.4, this.pan, this.fx);
       this.burst(t, 'bandpass', 280, 1300, 1, 0.45, 0.3, 0.22 * g, this.pan, this.fx);
       this.hold = Math.max(this.hold, 0.6);
+      // and one sharp call
+      this.cry('warn', t, 1, 1.3, 0, 1.2, 0.9);
     } else if (to === 'leap') {
       // through the air at us: the rush of it, and its voice coming up
       this.place(s.beast.group.position);
@@ -732,11 +839,26 @@ class Sound {
     }
     this.shook = b.shake;
     const I = s.light.value, dead = !!b.dead;
-    // dead, in the black: each time the lamp flashes there is the spark of it
-    if (dead && b.lamp > 0.05 && this.lampWas <= 0.05) this.zap(t);
+    // its paws, each at its own point of the walk's cycle (the cycle may go round more than once a frame when it
+    // scuttles: two paws a frame at the most)
+    const cyc = b.cycle;
+    if (cyc !== undefined) {
+      const prev = this.cyc;
+      if (cyc !== prev && (b.moving ?? 0) > 0.1 && !dead && this.padNear > 0.004) {
+        const wrapped = prev - cyc > 0.5;
+        for (let k = 0, n = 0; k < 4 && n < 2; k++) {
+          const m = PAWS[k];
+          if (wrapped ? m > prev || m <= cyc : prev < m && cyc >= m) { n++; this.pad(t, k); }
+        }
+      }
+      this.cyc = cyc;
+    }
+    // (the torch says nothing when the beast is on us, nor in the black after: its sparks and ticks there were tried,
+    // and they were bad. Only the heart then)
     this.lampWas = b.lamp;
+    const onUs = st === 'crouch' || st === 'leap' || st === 'bite' || st === 'gone';
     // the torch's electronics: every jump in what it gives is a tick, a little to the right, where it is held
-    if (!dead && this.lit >= 0 && Math.abs(I - this.lit) > 0.05 && t - this.lastTick > 0.035) {
+    if (!dead && !onUs && this.lit >= 0 && Math.abs(I - this.lit) > 0.05 && t - this.lastTick > 0.035) {
       this.lastTick = t;
       this.burst(t, 'bandpass', 3600 + 2600 * rnd(), 3600, 2, 0.006, 0.0005, MIX.torch * Math.min(1, Math.abs(I - this.lit) * 3), 0.25, this.pre);
     }
@@ -799,6 +921,9 @@ class Sound {
       if (!s.nav.entered) near *= clamp01((5 - td) / 1.5);
       where = clamp01((5 - td) / 2.5);
       back = clamp01(-this.front) * where;
+      // its steps carry a little further than its breath: round a corner it is heard coming before it is seen
+      this.padNear = (1 / (1 + (td * td) / 9)) * clamp01((13 - td) / 3) * (s.nav.entered ? 1 : clamp01((5 - td) / 1.5));
+      this.padPan = this.pan * clamp01((8 - td) / 4);
       // the first sight of it, down the tunnel with the lamp on it: the breath stops
       if (st === 'lurk' && !this.sighted && b.group.visible && this.dist < 5.5 && this.front > 0.75 && I > 0.3) {
         this.sighted = true;
@@ -806,7 +931,19 @@ class Sound {
         this.hold = 2.4;
       }
       this.presPan?.pan.setTargetAtTime(this.pan * where, t, 0.12);
-    } else this.td = Infinity;
+    } else { this.td = Infinity; this.padNear = 0; }
+    // Its calls. With its egg gone, one long one that the whole burrow hears: it tells us what we have done. And every
+    // ten or twenty seconds while it is anywhere down here with us, sooner when it is after us, a short one: not an
+    // alarm, the way to tell where it is
+    if (angry && !this.wasAngry && !dead && st !== 'away') {
+      this.cry('alarm', t, 1, 1, 0.1, 0, 3.3);
+      this.nextCry = 9 + 6 * rnd();
+    }
+    this.wasAngry = angry;
+    if (s.nav.entered && !dead && st !== 'away' && st !== 'gone' && st !== 'crouch' && st !== 'leap' && st !== 'bite' && (this.nextCry -= h * (st === 'stalk' || angry ? 1.5 : 1)) < 0) {
+      this.nextCry = 10 + 10 * rnd();
+      this.cry('warn', t, 0.75 + 0.25 * rnd(), 0.9 + 0.2 * rnd(), 0, 0.1 + 0.5 * rnd(), 1.3);
+    }
     // felt before it is seen. Waiting it breathes slow; after us quicker; with its egg gone, harsher and nearer
     const presTo = Math.min(1, near * (st === 'lurk' ? 0.6 : st === 'stalk' ? 0.85 : 1) * (angry ? 1.25 : 1));
     this.pres += (presTo - this.pres) * (1 - Math.exp(-h / (presTo > this.pres ? 0.4 : st === 'gone' || dead ? 0.08 : 1.2)));
@@ -818,11 +955,12 @@ class Sound {
     this.pulse += h * (0.5 + 1.4 * prox);
     const beat = Math.pow(0.5 + 0.5 * Math.sin(this.pulse * 2 * Math.PI), 3);
     this.droneG.gain.setTargetAtTime(MIX.drone * Math.pow(pres, 0.7) * (0.55 + 0.45 * beat), t, 0.04);
-    // on its way to us its claws are on the floor
-    const bp = b.group.position, moving = st === 'stalk' && Math.hypot(bp.x - this.bx, bp.z - this.bz) / h > 0.05;
+    const bp = b.group.position;
+    const moving = st === 'stalk' && (b.moving !== undefined ? b.moving > 0.2 : Math.hypot(bp.x - this.bx, bp.z - this.bz) / h > 0.05);
     this.bx = bp.x;
     this.bz = bp.z;
-    if (moving && (this.nextScrape -= h) < 0) {
+    // (a beast that does not say where its paws are gets a scrape now and then instead)
+    if (moving && b.cycle === undefined && (this.nextScrape -= h) < 0) {
       this.nextScrape = 0.42 + 0.2 * rnd();
       this.burst(t, 'bandpass', 1000 + 500 * rnd(), 520, 1, 0.12, 0.02, MIX.beast * 0.3 * Math.min(1, near * 2), this.pan * where, this.td > 2.2 ? this.far : this.fx);
     }

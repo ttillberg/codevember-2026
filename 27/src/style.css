@@ -94,7 +94,9 @@ body.fullscreen .plate { display: none; }
   border: 1px solid rgba(244, 244, 242, 0.8); border-radius: 5px; box-shadow: 0 1.5px 0 rgba(244, 244, 242, 0.8);
   font: inherit; letter-spacing: 0;
 }
-.keymap .cluster kbd:nth-child(1) { grid-area: u; }
+.keymap .cluster.one { grid-template-columns: 24px; grid-template-areas: "d"; }
+.keymap .cluster.one kbd:nth-child(1) { grid-area: d; }
+.keymap .cluster:not(.one) kbd:nth-child(1) { grid-area: u; }
 .keymap .cluster kbd:nth-child(2) { grid-area: l; }
 .keymap .cluster kbd:nth-child(3) { grid-area: d; }
 .keymap .cluster kbd:nth-child(4) { grid-area: r; }

@@ -54,7 +54,7 @@ All in `public/audio`, made with ElevenLabs sound effects (`eleven_text_to_sound
 - Metering only the ground made the animals burn out: the meter has to know what the hotspot lands on, and the pool of light gets a ceiling of its own.
 - A torch next to the lens burns everything near it to white. Fine roots get a softened falloff, a cheat that reads as more real than the real thing.
 
-`?clean` hides the furniture, `?beast` starts within sight of the thing on the lower level, `?egg` starts with the egg already in hand (try `?egg&at=G,0.6`), `?win` shows the last screen, `?touch` forces the phone's start card, `?auto` crawls in by itself, `?at=N,1.4` starts 1.4 m short of a node (`N` is the den), `?flat` shows the blockout shading, `?nofog` the frame without the lit air, `?mute` leaves the sound out.
+Hold R to turn the head and look behind (the legs keep going the way they were, the torch comes round with the head). `?clean` hides the furniture, `?beast` starts within sight of the thing on the lower level, `?egg` starts with the egg already in hand (try `?egg&at=G,0.6`), `?win` shows the last screen, `?touch` forces the phone's start card, `?auto` crawls in by itself, `?at=N,1.4` starts 1.4 m short of a node (`N` is the den), `?flat` shows the blockout shading, `?nofog` the frame without the lit air, `?mute` leaves the sound out.
 
 ```sh
 pnpm -C 27 dev

@@ -173,7 +173,9 @@ const STRIDE = 0.55;
 const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0 };
 const look = { yaw: 0, pitch: 0, yawT: 0, pitchT: 0, yaw0: 0, pitch0: 0 };
 const aim = { x: 0, y: 0, mouse: false };
-const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, mode: '' as '' | 'look' | 'crawl', fwd: false, back: false, left: false, right: false, wheel: 0 };
+const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, mode: '' as '' | 'look' | 'crawl', fwd: false, back: false, left: false, right: false, rear: false, wheel: 0 };
+/** the head turned to look behind us (R held): 0 ahead, 1 right round. Only the head: the legs go on as they were */
+let rear = 0;
 
 const camPos = new THREE.Vector3();
 const camQ = new THREE.Quaternion();
@@ -253,12 +255,15 @@ const key = (ev: KeyboardEvent, on: boolean) => {
     case 'KeyS': case 'ArrowDown': input.back = on; break;
     case 'KeyA': case 'ArrowLeft': input.left = on; break;
     case 'KeyD': case 'ArrowRight': input.right = on; break;
+    case 'KeyR': input.rear = on; break;
     default: return;
   }
   ev.preventDefault();
 };
 addEventListener('keydown', (ev) => key(ev, true));
 addEventListener('keyup', (ev) => key(ev, false));
+// (a key still down when the window loses us would never come up)
+addEventListener('blur', () => { input.rear = input.fwd = input.back = input.left = input.right = false; });
 
 function switchEdge(node: number, over: number, moveDir: THREE.Vector3) {
   let best = -1, bestDot = -Infinity;
@@ -377,7 +382,11 @@ function updateCamera(dt: number, time: number) {
   // (and when it lands on us we go over backwards: the view tips up to the roof, twists, and the head goes back and down)
   const sk = beast.shake, fb = beast.fall;
   const pitch = Math.min(1.5, look.pitch + pitchG + sk * 0.07 * Math.sin(time * 61) + fb * (1.05 - 0.5 * look.pitch));
-  camQ.setFromEuler(new THREE.Euler(pitch, look.yaw + yawG + sk * 0.06 * Math.sin(time * 47 + 1) + fb * 0.12, roll + sk * 0.1 * Math.sin(time * 53 + 2) + fb * 0.3, 'YXZ'));
+  // R: the head goes round over the shoulder to see what is behind, and comes back when the key is let go. The
+  // way we are going does not change (that is `look`, which this leaves alone); the torch comes round with the head
+  rear += ((input.rear && !beast.dead ? 1 : 0) - rear) * (1 - Math.exp(-dt / 0.085));
+  const round = rear * rear * (3 - 2 * rear);
+  camQ.setFromEuler(new THREE.Euler(pitch * (1 - 0.4 * Math.sin(Math.PI * round)), look.yaw + yawG + sk * 0.06 * Math.sin(time * 47 + 1) + fb * 0.12 - Math.PI * round, roll + sk * 0.1 * Math.sin(time * 53 + 2) + fb * 0.3 - 0.14 * Math.sin(Math.PI * round), 'YXZ'));
   // sideways along the shoulders, up and down in the world
   tmpB.set(1, 0, 0).applyQuaternion(camQ);
   camPos.copy(basePos).addScaledVector(tmpB, gaitOff.x);

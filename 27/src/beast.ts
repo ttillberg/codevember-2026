@@ -146,6 +146,13 @@ export class Beast {
 
   /** we are held: no running while it has us, nor after */
   get holds() { return this.state === 'crouch' || this.state === 'leap' || this.state === 'bite' || this.rec >= 0; }
+  /** how much it is on the move just now, 0 standing to 1 at its stride: for the ear (its footfalls) */
+  get moving() { return this.state === 'stalk' ? this.stride : 0; }
+  /**
+   * Where it is in its walk, 0 to 1 round the cycle of the `crawl` clip. Its paws come down at 0.40 (hind right),
+   * 0.46 (fore left), 0.90 (hind left) and 0.96 (fore right).
+   */
+  get cycle() { const w = this.walk; return w && w.isRunning() ? (w.time / w.getClip().duration) % 1 : 0; }
   /** it has had us, and we have not begun again yet; and for how long */
   get dead() { return this.rec >= 0; }
   get deadFor() { return Math.max(0, this.rec); }
