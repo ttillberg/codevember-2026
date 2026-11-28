@@ -720,6 +720,57 @@ export function moteMaterial(scale: { value: number }) {
   });
 }
 
+// ---- what flies over the bank: midges (life.ts) ----
+// Every one of them is a point that dances about the place it was given, in the vertex shader: nothing is moved
+// from outside.
+const MIDGE_VERT = /* glsl */ `
+attribute vec3 aSeed; // three turns of its own
+uniform vec3 uWalker;
+uniform float uTime, uScale, uDay;
+varying vec3 vBody; varying float vA;
+void main() {
+  vec3 ph = aSeed * 6.2832;
+  // the dance: on each axis two swings that never agree, so no path comes round again
+  vec3 f1 = 1.7 + 2.3 * fract(aSeed.yzx * 7.31), f2 = 4.1 + 3.9 * fract(aSeed.zxy * 3.77);
+  vec3 off = 0.62 * sin(uTime * f1 + ph) + 0.38 * sin(uTime * f2 + ph.yzx * 1.7);
+  float reach = mix(0.07, 0.16, fract(aSeed.x * 17.3));
+  vec3 P = position + off * vec3(reach, reach * 0.7, reach);
+  // they give way to whoever comes through: none of them is ever on the lens
+  vec3 d = P - uWalker;
+  float dd = length(d);
+  P += d / max(dd, 1e-3) * 0.18 * smoothstep(0.34, 0.04, dd);
+  vec4 mv = viewMatrix * vec4(P, 1.0);
+  float dist = -mv.z;
+  float size = 0.0058 * (0.75 + 0.5 * fract(aSeed.x * 53.1)) * uScale / max(dist, 0.03);
+  float ps = clamp(size, 1.5, 18.0);
+  // (one smaller than the least a point can be is drawn that size, and thinner; and none is drawn right up against
+  // the lens, which makes a pale disc of a midge that close)
+  vA = min(1.0, size * size / (ps * ps)) * smoothstep(0.22, 0.42, dist);
+  // a dark body, and wings that catch the day as they beat: darker than the grass, and for a moment in every beat
+  // a good deal lighter than it, which is what the eye finds them by
+  float wing = 0.5 + 0.5 * sin(uTime * (38.0 + 22.0 * aSeed.y) + ph.x);
+  float w3 = wing * wing * wing;
+  vBody = mix(vec3(0.5, 0.42, 0.32), vec3(1.0, 0.95, 0.82), wing) * uDay * (0.03 + 0.85 * w3 * w3);
+  gl_PointSize = ps;
+  gl_Position = projectionMatrix * mv;
+}`;
+const MIDGE_FRAG = /* glsl */ `
+precision highp float;
+varying vec3 vBody; varying float vA;
+void main() {
+  float a = smoothstep(1.0, 0.5, length(gl_PointCoord * 2.0 - 1.0)) * vA;
+  // (what is left of the point is not there at all: these are written into the depth, so that the lens out here
+  // puts each of them out of focus by its own distance, not by that of whatever is behind it)
+  if (a < 0.02) discard;
+  gl_FragColor = vec4(vBody * a, a);
+}`;
+export function midgeMaterial(scale: { value: number }) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...U, uScale: scale }, vertexShader: MIDGE_VERT, fragmentShader: MIDGE_FRAG,
+    transparent: true, premultipliedAlpha: true,
+  });
+}
+
 const CRUMB_VERT = /* glsl */ `
 attribute vec4 aData; // size, seed, alive, dust
 uniform float uScale;

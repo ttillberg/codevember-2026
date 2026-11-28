@@ -3,7 +3,7 @@
 // out of the wet ground. None of it is drawn from more than a few metres off, and there is not much of it.
 import * as THREE from 'three';
 import type { World } from './world';
-import { webMaterial, bugMaterial, wormMaterial } from './gfx';
+import { webMaterial, bugMaterial, wormMaterial, midgeMaterial } from './gfx';
 
 interface Bug { p: THREE.Vector3; n: THREE.Vector3; h: THREE.Vector3; size: number; wait: number; walk: number; step: number; speed: number; shy: boolean; i: number }
 
@@ -333,4 +333,36 @@ export class Life {
       if (moved) set.mesh.instanceMatrix.needsUpdate = true;
     }
   }
+}
+
+/**
+ * What flies over the bank: midges, a few, anywhere round the hole and the way in to it, from just over the grass to
+ * a couple of hands up. Each is given a place in the air; the dance about it is the shader's (gfx.ts). `scale`: a metre at a
+ * metre, in pixels (dust.ts has it).
+ */
+export function buildMidges(world: World, rnd: () => number, scale: { value: number }): THREE.Points {
+  const pos: number[] = [], seed: number[] = [];
+  const o = new THREE.Vector3(), down = new THREE.Vector3(0, -1, 0);
+  const e = world.entrance;
+  for (let n = 0, tries = 0; n < 60 && tries < 2000; tries++) {
+    // (the part of the bank that is seen from the way in: further off a midge is less than a pixel)
+    const x = e.x - 1.7 + rnd() * 3.4, z = e.z - 0.9 + rnd() * 2.5;
+    o.set(x, e.y + 2, z);
+    const t = world.march(o, down, 4);
+    if (t >= 4) continue;
+    const y = o.y - t + 0.06 + rnd() * rnd() * 0.7;
+    // (air, and a hand of it all round for the dance)
+    if (world.sample(x, y, z) > -0.05) continue;
+    pos.push(x, y, z);
+    seed.push(rnd(), rnd(), rnd());
+    n++;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute('aSeed', new THREE.BufferAttribute(new Float32Array(seed), 3));
+  const pts = new THREE.Points(g, midgeMaterial(scale));
+  // (they are never where they were put: the box round their places says nothing of where they are)
+  pts.frustumCulled = false;
+  pts.renderOrder = 10;
+  return pts;
 }
