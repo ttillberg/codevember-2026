@@ -33,8 +33,9 @@ const CARD = `
   ${HEADPHONES}
   <b>Headphones recommended</b><i lang="ja">ヘッドホン推奨</i>
   <ul>
-    <li>${svg(28, 20, '0 0 28 20', '<circle cx="14" cy="10" r="3.5" fill="currentColor" stroke="none" /><path d="M6 6.5 2.5 10 6 13.5M22 6.5l3.5 3.5-3.5 3.5" />')}Drag to look</li>
     <li>${svg(28, 20, '0 0 28 20', '<circle cx="14" cy="10" r="3.5" fill="currentColor" stroke="none" /><circle cx="14" cy="10" r="8" />')}Hold to run</li>
+    <li>${svg(28, 20, '0 0 28 20', '<circle cx="14" cy="10" r="3" fill="currentColor" stroke="none" /><circle cx="14" cy="10" r="6.5" /><path d="M4.5 6.5 1 10l3.5 3.5M23.5 6.5 27 10l-3.5 3.5" />')}To one side to turn</li>
+    <li>${svg(28, 20, '0 0 28 20', '<circle cx="14" cy="10" r="3.5" fill="currentColor" stroke="none" /><path d="M6 6.5 2.5 10 6 13.5M22 6.5l3.5 3.5-3.5 3.5" />')}Drag to look</li>
     <li>${svg(28, 20, '0 0 28 20', '<circle cx="14" cy="6" r="3.5" fill="currentColor" stroke="none" /><path d="M9.5 13.5 14 17.5l4.5-4" />')}Tap low to back away</li>
   </ul>
   <em></em>`;

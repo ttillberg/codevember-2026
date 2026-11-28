@@ -17,6 +17,8 @@ export const U = {
   uLightDir: { value: new THREE.Vector3(0, 0, -1) },
   uLightCol: { value: LIGHT_COL },
   uLightI: { value: 1.0 },
+  /** how far the beam is opened out: 0 on a wide screen, 1 on a phone held upright (set on resize) */
+  uBeam: { value: 0 },
   uBouncePos: { value: new THREE.Vector3() },
   uBounceCol: { value: new THREE.Vector3() },
   uMouth: { value: new THREE.Vector3() },
@@ -55,7 +57,7 @@ uniform sampler3D uNoise;
 uniform sampler2DShadow uShadow;
 uniform mat4 uLightVP;
 uniform vec3 uLightPos, uLightDir, uLightCol, uBouncePos, uBounceCol, uMouth, uSky, uGround, uEye;
-uniform float uLightI, uShadowRes, uTime, uDay;
+uniform float uLightI, uShadowRes, uTime, uDay, uBeam;
 
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float hash13(vec3 p3) { p3 = fract(p3 * .1031); p3 += dot(p3, p3.zyx + 31.32); return fract((p3.x + p3.y) * p3.z); }
@@ -65,9 +67,13 @@ float sat(float x) { return clamp(x, 0.0, 1.0); }
 
 float cookie(float c) {
   float a = acos(clamp(c, -1.0, 1.0));
-  float hot = exp(-(a * a) / (0.17 * 0.17));
-  float corona = 0.16 * exp(-(a * a) / (0.42 * 0.42));
-  float spill = 0.004 * smoothstep(0.95, 0.6, a);
+  // (an upright screen is a tall slice of the place with one small disc of light in it, and nothing to say where we
+  // are: there the beam is opened out, and more of it goes to the sides. On what it falls on, that is: the lit air
+  // (fog.ts) keeps the narrow beam, or the whole tunnel goes milky)
+  float hw = 0.17 + 0.04 * uBeam, cw = 0.42 + 0.16 * uBeam;
+  float hot = exp(-(a * a) / (hw * hw));
+  float corona = (0.16 + 0.12 * uBeam) * exp(-(a * a) / (cw * cw));
+  float spill = (0.004 + 0.01 * uBeam) * smoothstep(0.95, 0.6, a);
   // the faint rings of a cheap reflector
   float rings = 1.0 + 0.09 * sin(a * 58.0) * smoothstep(0.12, 0.3, a);
   return hot + (corona + spill) * rings;
@@ -664,11 +670,12 @@ attribute vec3 aSeed;
 uniform sampler2DShadow uShadow;
 uniform mat4 uLightVP;
 uniform vec3 uLightPos, uLightDir, uLightCol, uMouth;
-uniform float uLightI, uTime, uScale, uDay;
+uniform float uLightI, uTime, uScale, uDay, uBeam;
 varying vec3 vCol; varying float vSoft;
 float cookieV(float c) {
   float a = acos(clamp(c, -1.0, 1.0));
-  return exp(-(a * a) / (0.17 * 0.17)) + 0.16 * exp(-(a * a) / (0.42 * 0.42));
+  float hw = 0.17 + 0.04 * uBeam, cw = 0.42 + 0.16 * uBeam;
+  return exp(-(a * a) / (hw * hw)) + (0.16 + 0.12 * uBeam) * exp(-(a * a) / (cw * cw));
 }
 void main() {
   const float BOX = 2.6;

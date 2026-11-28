@@ -186,10 +186,10 @@ const SPEED = 1.05;
 /** one full cycle of the front paws, left then right, in metres of ground covered */
 const STRIDE = 0.55;
 /** step: what is left of a tap's dash (m), and way: which way it goes, 1 on, -1 back */
-const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0, way: 1 };
+const nav = { e: 0, s: 0, dir: 1, v: 0, sign: 1, entered: false, step: 0, way: 1, sx: 0, steer: 0 };
 const look = { yaw: 0, pitch: 0, yawT: 0, pitchT: 0, yaw0: 0, pitch0: 0 };
 const aim = { x: 0, y: 0, mouse: false };
-const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, mode: '' as '' | 'look' | 'crawl', low: false, fwd: false, back: false, left: false, right: false, rear: false, wheel: 0 };
+const input = { down: false, id: -1, x: 0, y: 0, x0: 0, y0: 0, t: 0, moved: 0, mode: '' as '' | 'look' | 'crawl', low: false, touch: false, fwd: false, back: false, left: false, right: false, rear: false, wheel: 0 };
 /** the head turned to look behind us (E held): 0 ahead, 1 right round. Only the head: the legs go on as they were */
 let rear = 0;
 
@@ -229,7 +229,8 @@ canvas.addEventListener('pointerdown', (ev) => {
   if (document.pointerLockElement !== canvas) canvas.setPointerCapture(ev.pointerId);
   Object.assign(input, { down: true, id: ev.pointerId, x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, t: performance.now(), moved: 0, mode: '' });
   // a finger put down low on the screen means backwards, tapped or held (a mouse has S for that)
-  input.low = (ev.pointerType !== 'mouse' || document.body.classList.contains('touch')) && ev.clientY > innerHeight * 0.75;
+  input.touch = ev.pointerType !== 'mouse' || document.body.classList.contains('touch');
+  input.low = input.touch && ev.clientY > innerHeight * 0.75;
 });
 // the pointer locked (the pill, ui.ts): with no pointer to follow, the torch points where we look, from that moment on
 document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement === canvas) aim.x = aim.y = 0; });
@@ -251,7 +252,8 @@ canvas.addEventListener('pointermove', (ev) => {
   input.x = ev.clientX; input.y = ev.clientY;
   input.moved = Math.hypot(ev.clientX - input.x0, ev.clientY - input.y0);
   if (!input.mode && input.moved > (ev.pointerType === 'mouse' ? 5 : 12)) input.mode = 'look';
-  if (input.mode) {
+  // (a finger held down steers by where on the screen it is, crawl(): sliding it is not a second way of turning)
+  if (input.mode && !(input.mode === 'crawl' && input.touch)) {
     // (a finger has less room to move than a mouse has: it turns the view half as far again)
     const k = ((camera.fov * Math.PI) / 180 / innerHeight) * (ev.pointerType === 'mouse' ? 1.15 : 1.7);
     // A drag takes hold of the place and pulls it past. Held down and running it is the other way round, a steer:
@@ -267,6 +269,7 @@ const release = (ev: PointerEvent) => {
     // a tap: one short dash
     nav.step = 1.4;
     nav.way = input.low ? -1 : 1;
+    nav.sx = (ev.clientX / innerWidth) * 2 - 1;
   }
   input.down = false;
   input.mode = '';
@@ -330,6 +333,8 @@ function footfall(side: number) {
 function crawl(dt: number) {
   if (input.down && !input.mode && performance.now() - input.t > 240) input.mode = 'crawl';
   let want = 0;
+  // (a finger's run, held or tapped: keys, the wheel and a mouse are not it)
+  let finger = input.touch && input.mode === 'crawl', dash = false;
   if (input.mode === 'crawl' && input.low) want = -1;
   else if (input.mode === 'crawl' || input.fwd) want = 1;
   else if (input.back) want = -1;
@@ -337,17 +342,36 @@ function crawl(dt: number) {
     want = Math.sign(input.wheel);
     input.wheel -= Math.sign(input.wheel) * Math.min(Math.abs(input.wheel), dt * SPEED * 1.6);
   }
-  if (nav.step > 0 && !want) want = nav.way;
+  if (nav.step > 0 && !want) { want = nav.way; finger = input.touch; dash = true; }
   if (auto && clock > 1.2 && !want) want = 1;
   // it has us: no running
   if (beast.holds) { want = 0; nav.v *= Math.exp(-dt / 0.05); }
   if (want) nav.sign = want;
-  nav.v += ((want ? SPEED : 0) - nav.v) * (1 - Math.exp(-dt / 0.18));
-  if (nav.v < 1e-4) return;
   const e = world.edges[nav.e];
   world.railTangent(e, nav.s, tmpA);
   const d = tmpA.dot(lookDir);
-  if (Math.abs(d) > 0.15) nav.dir = Math.sign(d);
+  const dir = Math.abs(d) > 0.15 ? Math.sign(d) : nav.dir;
+  // On a phone the finger is the steering, by where across the screen it is put down or held. In the middle: straight
+  // on, down the tunnel. Out to one side: a turn that way, harder and slower the further out, until at the edge of
+  // the screen it is all turn and next to no run. And the legs go where the eyes do as far as the tunnel lets them,
+  // the way a body slides along a wall it is run at: across the tunnel slower, with the nose to the wall not at all.
+  // (Seen from above: looking up or down costs nothing, and a shaft has no across.)
+  let along = 1;
+  nav.steer = 0;
+  if (finger && want) {
+    if (want > 0) {
+      const sx = dash ? nav.sx : (input.x / innerWidth) * 2 - 1;
+      nav.steer = -Math.sign(sx) * Math.max(0, Math.min(1, (Math.abs(sx) - 0.14) / 0.72));
+    }
+    const ht = Math.hypot(tmpA.x, tmpA.z), hl = Math.hypot(lookDir.x, lookDir.z);
+    if (ht > 0.3 && hl > 0.2) along = Math.max(0, ((tmpA.x * lookDir.x + tmpA.z * lookDir.z) / (ht * hl)) * dir);
+    along *= 1 - 0.88 * Math.abs(nav.steer);
+    // (a tap is so long a go, not so far: one at a wall is spent on the wall)
+    if (dash) nav.step = Math.max(0, nav.step - SPEED * dt);
+  }
+  nav.v += ((want ? SPEED * along : 0) - nav.v) * (1 - Math.exp(-dt / 0.18));
+  if (nav.v < 1e-4) return;
+  nav.dir = dir;
   // (the thing on the lower level will not be walked up to: towards it the legs slow, and short of it they stop)
   nav.v = Math.min(nav.v, SPEED * beast.bars(camPos, nav, nav.dir * nav.sign));
   // each paw pushes: the ground comes in surges, not at a steady rate
@@ -355,7 +379,7 @@ function crawl(dt: number) {
   const before = Math.floor(gait / Math.PI);
   gait += (ds / STRIDE) * 2 * Math.PI;
   if (Math.floor(gait / Math.PI) !== before) footfall(Math.floor(gait / Math.PI) % 2 === 0 ? -1 : 1);
-  nav.step = Math.max(0, nav.step - ds);
+  if (!(finger && dash)) nav.step = Math.max(0, nav.step - ds);
   travelled += ds;
   nav.s += nav.dir * nav.sign * ds;
   tmpB.copy(lookDir).multiplyScalar(nav.sign);
@@ -375,13 +399,16 @@ function updateCamera(dt: number, time: number) {
   look.yawT += turn * dt * 1.5;
   const e = world.edges[nav.e];
   // the path pulls the eye along while crawling, unless a finger is steering
+  // (and a finger out to one side turns us, crawl(): a little near the middle, a spin at the edge)
+  look.yawT += nav.steer * Math.abs(nav.steer) * 2.2 * dt;
   const moving = nav.v / SPEED;
   if (moving > 0.05 && input.mode !== 'look' && !turn) {
     const ahead = nav.s + nav.dir * nav.sign * 0.8;
     world.railPoint(e, ahead, tmpA).sub(world.railPoint(e, nav.s, tmpB));
     if (tmpA.lengthSq() > 0.02 && nav.sign > 0) {
       tmpA.normalize();
-      const k = (1 - Math.exp(-dt / 0.3)) * moving;
+      // (not against a finger that is turning us)
+      const k = (1 - Math.exp(-dt / 0.3)) * moving * Math.max(0, 1 - 4 * Math.abs(nav.steer));
       look.yawT += wrapPi(Math.atan2(-tmpA.x, -tmpA.z) - look.yawT) * k;
       look.pitchT += (Math.asin(tmpA.y) * 0.8 - look.pitchT) * k * 0.6;
     }
@@ -440,7 +467,9 @@ function updateTorch(dt: number, time: number) {
   // carried, not mounted: it trails the stride by a beat and swings wider than the head does. And at a run nobody
   // holds a torch up: it drops to light the ground just ahead, and what is further on is left to the edge of the beam
   const run = torchLock.aim ? 0 : (nav.v / SPEED) ** 2;
-  tmpA.set(ax * tanH * 0.85 + 0.075 * Math.sin(gait - 0.5) * run, ay * tanV * 0.85 + (0.06 * Math.cos(2 * gait - 1.5) - 0.11) * run, -1).normalize().applyQuaternion(camQ);
+  // (on an upright screen it is held up, at a run too: what is ahead is the only thing there is to go by)
+  const tall = U.uBeam.value;
+  tmpA.set(ax * tanH * 0.85 + 0.075 * Math.sin(gait - 0.5) * run, ay * tanV * 0.85 + 0.1 * tall + (0.06 * Math.cos(2 * gait - 1.5) - 0.11 * (1 - 0.8 * tall)) * run, -1).normalize().applyQuaternion(camQ);
   // a cheap torch on tired cells: every so often it sags to a fraction, stutters, and comes back. Sooner when it is
   // being shaken about
   torchNext -= dt * (1 + 1.5 * run);
@@ -467,7 +496,7 @@ function updateTorch(dt: number, time: number) {
   }
   lightDir.lerp(tmpA.normalize(), 1 - Math.exp(-dt / (0.11 - 0.07 * fl))).normalize();
   // held beside the head; pulled in when there is no room for the arm
-  tmpB.set(0.085, -0.07, -0.02).applyQuaternion(camQ);
+  tmpB.set(0.085 - 0.05 * tall, -0.07 + 0.05 * tall, -0.02).applyQuaternion(camQ);
   let reach = 1;
   while (reach > 0.1 && world.sample(camPos.x + tmpB.x * reach, camPos.y + tmpB.y * reach, camPos.z + tmpB.z * reach) > -0.05) reach -= 0.25;
   torchReach += (reach - torchReach) * (1 - Math.exp(-dt / 0.15));
@@ -563,6 +592,7 @@ function resize() {
   // a phone held upright still gets a usable width of view
   camera.fov = Math.min(96, (2 * Math.atan(Math.tan((62 * Math.PI) / 360) * Math.max(1, 1.25 / camera.aspect)) * 180) / Math.PI);
   camera.updateProjectionMatrix();
+  U.uBeam.value = Math.max(0, Math.min(1, (1 - camera.aspect) / 0.45));
   post.setSize(Math.round(w * dpr), Math.round(h * dpr));
   fog.setSize(Math.round(w * dpr), Math.round(h * dpr));
   const tanV = Math.tan((camera.fov * Math.PI) / 360);
