@@ -143,6 +143,13 @@ export class Fog {
     });
   }
 
+  /** how many steps the march takes (the shader is built again for it) */
+  setSteps(n: number) {
+    if (this.march.defines!.STEPS === n) return;
+    this.march.defines!.STEPS = n;
+    this.march.needsUpdate = true;
+  }
+
   setSize(w: number, h: number) {
     this.half.setSize(Math.max(1, Math.ceil(w / 2)), Math.max(1, Math.ceil(h / 2)));
     this.out.setSize(w, h);

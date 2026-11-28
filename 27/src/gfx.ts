@@ -34,6 +34,8 @@ export const U = {
   /** standing water: x, the level of its surface, z, reach (0: none) */
   uPuddle: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
   uRipple: { value: 0 },
+  /** 1 when the frame has one sample a pixel: what leaned on the samples for its thinness (fine roots) is stippled instead */
+  uStipple: { value: 0 },
 };
 
 /** The torch's beam profile by angle off its axis (radians). Kept in step with cookie() in the GLSL below. */
@@ -522,7 +524,9 @@ void main() {
 const HAIR_FRAG = COMMON + /* glsl */ `
 varying vec3 vP; varying vec3 vSideV; varying vec3 vEyeV; varying float vAcross; varying float vCover; varying float vSeed; varying float vRootD;
 uniform vec3 uHairA, uHairB;
+uniform float uStipple;
 void main() {
+  if (uStipple > 0.5 && vCover < hash12(gl_FragCoord.xy)) discard;
   float x = clamp(vAcross, -1.0, 1.0);
   vec3 N = normalize(vSideV * x + vEyeV * sqrt(max(1.0 - x * x, 0.02)));
   Surf s;
@@ -743,13 +747,13 @@ const SHELL_VERT = /* glsl */ `
 attribute vec3 aGrow; // moss, root felt, mould
 attribute float aAO;
 attribute float aSky;
-uniform float uScale, uPix;
+uniform float uScale, uPix, uShells;
 uniform vec3 uWalker;
 varying vec3 vP; varying vec3 vBase; varying vec3 vN; varying vec3 vGrow; varying float vT; varying float vAO; varying float vSky;
 void main() {
   // the outermost layer is drawn first: what it covers of the layers under it is never shaded.
   // (And never the surface itself: that is the ground's own, stained.)
-  float t = 1.0 - float(gl_InstanceID) / float(SHELLS);
+  float t = 1.0 - float(gl_InstanceID) / uShells;
   // how tall each grows: a moss cushion a couple of centimetres, root hair a hand's breadth, mould a few millimetres.
   // (Thin growth is short, but not in proportion: its edge is still a pile, not a film.)
   vec3 gw = pow(max(aGrow, vec3(0.0)), vec3(0.6));
@@ -844,7 +848,7 @@ void main() {
   gl_FragColor = vec4(shadeFuzz(vP, s, Ng, vSky), 1.0);
 }`;
 export function shellMaterial(layers: number, scale = 1) {
-  return new THREE.ShaderMaterial({ defines: { SHELLS: layers }, uniforms: { ...U, uScale: { value: scale } }, vertexShader: SHELL_VERT, fragmentShader: SHELL_FRAG });
+  return new THREE.ShaderMaterial({ uniforms: { ...U, uScale: { value: scale }, uShells: { value: layers } }, vertexShader: SHELL_VERT, fragmentShader: SHELL_FRAG });
 }
 
 const TUFT_VERT = /* glsl */ `
