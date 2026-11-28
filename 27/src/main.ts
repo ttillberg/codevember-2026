@@ -13,7 +13,7 @@ import { Den, buildDebris } from './den';
 import { Fog } from './fog';
 import { sound } from './sound';
 import { Growth } from './growth';
-import { initUI, say, showWin } from './ui';
+import { initUI, say, showWin, firstPress } from './ui';
 import { Game } from './game';
 
 const params = new URLSearchParams(location.search);
@@ -201,7 +201,8 @@ function fromYawPitch(yaw: number, pitch: number, out: THREE.Vector3) {
 }
 
 canvas.addEventListener('pointerdown', (ev) => {
-  if (input.down) return;
+  // (the click that sends the start screen away is only that: no dash, no run)
+  if (firstPress() || input.down) return;
   // (a locked pointer cannot be captured, and need not be)
   if (document.pointerLockElement !== canvas) canvas.setPointerCapture(ev.pointerId);
   Object.assign(input, { down: true, id: ev.pointerId, x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, t: performance.now(), moved: 0, mode: '' });

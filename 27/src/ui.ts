@@ -63,10 +63,16 @@ export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean }) {
     // a phone: the card takes the tap that sends it away, so that tap is not also a dash into the hole
     veil.addEventListener('click', () => show(false));
   } else {
-    // a desktop: the map takes nothing. The first press, key or scroll sends it away and is already the scene's own,
-    // so a drag looks and a hold runs from the very first one
-    const away = (ev: Event) => { if (open && !help.contains(ev.target as Node)) show(false); };
+    // a desktop: the first press, key or scroll sends the map away. A key or the wheel is already the scene's own; a
+    // click is not: the first click only says "I am here" (focus, and the sound's leave to start), and nobody sets
+    // off at a run from it. main.ts asks firstPress() before it takes a press on the canvas
+    const away = (ev: Event) => {
+      if (!open || help.contains(ev.target as Node)) return;
+      show(false);
+      if (ev.type === 'pointerdown') swallow = true;
+    };
     addEventListener('pointerdown', away, true);
+    addEventListener('pointerup', () => { swallow = false; }, true);
     addEventListener('keydown', away, true);
     addEventListener('wheel', away, { capture: true, passive: true });
   }
@@ -87,6 +93,14 @@ export function initUI(canvas: HTMLCanvasElement, opts: { start: boolean }) {
   });
 
   if (opts.start && !params.has('clean')) show(true, true);
+}
+
+/** The press that sent the start screen away is not also a press on the scene: true once, for that one. */
+let swallow = false;
+export function firstPress(): boolean {
+  const s = swallow;
+  swallow = false;
+  return s;
 }
 
 /** A line at the foot of the view, for a few seconds: the little the game has to say. */
