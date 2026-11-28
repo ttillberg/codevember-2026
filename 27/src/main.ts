@@ -265,8 +265,8 @@ canvas.addEventListener('pointermove', (ev) => {
 });
 const release = (ev: PointerEvent) => {
   if (ev.pointerId !== input.id) return;
-  if (!input.mode && performance.now() - input.t < 260) {
-    // a tap: one short dash
+  if (input.touch && !input.mode && performance.now() - input.t < 260) {
+    // a tap: one short dash (a finger's: a click of the mouse is not a step, the button is held to run)
     nav.step = 1.4;
     nav.way = input.low ? -1 : 1;
     nav.sx = (ev.clientX / innerWidth) * 2 - 1;
