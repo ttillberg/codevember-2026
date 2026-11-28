@@ -136,7 +136,9 @@ export class Fog {
           }
           f = mix(vec4(0.0, 0.0, 0.0, 1.0), f / w, uOn);
           // what is behind the air is seen through it, and the air's own light comes on top
-          gl_FragColor = vec4(texture2D(tScene, vUv).rgb * f.a + f.rgb, 1.0);
+          // (and nothing below black goes on from here: one such pixel, and the blur and the glow after this would
+          // spread it over the picture as a stain)
+          gl_FragColor = vec4(max(texture2D(tScene, vUv).rgb, 0.0) * f.a + f.rgb, 1.0);
         }`,
       depthTest: false,
       depthWrite: false,

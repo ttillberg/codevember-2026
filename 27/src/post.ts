@@ -13,7 +13,7 @@ varying vec2 vUv; uniform sampler2D tSrc; uniform vec2 uTexel;
 void main() {
   vec3 c = texture2D(tSrc, vUv + uTexel * vec2(-1.0, -1.0)).rgb + texture2D(tSrc, vUv + uTexel * vec2(1.0, -1.0)).rgb
          + texture2D(tSrc, vUv + uTexel * vec2(-1.0, 1.0)).rgb + texture2D(tSrc, vUv + uTexel * vec2(1.0, 1.0)).rgb;
-  gl_FragColor = vec4(min(c * 0.25, vec3(64.0)), 1.0);
+  gl_FragColor = vec4(clamp(c * 0.25, 0.0, 64.0), 1.0);
 }`;
 
 // Depth of field as a gather: every pixel looks round it over the widest circle there is, and takes from each place
