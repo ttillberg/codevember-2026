@@ -15,9 +15,9 @@ export function eggGeometry(length = 0.068, girth = 0.05): THREE.BufferGeometry 
     // rounder below, drawn out above
     pts.push(new THREE.Vector2(Math.max(0, (girth / 2) * Math.sin(t) * (1 + 0.2 * Math.cos(t))), (-length / 2) * Math.cos(t)));
   }
-  const g = new THREE.LatheGeometry(pts, 32);
-  g.computeVertexNormals();
-  return g;
+  // (the lathe's own normals are right all the way round: worked out again from the faces they break along the
+  // seam, and the egg has a line down it)
+  return new THREE.LatheGeometry(pts, 48);
 }
 
 export class Game {
@@ -140,6 +140,6 @@ export class Game {
     this.held.rotateZ(0.35 + 0.05 * Math.sin(time * 3.7) * pace);
     this.held.rotateX(-0.25);
     // out under the sky with it
-    if (!inside && eye.z > 0.3) { this.won = true; this.onWin(); }
+    if (!inside && eye.z > 0.2) { this.won = true; this.onWin(); }
   }
 }

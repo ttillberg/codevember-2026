@@ -151,9 +151,12 @@ beast.onCaught = () => {
   document.body.classList.remove('inside');
   torchPower = 1; torchSag = 0; torchNext = 9;
   began = clock;
+  beenIn = false;
 };
 /** when this go began, on the scene's clock: the picture fades up from there */
 let began = 0;
+/** we have been down the hole this go */
+let beenIn = false;
 /** Put the eye on the rails, s metres along edge ei, looking at a point. */
 function putAt(ei: number, s: number, at: THREE.Vector3) {
   nav.e = ei; nav.s = s; nav.entered = !world.edges[ei].open; nav.v = 0;
@@ -270,7 +273,7 @@ function switchEdge(node: number, over: number, moveDir: THREE.Vector3) {
   let best = -1, bestDot = -Infinity;
   for (const i of world.adj[node]) {
     const c = world.edges[i];
-    if (i === nav.e || (c.open && nav.entered)) continue;
+    if (i === nav.e) continue;
     world.railTangent(c, c.a === node ? 0.15 : c.len - 0.15, tmpC);
     if (c.a !== node) tmpC.negate();
     const d = tmpC.dot(moveDir);
@@ -280,6 +283,8 @@ function switchEdge(node: number, over: number, moveDir: THREE.Vector3) {
   if (best < 0) { nav.s = cur.a === node ? 0 : cur.len; nav.v = 0; nav.step = 0; return; }
   const c = world.edges[best];
   nav.e = best;
+  // (out through the mouth again: there is a way out, and with the egg it is the whole point)
+  if (c.open && nav.entered) { nav.entered = false; document.body.classList.remove('inside'); }
   nav.s = c.a === node ? over : c.len - over;
   nav.dir = (c.a === node ? 1 : -1) * nav.sign;
 }
@@ -332,7 +337,7 @@ function crawl(dt: number) {
   tmpB.copy(lookDir).multiplyScalar(nav.sign);
   if (nav.s > e.len) switchEdge(e.b, nav.s - e.len, tmpB);
   else if (nav.s < 0) switchEdge(e.a, -nav.s, tmpB);
-  if (!world.edges[nav.e].open && !nav.entered) { nav.entered = true; document.body.classList.add('inside'); }
+  if (!world.edges[nav.e].open && !nav.entered) { nav.entered = true; beenIn = true; document.body.classList.add('inside'); }
 }
 
 function wrapPi(a: number) { return a - Math.round(a / (2 * Math.PI)) * 2 * Math.PI; }
@@ -353,8 +358,8 @@ function updateCamera(dt: number, time: number) {
       look.pitchT += (Math.asin(tmpA.y) * 0.8 - look.pitchT) * k * 0.6;
     }
   }
-  // before the hole there is only the hole to look at
-  if (!nav.entered) {
+  // before the hole there is only the hole to look at (the first time: come back out of it, and we look where we like)
+  if (!nav.entered && !beenIn) {
     const lim = 0.4 + 2.8 * sstep(0.45, 1.0, nav.s / e.len);
     look.yawT = look.yaw0 + Math.max(-lim, Math.min(lim, wrapPi(look.yawT - look.yaw0)));
     look.pitchT = Math.max(look.pitch0 - lim * 0.7, Math.min(look.pitch0 + lim * 0.55, look.pitchT));

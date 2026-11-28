@@ -168,31 +168,59 @@ export function say(text: string, seconds = 4.5) {
   noteT = window.setTimeout(() => note!.classList.remove('on'), seconds * 1000);
 }
 
-/** freckles for the egg of the last screen: painted, since out here it is not in the scene's light any more */
-function eggSkin(): THREE.CanvasTexture {
-  const c = document.createElement('canvas');
-  c.width = c.height = 512;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#d9d0b8';
-  g.fillRect(0, 0, 512, 512);
-  let seed = 9;
-  const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
-  // a cloudy mottle under everything
-  for (let i = 0; i < 260; i++) {
-    const r = 18 + rnd() * 46, tone = rnd();
-    g.fillStyle = tone < 0.5 ? `rgba(160, 146, 116, ${0.05 + rnd() * 0.06})` : `rgba(240, 234, 214, ${0.05 + rnd() * 0.06})`;
-    g.beginPath(); g.arc(rnd() * 512, rnd() * 512, r, 0, 7); g.fill();
-  }
-  // and the freckles, thickest round the blunt end (the bottom of the picture)
-  for (let i = 0; i < 520; i++) {
-    const y = 512 * (1 - rnd() * rnd()), r = 1.2 + rnd() * rnd() * 5.5;
-    g.fillStyle = `rgba(${70 + rnd() * 30}, ${44 + rnd() * 20}, ${26 + rnd() * 14}, ${0.35 + rnd() * 0.5})`;
-    g.beginPath(); g.ellipse(rnd() * 512, y, r * (0.7 + rnd() * 0.8), r, rnd() * 3, 0, 7); g.fill();
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = THREE.RepeatWrapping;
-  return t;
+/**
+ * The egg of the last screen. Its freckles are not a picture wrapped round it (that stretched them at the waist,
+ * pinched them at the ends and left a seam down one side): they are worked out in the egg's own three dimensions,
+ * a point here and there in a grid of cells, each with its own size and brown, thickest round the blunt end. So
+ * they are round wherever they fall. It is three's standard material with that put into its colour.
+ */
+function eggMaterial(): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(0.86, 0.81, 0.69), roughness: 0.52, metalness: 0 });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEgg;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEgg = position;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vEgg;
+        vec3 eggHash(vec3 p) { p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.xxy + p.yxx) * p.zyx); }
+        float eggNoise(vec3 p) {
+          vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          float a = mix(mix(eggHash(i).x, eggHash(i + vec3(1, 0, 0)).x, f.x), mix(eggHash(i + vec3(0, 1, 0)).x, eggHash(i + vec3(1, 1, 0)).x, f.x), f.y);
+          float b = mix(mix(eggHash(i + vec3(0, 0, 1)).x, eggHash(i + vec3(1, 0, 1)).x, f.x), mix(eggHash(i + vec3(0, 1, 1)).x, eggHash(i + vec3(1, 1, 1)).x, f.x), f.y);
+          return mix(a, b, f.z);
+        }
+        // freckles: in every cell of a grid there may be one, somewhere in it, some size, some brown. x: how much
+        // of a freckle this point is in; y: that freckle's own tone
+        vec2 eggFreckle(vec3 p, float often, float small, float big) {
+          vec3 c = floor(p);
+          vec2 best = vec2(0.0);
+          for (int z = -1; z <= 1; z++) for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+            vec3 q = c + vec3(x, y, z);
+            vec3 h = eggHash(q), k = eggHash(q + 71.3);
+            if (k.x > often) continue;
+            float r = mix(small, big, k.y * k.y);
+            float d = length(p - (q + 0.15 + 0.7 * h));
+            float m = smoothstep(r, r * 0.72, d);
+            if (m > best.x) best = vec2(m, k.z);
+          }
+          return best;
+        }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          // -1 at the blunt end, 1 at the point
+          float lat = clamp(vEgg.y / 0.034, -1.0, 1.0);
+          float often = mix(0.85, 0.3, smoothstep(-1.0, 0.8, lat));
+          // a cloudy mottle under everything, then two sizes of freckle
+          diffuseColor.rgb *= 0.9 + 0.2 * eggNoise(vEgg * 95.0) * eggNoise(vEgg * 41.0 + 7.0);
+          vec2 f1 = eggFreckle(vEgg * 150.0, often, 0.1, 0.4);
+          vec2 f2 = eggFreckle(vEgg * 420.0 + 3.7, often * 0.7, 0.12, 0.34);
+          vec3 brown = mix(vec3(0.3, 0.17, 0.09), vec3(0.16, 0.09, 0.05), f1.y);
+          diffuseColor.rgb = mix(diffuseColor.rgb, brown, f1.x * 0.85);
+          diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.34, 0.2, 0.11), vec3(0.2, 0.12, 0.07), f2.y), f2.x * 0.6);
+        }`);
+  };
+  return mat;
 }
 
 /**
@@ -206,9 +234,8 @@ export function showWin() {
     <canvas width="640" height="640"></canvas>
     <p class="thought">Whatever hatches, it will remember the dark better than you do.</p>
     <p class="congrats">Congratulations &middot; you got out with the egg</p>
-    <button class="again" type="button">Go back in</button>`;
+    <p class="more">Check out more of <a href="https://ttillberg.github.io/codevember-2026/">Theo's Codevember experiments</a><br>or ping him on X <a href="https://x.com/theo_t">@theo_t</a></p>`;
   document.body.append(el);
-  el.querySelector('.again')!.addEventListener('click', () => location.reload());
   document.exitPointerLock?.();
 
   const canvas = el.querySelector('canvas')!;
@@ -218,8 +245,7 @@ export function showWin() {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(24, 1, 0.05, 5);
   camera.position.set(0, 0.004, 0.25);
-  const skin = eggSkin();
-  const egg = new THREE.Mesh(eggGeometry(), new THREE.MeshStandardMaterial({ map: skin, bumpMap: skin, bumpScale: 0.6, roughness: 0.5, metalness: 0 }));
+  const egg = new THREE.Mesh(eggGeometry(), eggMaterial());
   egg.rotation.z = 0.32;
   scene.add(egg);
   // one warm lamp from over the left shoulder, a cold edge from behind, hardly any fill: it is still half in the dark
