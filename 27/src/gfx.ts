@@ -1139,8 +1139,9 @@ attribute vec4 color;
 attribute float _fur;
 uniform float uShell; // 0: the hide itself. Above: how far up the fur this layer is
 #include <skinning_pars_vertex>
-varying vec3 vP; varying vec3 vN; varying vec3 vRest; varying vec3 vCol; varying float vFur;
+varying vec3 vP; varying vec3 vN; varying vec3 vRest; varying vec3 vCol; varying float vFur; varying vec2 vUv;
 void main() {
+  vUv = uv;
   vec3 objectNormal = normal;
   vec3 transformed = position + normal * (uShell * 0.024 * _fur);
   #include <skinbase_vertex>
@@ -1158,12 +1159,15 @@ uniform sampler3D uCells;
 uniform float uShell;
 uniform vec4 uPart; // roughness, f0, how much light comes through, kind (0 skin, 1 hide under fur, 2 mouth, 3 teeth, 4 claws, 5 eye)
 uniform float uEyes; // a light of their own in its eyes: for the dark after it has had us
-varying vec3 vP; varying vec3 vN; varying vec3 vRest; varying vec3 vCol; varying float vFur;
+uniform sampler2D uSkin; // the skin's own map (model/beast.py): how high it stands, its tone, how sore
+varying vec3 vP; varying vec3 vN; varying vec3 vRest; varying vec3 vCol; varying float vFur; varying vec2 vUv;
 void main() {
   vec3 N = normalize(vN);
   if (!gl_FrontFacing) N = -N;
   float kind = uPart.w;
   vec3 alb = vCol;
+  // the normal the light sees: the mesh's own, unless the skin has put a relief on it
+  vec3 relief = N;
   Surf s;
   s.rough = uPart.x; s.f0 = uPart.y; s.trans = uPart.z; s.glint = 0.0; s.ao = 1.0;
   // (it is seen from a hand's breadth, in the lamp: the inverse square is levelled off a good deal)
@@ -1175,21 +1179,47 @@ void main() {
     alb = mix(vec3(0.012, 0.01, 0.008), mix(vec3(0.06, 0.047, 0.034), vec3(0.17, 0.14, 0.105), c.b), uShell * uShell);
     s.ao = mix(0.3, 1.0, uShell); s.rough = 0.6; s.trans = 0.4;
   } else if (kind < 0.5) {
-    // bald and scaly: pebbled, every scale a cell with a dark seam round it
-    vec4 c = texture(uCells, vRest * 17.0);
-    float seam = smoothstep(0.0, 0.13, c.g);
-    alb *= mix(0.4, 1.0, seam) * (0.75 + 0.5 * c.b);
-    s.rough = mix(0.8, 0.42, seam);
-    s.ao = mix(0.55, 1.0, seam);
+    // Bare, one colour all over, and thin: the light gets a little way into it. Not seen through; lit a little from
+    // behind and from within, paler and warmer where it turns away from us. Smooth and wet, a membrane, not a hide.
+    // And not well: boils, warts, sores that have opened, wrinkles, pores, the fine net of lines skin has. None of
+    // that is made up here. It is read from a map baked for this one animal (model/beast.py), from noise that never
+    // comes round again: the place's own noise repeats every few centimetres, and on something this size that is
+    // a pattern. Red is how high the skin stands, and the light is turned by its slope
+    vec4 sk = texture2D(uSkin, vUv);
+    float h = (sk.r * 11.5 - 4.6) * 0.001;
+    // (the slope from the screen's own derivatives, as the ground's stones have theirs. The map is blurred by
+    // distance like any other, so far off there is no slope left to glitter)
+    vec3 dpx = dFdx(vP), dpy = dFdy(vP);
+    vec3 e1 = cross(dpy, N), e2 = cross(N, dpx);
+    float det = dot(dpx, e1);
+    vec3 gB = (dFdx(h) * e1 + dFdy(h) * e2) * (sign(det) / (abs(det) + 1e-12));
+    gB *= min(1.0, 1.5 / (length(gB) + 1e-5));
+    relief = normalize(N - gB);
+    float rim = pow(1.0 - abs(dot(N, normalize(cameraPosition - vP))), 2.0);
+    // green: its tone. Still the one colour, as a sick thing is one colour: darker in a pore, a crease, a seam;
+    // paler and yellower at the head of a boil. Blue: sore round a boil, raw where one has opened
+    float dark = sat(1.0 - sk.g * 2.0), pale = sat(sk.g * 2.0 - 1.0);
+    float ring = sat(sk.b / 0.6), raw = smoothstep(0.62, 0.9, sk.b);
+    alb *= 1.0 - 0.7 * dark;
+    alb = mix(alb, alb * vec3(1.16, 0.84, 0.72), 0.7 * ring * (1.0 - pale));
+    alb = mix(alb, alb * vec3(1.32, 1.25, 0.9), pale);
+    alb = mix(alb, vec3(0.16, 0.035, 0.03), 0.8 * raw);
+    alb = mix(alb, alb * vec3(1.3, 1.12, 0.92), 0.55 * rim);
+    s.rough = mix(0.38, 0.2, max(pale, raw));
+    s.f0 = 0.05;
+    s.trans = 0.45;
+    s.ao = 1.0 - 0.45 * dark;
   } else if (kind < 1.5) {
     alb *= 0.6;
   } else if (kind < 2.5) {
     // wet
     alb *= 0.85 + 0.3 * nz(vRest * 60.0).a;
   }
-  s.alb = alb; s.N = N;
+  s.alb = alb; s.N = relief;
   // its hide gives nothing back until we are close: from down a tunnel there is only the dark, and the eyes in it
-  vec3 col = shade(vP, s, N, 0.0) * smoothstep(3.2, 1.9, distance(vP, cameraPosition));
+  // (and never all of it: it is pale, and always in the middle of the beam, where the picture is opened up for dark
+  // earth. At its full worth it is a white hole in the frame)
+  vec3 col = shade(vP, s, N, 0.0) * (0.2 * smoothstep(3.2, 1.9, distance(vP, cameraPosition)));
   if (kind > 4.5) {
     // clouded over, but something at the back of it still sends the lamp home: and what is sent straight back does
     // not thin out with distance as the rest does. From the far end of a tunnel it is two points of light and
@@ -1207,11 +1237,14 @@ void main() {
 }`;
 /** shared by every part of it: how much its eyes burn by themselves */
 export const BEAST_EYES = { value: 0 };
+/** the skin's map (beast.ts loads it). Until it has come: level, its own tone, not sore */
+export const BEAST_SKIN = { value: new THREE.DataTexture(new Uint8Array([102, 128, 0, 255]), 1, 1) as THREE.Texture };
+BEAST_SKIN.value.needsUpdate = true;
 const BEAST_PARTS = [[0.55, 0.04, 0.0], [0.8, 0.03, 0.2], [0.2, 0.05, 0.35], [0.25, 0.05, 0.25], [0.35, 0.05, 0.1], [0.12, 0.05, 0.3]];
 export function beastMaterial(kind: number, shell = 0) {
   const p = BEAST_PARTS[kind];
   return new THREE.ShaderMaterial({
-    uniforms: { ...U, uShell: { value: shell }, uPart: { value: new THREE.Vector4(p[0], p[1], p[2], kind) }, uEyes: BEAST_EYES },
+    uniforms: { ...U, uShell: { value: shell }, uPart: { value: new THREE.Vector4(p[0], p[1], p[2], kind) }, uEyes: BEAST_EYES, uSkin: BEAST_SKIN },
     vertexShader: BEAST_VERT, fragmentShader: BEAST_FRAG, side: THREE.DoubleSide,
   });
 }

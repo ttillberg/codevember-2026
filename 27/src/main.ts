@@ -763,7 +763,7 @@ function tickStage(dt: number) {
   post.dof = 0;
   // metered by hand for the pool of light at the distance we stand off at (as meter() bounds it in the burrow), so
   // that coming nearer does not burn it out; the grid is drawn at the same grey whatever that comes to
-  post.exposure = show.exposure * 0.55 * (show.dist * show.dist + 0.012) / (1.16 * 0.04);
+  post.exposure = show.exposure * 1.9 * (show.dist * show.dist + 0.012) / (1.16 * 0.04);
   (stageFloor.material as THREE.LineBasicMaterial).color.setScalar(0.6 / post.exposure);
   post.render(clock, fog.render(renderer, post.scene, camera), camera, 1, null);
 }
