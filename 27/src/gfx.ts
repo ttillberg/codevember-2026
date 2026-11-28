@@ -1160,6 +1160,8 @@ uniform float uShell;
 uniform vec4 uPart; // roughness, f0, how much light comes through, kind (0 skin, 1 hide under fur, 2 mouth, 3 teeth, 4 claws, 5 eye)
 uniform float uEyes; // a light of their own in its eyes: for the dark after it has had us
 uniform sampler2D uSkin; // the skin's own map (model/beast.py): how high it stands, its tone, how sore
+uniform vec4 uTone; // the skin's colour, to try others: what it is multiplied by, and how much of its hue is taken out
+uniform float uDim; // how much of the light on it is given back
 varying vec3 vP; varying vec3 vN; varying vec3 vRest; varying vec3 vCol; varying float vFur; varying vec2 vUv;
 void main() {
   vec3 N = normalize(vN);
@@ -1185,6 +1187,7 @@ void main() {
     // that is made up here. It is read from a map baked for this one animal (model/beast.py), from noise that never
     // comes round again: the place's own noise repeats every few centimetres, and on something this size that is
     // a pattern. Red is how high the skin stands, and the light is turned by its slope
+    alb = mix(alb, vec3(dot(alb, vec3(0.3, 0.55, 0.15))), uTone.w) * uTone.rgb;
     vec4 sk = texture2D(uSkin, vUv);
     float h = (sk.r * 11.5 - 4.6) * 0.001;
     // (the slope from the screen's own derivatives, as the ground's stones have theirs. The map is blurred by
@@ -1219,7 +1222,7 @@ void main() {
   // its hide gives nothing back until we are close: from down a tunnel there is only the dark, and the eyes in it
   // (and never all of it: it is pale, and always in the middle of the beam, where the picture is opened up for dark
   // earth. At its full worth it is a white hole in the frame)
-  vec3 col = shade(vP, s, N, 0.0) * (0.2 * smoothstep(3.2, 1.9, distance(vP, cameraPosition)));
+  vec3 col = shade(vP, s, N, 0.0) * (uDim * smoothstep(3.2, 1.9, distance(vP, cameraPosition)));
   if (kind > 4.5) {
     // clouded over, but something at the back of it still sends the lamp home: and what is sent straight back does
     // not thin out with distance as the rest does. From the far end of a tunnel it is two points of light and
@@ -1240,11 +1243,29 @@ export const BEAST_EYES = { value: 0 };
 /** the skin's map (beast.ts loads it). Until it has come: level, its own tone, not sore */
 export const BEAST_SKIN = { value: new THREE.DataTexture(new Uint8Array([102, 128, 0, 255]), 1, 1) as THREE.Texture };
 BEAST_SKIN.value.needsUpdate = true;
+/**
+ * The skin's colour. It is grey: the model's own greyish yellow with the yellow taken out. The others are there to
+ * try (?skin=yellow, ?skin=dark, and the buttons on the stage): the yellow as the model has it, and nearly black. A dark one can be given back more of its light
+ * without burning out in the beam
+ */
+export const BEAST_SKINS = {
+  yellow: { tone: [1, 1, 1, 0], dim: 0.2 },
+  grey: { tone: [0.94, 0.97, 1.02, 1], dim: 0.2 },
+  dark: { tone: [0.055, 0.055, 0.06, 0.9], dim: 0.4 },
+} as const;
+export const BEAST_TONE = { value: new THREE.Vector4(1, 1, 1, 0) };
+export const BEAST_DIM = { value: 0.2 };
+export function beastSkin(name: string) {
+  const k = BEAST_SKINS[name as keyof typeof BEAST_SKINS];
+  if (!k) return;
+  BEAST_TONE.value.fromArray(k.tone as unknown as number[]);
+  BEAST_DIM.value = k.dim;
+}
 const BEAST_PARTS = [[0.55, 0.04, 0.0], [0.8, 0.03, 0.2], [0.2, 0.05, 0.35], [0.25, 0.05, 0.25], [0.35, 0.05, 0.1], [0.12, 0.05, 0.3]];
 export function beastMaterial(kind: number, shell = 0) {
   const p = BEAST_PARTS[kind];
   return new THREE.ShaderMaterial({
-    uniforms: { ...U, uShell: { value: shell }, uPart: { value: new THREE.Vector4(p[0], p[1], p[2], kind) }, uEyes: BEAST_EYES, uSkin: BEAST_SKIN },
+    uniforms: { ...U, uShell: { value: shell }, uPart: { value: new THREE.Vector4(p[0], p[1], p[2], kind) }, uEyes: BEAST_EYES, uSkin: BEAST_SKIN, uTone: BEAST_TONE, uDim: BEAST_DIM },
     vertexShader: BEAST_VERT, fragmentShader: BEAST_FRAG, side: THREE.DoubleSide,
   });
 }

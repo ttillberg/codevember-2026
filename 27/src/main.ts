@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { World, sstep } from './world';
-import { U, LIGHT_COL, SHADOW_RES, cookie, soilMaterial, soilDepthMaterial, depthMaterial } from './gfx';
+import { U, LIGHT_COL, SHADOW_RES, cookie, soilMaterial, soilDepthMaterial, depthMaterial, beastSkin } from './gfx';
 import { Post } from './post';
 import { mulberry32 } from './noise';
 import { Rocks } from './rocks';
@@ -25,6 +25,8 @@ if (params.has('clean') || params.get('debug') === 'beastanimation') document.bo
 const auto = params.has('auto');
 // ?debug=beastanimation: the thing on the lower level alone on a stage, to look at how it moves (the end of this file)
 const beastStage = params.get('debug') === 'beastanimation';
+// the beast is grey. ?skin=yellow, ?skin=dark: in another colour, to try (gfx.ts)
+beastSkin(params.get('skin') ?? 'grey');
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 // the controls, the help and the pointer lock (ui.ts); no controls at the start of a clip
@@ -963,6 +965,8 @@ if (params.has('debug')) {
       readout: () => `${show.clip}${show.walk ? ` + walk, ${show.speed.toFixed(2)} m/s` : ''} · cycle ${beast.cycle.toFixed(2)}`,
       buttons: ['idle', 'crouch', 'leap', 'bite', 'land', 'crawl'].map(clipButton),
     },
+    // (and what colour it is: ?skin=yellow and ?skin=dark start with one of the others, here and in the burrow)
+    { title: 'Skin', buttons: ['grey', 'yellow', 'dark'].map((name) => ({ label: name, run: () => beastSkin(name) })) },
   ];
   import('./debug').then(({ debugPanel }) => debugPanel([
     ...stagePanel,
