@@ -352,6 +352,30 @@ export class Beast {
     return ax + bx + Math.min(as + from(A.a), A.len - as + from(A.b));
   }
 
+  /**
+   * The way a sound from somewhere reaches us: down the tunnel. A unit vector at `from`, along the rails, pointing the
+   * short way round towards `to` (a place on the rails; left out, the beast itself). The same vector object every
+   * call: read it before asking again.
+   */
+  toward(from: { e: number; s: number }, to?: { e: number; s: number }): THREE.Vector3 {
+    const E = this.world.edges, e = E[from.e];
+    let te = to ? to.e : this.at.ei, ts = to ? to.s : this.at.s;
+    if (E[te].open) {
+      const n = E[te].b, ei = this.world.adj[n].find((i) => !E[i].open) ?? te;
+      te = ei; ts = E[ei].a === n ? 0 : E[ei].len;
+    }
+    let sign = 1;
+    if (e.open) sign = 1; // out under the sky everything down there is down the hole
+    else if (te === from.e) sign = ts >= from.s ? 1 : -1;
+    else {
+      const T = E[te];
+      const via = (n: number) => Math.min(this.far[n][T.a] + ts, this.far[n][T.b] + T.len - ts);
+      sign = e.len - from.s + via(e.b) < from.s + via(e.a) ? 1 : -1;
+    }
+    return this.world.railTangent(e, from.s, this.way).multiplyScalar(sign);
+  }
+  private way = new THREE.Vector3();
+
   /** The place on the rails nearest a point in the burrow: for what is not on them (a puddle, a stone). */
   nearest(p: { x: number; y: number; z: number }): { e: number; s: number } {
     let best = { e: 0, s: 0 }, bd = Infinity;

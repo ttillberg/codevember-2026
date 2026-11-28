@@ -585,6 +585,7 @@ function tick(dt: number) {
   meter(dt);
   disturb(dt);
   U.uShadow.value = null;
+  growth.cull(camPos);
   renderShadow();
   U.uShadow.value = shadowDepth;
   renderer.setRenderTarget(post.scene);
@@ -654,6 +655,17 @@ Object.assign(window, {
     input,
   },
 });
+
+// ?debug: sliders for the film grain (post.ts), to turn it by eye and copy the numbers back
+if (params.has('debug')) {
+  import('./debug').then(({ debugPanel }) => debugPanel('Film grain', [
+    { label: 'amount', min: 0, max: 0.15, step: 0.001, get: () => post.grain.amount, set: (v) => { post.grain.amount = v; } },
+    { label: 'size (px)', min: 1, max: 4, step: 0.05, get: () => post.grain.size, set: (v) => { post.grain.size = v; } },
+    { label: 'less in the lights', min: 0, max: 1, step: 0.01, get: () => post.grain.lights, set: (v) => { post.grain.lights = v; } },
+    { label: 'colour', min: 0, max: 1, step: 0.01, get: () => post.grain.colour, set: (v) => { post.grain.colour = v; } },
+    { label: 'rate (per s, 0 = every frame)', min: 0, max: 60, step: 1, get: () => post.grain.rate, set: (v) => { post.grain.rate = v; } },
+  ]));
+}
 
 // ?at=N,1.6: start somewhere else (node name, metres short of it): for clips and for looking at one corner
 {

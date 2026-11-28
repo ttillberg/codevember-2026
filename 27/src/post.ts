@@ -64,6 +64,8 @@ varying vec2 vUv;
 uniform sampler2D tScene, tBlurA, tBlurB;
 uniform float uExposure, uTime;
 uniform vec2 uRes;
+uniform vec4 uGrain;      // how much, how big (pixels), how much less of it in the lights, how coloured (0 grey, 1 each channel its own)
+uniform float uGrainRate; // new grain how many times a second (0: every frame)
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 void main() {
@@ -80,8 +82,14 @@ void main() {
   col *= mix(1.0, 0.3, smoothstep(0.1, 1.05, r2));
   col = aces(col);
   float l = dot(col, vec3(0.3, 0.6, 0.1));
-  float g = hash12(gl_FragCoord.xy + fract(uTime * 7.31) * 613.0) + hash12(gl_FragCoord.xy * 1.37 + fract(uTime * 3.17) * 271.0) - 1.0;
-  col += g * 0.035 * (1.0 - 0.6 * l);
+  // the grain of the film: two hashes summed (so it clumps a little, as grain does), new every frame or held
+  vec2 gp = floor(gl_FragCoord.xy / max(uGrain.y, 1.0));
+  float gt = uGrainRate > 0.0 ? floor(uTime * uGrainRate) / uGrainRate : uTime;
+  vec2 go = vec2(fract(gt * 7.31) * 613.0, fract(gt * 3.17) * 271.0);
+  float g = hash12(gp + go.x) + hash12(gp * 1.37 + go.y) - 1.0;
+  vec3 gc = vec3(g);
+  if (uGrain.w > 0.0) gc = mix(gc, vec3(g, hash12(gp + go.x + 17.0) + hash12(gp * 1.37 + go.y + 31.0) - 1.0, hash12(gp + go.x + 53.0) + hash12(gp * 1.37 + go.y + 71.0) - 1.0), uGrain.w);
+  col += gc * uGrain.x * (1.0 - uGrain.z * l);
   col = max(col, 0.0);
   col = mix(col * 12.92, 1.055 * pow(col, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, col));
   gl_FragColor = vec4(col, 1.0);
@@ -103,6 +111,8 @@ export class Post {
   private dofMat: THREE.ShaderMaterial;
   private soft: THREE.WebGLRenderTarget;
   exposure = 1;
+  /** the film's grain: how much, how big in pixels, how much less of it in the lights (0 to 1), how coloured (0 to 1), and how many new grains a second (0: every frame). ?debug has sliders for these */
+  grain = { amount: 0.026, size: 1, lights: 0.6, colour: 0, rate: 0 };
   /** depth of field: how much of it (0 none, and then the pass is not run at all), and the distance that is sharp, metres */
   dof = 0;
   focus = 1;
@@ -124,6 +134,7 @@ export class Post {
     this.final = mat(FINAL, {
       tScene: { value: null }, tBlurA: { value: null }, tBlurB: { value: null },
       uExposure: { value: 1 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2() },
+      uGrain: { value: new THREE.Vector4() }, uGrainRate: { value: 0 },
     });
     this.dofMat = mat(DOF, {
       tSrc: { value: null }, tDepth: { value: null }, uTexel: { value: new THREE.Vector2() },
@@ -190,6 +201,8 @@ export class Post {
     u.tBlurB.value = this.eA.texture;
     u.uExposure.value = this.exposure;
     u.uTime.value = time;
+    u.uGrain.value.set(this.grain.amount, this.grain.size, this.grain.lights, this.grain.colour);
+    u.uGrainRate.value = this.grain.rate;
     this.pass(this.final, null);
   }
 }

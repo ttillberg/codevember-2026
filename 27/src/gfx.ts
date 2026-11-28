@@ -805,19 +805,27 @@ void main() {
   // keeps only what is denser than a bar that rises with it. Low down nearly everything passes, a dense nap;
   // at the top only the peaks are left, the tips. And the sample point leans as it goes up, so strands curve
   // instead of standing in columns that would show the layers as lines.
-  vec3 lean = nz(S1 * vBase * 9.0).rgb * 0.0011;
+  // Most of what the layers cost is this test, run for every layer over every pixel they cover, and most of the time
+  // it says no. So the bar is worked out first, and each noise is only fetched if the ones before it, with the most
+  // the rest could possibly add, might still clear it. The same pixels are kept, exactly; fewer fetches are made.
+  // (The noise's value is within 1.75 of zero, so each of the two terms is at most 1.375; the cells' at most 0.25.)
+  float bar = moss * 0.3 + felt * 0.4 + mould * 0.27;
+  // (thinner where the growth is thin, and thinner seen edge on, where the layers would line up)
+  float need = bar + 0.55 * uu + (1.0 - gm) * 0.35 + 0.3 * uu * (1.0 - abs(dot(Ng, V)));
+  if (need > 1.375 * 0.75 + 0.25) discard;
+  vec3 lean = textureLod(uNoise, S1 * vBase * 9.0, 0.0).rgb * 0.0011;
   lean.y -= felt * 0.006;
   vec3 q = vBase + lean * uu * uu;
   float fs = moss + felt * 0.8 + mould * 2.2;
   // (root hair runs long: its noise is stretched along the way it hangs)
   vec3 qs = q * vec3(1.0, mix(1.0, 0.3, felt), 1.0);
-  float coarse = 0.5 + 0.5 * nz(S1 * qs * 24.0 * fs).a;
-  float mid = 0.5 + 0.5 * nz(S2 * qs * 64.0 * fs + 0.37).a;
-  vec4 c = texture(uCells, S2 * qs * 62.0 * fs);
+  float coarse = 0.5 + 0.5 * textureLod(uNoise, S1 * qs * 24.0 * fs, 0.0).a;
+  if (coarse * 0.45 + 1.375 * 0.3 + 0.25 < need) discard;
+  float mid = 0.5 + 0.5 * textureLod(uNoise, S2 * qs * 64.0 * fs + 0.37, 0.0).a;
+  if (coarse * 0.45 + mid * 0.3 + 0.25 < need) discard;
+  vec4 c = textureLod(uCells, S2 * qs * 62.0 * fs, 0.0);
   float dens = coarse * 0.45 + mid * 0.3 + (1.0 - c.r * 1.4) * 0.25;
-  float bar = moss * 0.3 + felt * 0.4 + mould * 0.27;
-  // (thinner where the growth is thin, and thinner seen edge on, where the layers would line up)
-  if (dens < bar + 0.55 * uu + (1.0 - gm) * 0.35 + 0.3 * uu * (1.0 - abs(dot(Ng, V)))) discard;
+  if (dens < need) discard;
   // dark down in the pile, lit at the tips; each tuft a little its own colour
   float own = c.a;
   vec3 cm = mix(vec3(0.008, 0.018, 0.004), mix(vec3(0.045, 0.1, 0.018), vec3(0.085, 0.105, 0.025), own), uu * uu);

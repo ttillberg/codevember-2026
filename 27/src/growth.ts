@@ -145,18 +145,39 @@ export class Growth {
     return out;
   }
 
-  /** The shells over a dressed patch. */
-  shells(patch: THREE.BufferGeometry, layers: number, scale: number): THREE.InstancedMesh {
-    const m = new THREE.InstancedMesh(patch, shellMaterial(layers, scale), layers);
-    m.frustumCulled = false;
-    return m;
+  /**
+   * The shells over a dressed patch. Not one mesh but a few dozen, the patch cut up by where it is: a shell further
+   * than three metres off draws nothing (its vertex shader throws it out), so a piece all of which is further than
+   * that is not handed to the GPU at all (cull(), every frame), nor one that is behind us. The picture is the same;
+   * what is saved is the asking, which with ten layers over the whole burrow was most of a frame.
+   */
+  shells(patch: THREE.BufferGeometry, layers: number, scale: number): THREE.Group {
+    const group = new THREE.Group();
+    const mat = shellMaterial(layers, scale);
+    for (const geo of split(patch, 0.8)) {
+      const m = new THREE.InstancedMesh(geo, mat, layers);
+      // (the layers stand out from the surface, and hang: a hand's breadth more than the surface itself)
+      const sphere = geo.boundingSphere!.clone();
+      sphere.radius += 0.1;
+      m.boundingSphere = sphere;
+      this.pieces.push({ obj: m, c: sphere.center, r: sphere.radius, reach: 3 });
+      group.add(m);
+    }
+    return group;
+  }
+
+  /** what of the growth is only drawn close up: each piece, where it is, how big, and from how far it shows at all */
+  private pieces: { obj: THREE.Object3D; c: THREE.Vector3; r: number; reach: number }[] = [];
+  /** Hide every piece that is too far off to draw anything. Call once a frame, before anything is rendered. */
+  cull(eye: THREE.Vector3) {
+    for (const n of this.pieces) n.obj.visible = n.c.distanceTo(eye) < n.reach + n.r;
   }
 
   /**
    * What hangs from the roof into the way: beards of root hair, strands of moss and dead grass by the mouth,
    * threads of mould. One blade each, a bent strip, all one instanced mesh. The head parts them as it comes through.
    */
-  tufts(rnd: () => number): THREE.Mesh {
+  tufts(rnd: () => number): THREE.Group {
     const { world } = this;
     const SEG = 5;
     const lp: number[] = [], li: number[] = [];
@@ -214,14 +235,80 @@ export class Growth {
         }
       }
     }
-    geo.setAttribute('aRoot', new THREE.InstancedBufferAttribute(new Float32Array(aRoot), 3));
-    geo.setAttribute('aDir', new THREE.InstancedBufferAttribute(new Float32Array(aDir), 3));
-    geo.setAttribute('aShape', new THREE.InstancedBufferAttribute(new Float32Array(aShape), 4));
-    geo.setAttribute('aLook', new THREE.InstancedBufferAttribute(new Float32Array(aLook), 2));
-    geo.instanceCount = aRoot.length / 3;
-    const mesh = new THREE.Mesh(geo, tuftMaterial());
-    mesh.frustumCulled = false;
-    console.log(`growth: ${geo.instanceCount} hanging strands`);
-    return mesh;
+    // As with the shells: the strands by where they hang, a metre to a piece, and only the pieces within reach drawn
+    // (a strand shows within two metres of the eye and not beyond)
+    const count = aRoot.length / 3;
+    const cells = new Map<string, number[]>();
+    for (let i = 0; i < count; i++) {
+      const key = `${Math.floor(aRoot[i * 3])},${Math.floor(aRoot[i * 3 + 1])},${Math.floor(aRoot[i * 3 + 2])}`;
+      let l = cells.get(key);
+      if (!l) cells.set(key, (l = []));
+      l.push(i);
+    }
+    const group = new THREE.Group();
+    const mat = tuftMaterial();
+    const strip = geo.getAttribute('position'), index = geo.index;
+    const take = (src: number[], size: number, ids: number[]) => {
+      const out = new Float32Array(ids.length * size);
+      ids.forEach((id, k) => { for (let j = 0; j < size; j++) out[k * size + j] = src[id * size + j]; });
+      return new THREE.InstancedBufferAttribute(out, size);
+    };
+    for (const ids of cells.values()) {
+      const g = new THREE.InstancedBufferGeometry();
+      g.setAttribute('position', strip);
+      g.setIndex(index);
+      g.setAttribute('aRoot', take(aRoot, 3, ids));
+      g.setAttribute('aDir', take(aDir, 3, ids));
+      g.setAttribute('aShape', take(aShape, 4, ids));
+      g.setAttribute('aLook', take(aLook, 2, ids));
+      g.instanceCount = ids.length;
+      const box = new THREE.Box3();
+      for (const id of ids) box.expandByPoint(c.set(aRoot[id * 3], aRoot[id * 3 + 1], aRoot[id * 3 + 2]));
+      // (a strand reaches a hand's length from its root, and is pushed about by the head)
+      const sphere = box.getBoundingSphere(new THREE.Sphere());
+      sphere.radius += 0.3;
+      g.boundingSphere = sphere;
+      const mesh = new THREE.Mesh(g, mat);
+      this.pieces.push({ obj: mesh, c: sphere.center, r: sphere.radius, reach: 2 });
+      group.add(mesh);
+    }
+    console.log(`growth: ${count} hanging strands in ${group.children.length} pieces`);
+    return group;
   }
+}
+
+/** A geometry cut up by where its triangles are: one piece per cell of a grid, each with its own packed vertices. */
+function split(geo: THREE.BufferGeometry, cell: number): THREE.BufferGeometry[] {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute, idx = geo.index!.array;
+  const names = Object.keys(geo.attributes);
+  const bins = new Map<string, number[]>();
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+    const key = `${Math.floor((pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3 / cell)},${Math.floor((pos.getY(a) + pos.getY(b) + pos.getY(c)) / 3 / cell)},${Math.floor((pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3 / cell)}`;
+    let l = bins.get(key);
+    if (!l) bins.set(key, (l = []));
+    l.push(a, b, c);
+  }
+  const out: THREE.BufferGeometry[] = [];
+  const remap = new Int32Array(pos.count).fill(-1);
+  for (const tris of bins.values()) {
+    const verts: number[] = [];
+    const index = new Uint32Array(tris.length);
+    tris.forEach((v, k) => {
+      if (remap[v] < 0) { remap[v] = verts.length; verts.push(v); }
+      index[k] = remap[v];
+    });
+    const g = new THREE.BufferGeometry();
+    for (const name of names) {
+      const src = geo.getAttribute(name) as THREE.BufferAttribute, size = src.itemSize;
+      const arr = new Float32Array(verts.length * size);
+      verts.forEach((v, k) => { for (let j = 0; j < size; j++) arr[k * size + j] = (src.array as Float32Array)[v * size + j]; });
+      g.setAttribute(name, new THREE.BufferAttribute(arr, size));
+    }
+    g.setIndex(new THREE.BufferAttribute(index, 1));
+    g.computeBoundingSphere();
+    out.push(g);
+    for (const v of verts) remap[v] = -1;
+  }
+  return out;
 }

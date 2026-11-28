@@ -42,6 +42,8 @@ export interface SoundScene {
     /** the place on the rails nearest a point, and the metres of tunnel between two such places */
     nearest?(p: V3): { e: number; s: number };
     between?(a: { e: number; s: number }, b: { e: number; s: number }): number;
+    /** which way along the tunnel from a place the short way to another (or to the beast) leads: a unit vector */
+    toward?(from: { e: number; s: number }, to?: { e: number; s: number }): V3;
   };
   /** the game: we have the egg; we are out with it, and that is the end */
   game?: { carrying: boolean; won: boolean };
@@ -220,6 +222,9 @@ class Sound {
   private nextGroan = 6;
   private tdTick = 0;
   private outG!: GainNode;
+  private outPan: StereoPannerNode | null = null;
+  /** where the mouth is on the rails, once it has been looked up */
+  private mouthAt: { e: number; s: number } | null = null;
   /** the crickets in the grass: made here, each one a sine that is let through in short pulses */
   private crikG!: GainNode;
   private crik: { g: GainNode; next: number; amp: number; every: number; pulses: number }[] = [];
@@ -367,14 +372,18 @@ class Sound {
 
     // the beds: the room (when it has loaded), the wind over the hole
     this.roomG = gain(0, this.world);
-    this.outG = gain(0, this.world);
+    // (everything of the outside goes through one panner: from inside, the day is heard from the mouth's side)
+    this.outPan = ac.createStereoPanner ? ac.createStereoPanner() : null;
+    this.outPan?.connect(this.world);
+    const outTo: AudioNode = this.outPan ?? this.world;
+    this.outG = gain(0, outTo);
     this.outLP = filter('lowpass', 20000, 0.707, this.outG);
-    this.windG = gain(0, this.world);
+    this.windG = gain(0, outTo);
     this.windLP = filter('lowpass', 500, 0.4, this.windG);
     this.loop(ac, this.noise, this.windLP);
     // crickets: no take of them survives being turned up (they come as quiet as the wind, and coded), so they are
     // made: five of them about the bank, each its own pitch, place and pace, a chirp being three or four quick pulses
-    this.crikG = gain(0, this.world);
+    this.crikG = gain(0, outTo);
     for (let i = 0; i < 5; i++) {
       const pan = ac.createStereoPanner();
       pan.pan.value = (i / 4) * 1.7 - 0.85 + (rnd() - 0.5) * 0.2;
@@ -564,6 +573,7 @@ class Sound {
     if (this.live > 28) return;
     this.place(b.group.position);
     const td = Math.max(b.tunnelDistance ? b.tunnelDistance(s.nav) : this.dist, this.dist);
+    this.bend(td);
     const lvl = Math.max(floor, (1 / (1 + Math.pow(td / 5, 1.3))) * clamp01((20 - td) / 4));
     if (lvl < 0.004) return;
     const off = clamp01(td / 14);
@@ -680,6 +690,24 @@ class Sound {
     // (right on top of us it is in the middle; behind us a little less of it)
     this.pan = side * 0.85 * Math.min(1, d / 0.4);
     this.att = (1 / (1 + 0.9 * d)) * (0.8 + 0.2 * clamp01(this.front + 1));
+  }
+
+  /**
+   * What is more than a couple of metres of tunnel off is not heard from where it is through the earth, but from
+   * where its tunnel comes in: the way the short way round to it leads from here. Call after place(); `td` the
+   * metres of tunnel to it, `to` its place on the rails (left out: the beast). So there is always a side to it:
+   * turn a shoulder to the tunnel it is down, and it is in that ear.
+   */
+  private bend(td: number, to?: { e: number; s: number }) {
+    const s = this.scene!, b = s.beast;
+    if (!b.toward) return;
+    const w = clamp01((td - 1.5) / 2);
+    if (w <= 0) return;
+    const v = b.toward(s.nav, to), q = s.camQ;
+    const side = v.x * (1 - 2 * (q.y * q.y + q.z * q.z)) + v.y * 2 * (q.x * q.y + q.w * q.z) + v.z * 2 * (q.x * q.z - q.w * q.y);
+    const front = -(v.x * 2 * (q.x * q.z + q.w * q.y) + v.y * 2 * (q.y * q.z - q.w * q.x) + v.z * (1 - 2 * (q.x * q.x + q.y * q.y)));
+    this.pan += (side * 0.85 - this.pan) * w;
+    this.front += (front - this.front) * w;
   }
 
   private get on() {
@@ -932,6 +960,17 @@ class Sound {
     // the meadow: all of it on the bank, dulled and going for the first metres in, none of it further down. Where
     // there is a take of it the made wind only fills in under it
     this.outG.gain.setTargetAtTime(MIX.outside * open, t, 0.3);
+    // Out on the bank it is all round us. Inside it comes in at the mouth: from in front if we look back at it, from
+    // one side if we turn a shoulder to it, and further in from whichever way the tunnel leads back out
+    if (this.outPan) {
+      let side = 0;
+      if (s.nav.entered) {
+        this.place(s.mouth);
+        if (b.nearest && b.between) this.bend(b.between(s.nav, this.mouthAt ?? (this.mouthAt = b.nearest(s.mouth))), this.mouthAt ?? undefined);
+        side = this.pan * 0.9;
+      }
+      this.outPan.pan.setTargetAtTime(side, t, 0.12);
+    }
     // (wide open on the bank: nothing of the take's top is shaved there)
     this.outLP.frequency.setTargetAtTime(Math.min(20000, 500 + 21500 * open * open), t, 0.3);
     this.windG.gain.setTargetAtTime(MIX.wind * open * this.gust * (this.buf.outside ? 0.12 : 1), t, 0.3);
@@ -969,11 +1008,13 @@ class Sound {
       prox = clamp01((10 - td) / 9);
       near = (1 / (1 + (td * td) / 4)) * clamp01((9.5 - td) / 1.5) * clamp01(1 - (this.unseen - 0.5) / 1.5);
       if (!s.nav.entered) near *= clamp01((5 - td) / 1.5);
-      where = clamp01((5 - td) / 2.5);
-      back = clamp01(-this.front) * where;
+      // (a side to it at any distance: near, where it is; further, the tunnel it is down)
+      this.bend(td);
+      where = 1;
+      back = clamp01(-this.front);
       // its steps carry a little further than its breath: round a corner it is heard coming before it is seen
       this.padNear = (1 / (1 + (td * td) / 9)) * clamp01((13 - td) / 3) * (s.nav.entered ? 1 : clamp01((5 - td) / 1.5));
-      this.padPan = this.pan * clamp01((8 - td) / 4);
+      this.padPan = this.pan;
       // the first sight of it, down the tunnel with the lamp on it: the breath stops
       if (st === 'lurk' && !this.sighted && b.group.visible && this.dist < 5.5 && this.front > 0.75 && I > 0.3) {
         this.sighted = true;
@@ -1105,11 +1146,12 @@ class Sound {
       const td = b.nearest && b.between ? Math.max(d, b.between(s.nav, this.poolAt[i] ?? (this.poolAt[i] = b.nearest(p)))) : d;
       if (td > 6) continue;
       this.place(p);
+      this.bend(td, this.poolAt[i] ?? undefined);
       const lvl = clamp01((6 - td) / 2) / (1 + Math.pow(Math.max(0, td - 1) / 1.8, 2)), off = clamp01((td - 2) / 4);
       const g = MIX.water * (0.6 + 0.4 * rnd()) * lvl * 1.3;
       // (a pool we are standing in is all round us)
       // (no echo sent after it: one drop heard twice read as a fault)
-      this.drip(t, g, this.pan * clamp01((5 - td) / 2) + (rnd() - 0.5) * 0.25 * (1 - off), td > 2.2 ? this.far : this.fx, 0);
+      this.drip(t, g, this.pan + (rnd() - 0.5) * 0.2 * (1 - off), td > 2.2 ? this.far : this.fx, 0);
     }
   }
 }
