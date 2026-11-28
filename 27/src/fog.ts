@@ -81,6 +81,10 @@ export class Fog {
             float dens = uFog * max(0.12, 1.0 + 1.7 * n);
             // dust is heavy: it hangs thickest below the eye, over the floor
             dens *= 1.0 + 0.5 * smoothstep(0.05, -0.16, p.y - camPos.y);
+            // and it is the air of the burrow: out under the sky there is none of it, so the torch draws no clouds
+            // on the day when we come back out
+            float inside = smoothstep(0.2, -0.45, p.z - uMouth.z) * smoothstep(0.75, 0.45, p.y - uMouth.y);
+            dens *= inside;
             for (int k = 0; k < PUFFS; k++) {
               if (uPuffA[k] > 0.0) {
                 vec3 o = p - uPuff[k].xyz;
@@ -106,7 +110,7 @@ export class Fog {
             float hg = 0.75 / pow(1.25 - mu, 1.5);
             // (through the even air, not the patchy: with the wisps in it the day came out of the mouth in rays)
             vec3 day = uSky * (uDay * (0.05 / (0.05 + dm2)) * smoothstep(3.2, 0.4, dm) * hg * 1.5);
-            sum += (light * dens + day * uFog) * (exp(-tau) * dt);
+            sum += (light * dens + day * (uFog * inside)) * (exp(-tau) * dt);
             tau += dens * 60.0 * dt;
           }
           gl_FragColor = vec4(sum, exp(-tau));

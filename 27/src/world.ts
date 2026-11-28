@@ -43,16 +43,22 @@ const NODES: [string, number, number, number, number][] = [
   ['D', 1.2, -0.7, -4.35, 0.31],
   ['G', -0.05, -1.02, -5.7, 0.36],
   ['F', -2.1, -0.92, -5.85, 0.33],
-  ['J', -2.55, -1.05, -7.45, 0.22],
+  ['J', -2.55, -1.05, -7.45, 0.25],
   ['L', -1.1, -1.25, -7.35, 0.29],
   ['I', 0.25, -1.32, -7.3, 0.37],
   ['H', 2.0, -0.92, -5.95, 0.3],
   ['K', 1.55, -1.22, -7.55, 0.28],
   ['N', 0.35, -1.5, -8.7, 0.36],
+  // the lower level: a long way down from J, round under the west of the den and back up to L
+  ['P', -2.62, -1.62, -9.05, 0.29],
+  ['Q', -1.5, -2.16, -10.2, 0.33],
 ];
+/** the edges of the first level: they keep the dice they always had, whatever is dug after them */
+const FIRST = 16;
 const EDGES: [string, string][] = [
   ['O', 'E'], ['E', 'A'], ['A', 'B'], ['B', 'C'], ['B', 'D'], ['C', 'G'], ['D', 'G'], ['C', 'F'],
   ['F', 'J'], ['F', 'L'], ['L', 'I'], ['G', 'I'], ['D', 'H'], ['H', 'K'], ['K', 'I'], ['I', 'N'],
+  ['J', 'P'], ['P', 'Q'], ['Q', 'L'],
 ];
 
 const cubeEdges = new Int32Array(24);
@@ -92,7 +98,8 @@ export class World {
   private hcol: Float32Array;
 
   constructor(seed = 27) {
-    const rnd = mulberry32(seed);
+    const rnd0 = mulberry32(seed), rnd2 = mulberry32(seed + 1000);
+    let rnd = rnd0;
     const P = (this.P = new Perlin(seed));
     const idx = new Map<string, number>();
     for (const [name, x, y, z, r] of NODES) {
@@ -104,6 +111,7 @@ export class World {
 
     const up = new THREE.Vector3(0, 1, 0);
     for (const [an, bn] of EDGES) {
+      rnd = this.edges.length < FIRST ? rnd0 : rnd2;
       const a = idx.get(an)!, b = idx.get(bn)!;
       const pa = this.nodes[a].p, pb = this.nodes[b].p;
       const open = an === 'O';
@@ -187,6 +195,7 @@ export class World {
     const pa = new THREE.Vector3(), pb = new THREE.Vector3();
     for (const e of this.edges) {
       if (e.open) continue;
+      rnd = this.edges.indexOf(e) < FIRST ? rnd0 : rnd2;
       const along = () => 0.3 + rnd() * Math.max(0.1, e.len - 0.6);
       const around = () => (rnd() < 0.5 ? -1 : 1) * (0.2 + rnd() * 1.9); // anywhere but the floor
       for (let i = Math.round(e.len * 2.4); i > 0; i--) {
@@ -218,6 +227,87 @@ export class World {
       }
     }
 
+    // 2b. what is neither tunnel nor room: cracks, chimneys, pits, low nooks. (Their own dice: the hollows stay put.)
+    {
+      const r2 = mulberry32(seed + 2000);
+      const u = new THREE.Vector3(), v = new THREE.Vector3(), pc = new THREE.Vector3();
+      const dn = new THREE.Vector3(0, -1, 0);
+      /** may this be dug here: inside the grid with room to spare, and well under the hillside */
+      const sound = (p: THREE.Vector3, m: number) =>
+        p.x > lo.x + m && p.x < hi.x - m && p.y > lo.y + m && p.z > lo.z + m && p.z < hi.z - m && p.y + m < this.terrainH(p.x, p.z) - 0.3;
+      const sgn = () => (r2() < 0.5 ? -1 : 1);
+      const dug = [0, 0, 0, 0];
+      for (const e of this.edges) {
+        if (e.open) continue;
+        const along = () => 0.3 + r2() * Math.max(0.1, e.len - 0.6);
+        // cracks: the ground has parted. A hand wide, tall, leaning, running off into the dark and closing as it goes
+        for (let i = Math.round(e.len * 0.45 + r2() * 0.8); i > 0; i--) {
+          const t = wallAt(e, along(), sgn() * (0.7 + r2() * 1.2));
+          if (t >= 1.2) continue;
+          const w = 0.045 + r2() * 0.03, k = 3.5 + r2() * 4, L = 0.35 + r2() * 0.6;
+          pa.copy(fr.c).addScaledVector(fr.d, t - 0.06);
+          v.copy(fr.d).addScaledVector(fr.T, (r2() - 0.5) * 1.2).addScaledVector(up, (r2() - 0.5) * 0.5).normalize();
+          pb.copy(pa).addScaledVector(v, L * 0.55);
+          u.copy(up).addScaledVector(fr.T, (r2() - 0.5) * 0.8).addScaledVector(fr.d, (r2() - 0.5) * 0.3).normalize();
+          // (it turns a little half way in)
+          v.addScaledVector(fr.T, (r2() - 0.5) * 0.9).normalize();
+          pc.copy(pb).addScaledVector(v, L * 0.45);
+          if (!sound(pb, w * k + 0.15) || !sound(pc, w * k + 0.15)) continue;
+          this.carve(pa, pb, w, 0.3, u, k);
+          this.carve(pb, pc, w * 0.7, 0.75, u, k);
+          dug[0]++;
+        }
+        // chimneys: where a root rotted out or water found its way down, a pipe up through the roof, out of sight
+        for (let i = Math.round(e.len * 0.22 + r2() * 0.7); i > 0; i--) {
+          const t = wallAt(e, along(), (r2() - 0.5) * 1.1);
+          if (t >= 1.2) continue;
+          const w = 0.065 + r2() * 0.05, L = 0.4 + r2() * 0.7;
+          pa.copy(fr.c).addScaledVector(fr.d, t - 0.05);
+          v.copy(up).addScaledVector(fr.side, (r2() - 0.5) * 0.7).addScaledVector(fr.T, (r2() - 0.5) * 0.7).normalize();
+          pb.copy(pa).addScaledVector(v, L * 0.5);
+          v.addScaledVector(fr.side, (r2() - 0.5) * 0.8).addScaledVector(fr.T, (r2() - 0.5) * 0.8).normalize();
+          pc.copy(pb).addScaledVector(v, L * 0.5);
+          if (!sound(pb, w + 0.15) || !sound(pc, w + 0.15)) continue;
+          this.carve(pa, pb, w, 0.2);
+          this.carve(pb, pc, w * 0.8, 0.6);
+          dug[1]++;
+        }
+        // pits: the same going down, in the corner where the floor meets the wall
+        for (let i = Math.round(e.len * 0.15 + r2() * 0.6); i > 0; i--) {
+          const t = wallAt(e, along(), sgn() * (2.25 + r2() * 0.35));
+          if (t >= 1.2) continue;
+          const w = 0.07 + r2() * 0.05, L = 0.25 + r2() * 0.45;
+          pa.copy(fr.c).addScaledVector(fr.d, t - 0.04);
+          v.set(fr.d.x, -1.6, fr.d.z).addScaledVector(fr.T, (r2() - 0.5) * 0.7).normalize();
+          pb.copy(pa).addScaledVector(v, L);
+          if (!sound(pb, w + 0.15)) continue;
+          this.carve(pa, pb, w, 0.5);
+          dug[2]++;
+        }
+        // nooks: low and wide, the floor running on under an overhang for an arm's length. Not rooms
+        for (let i = Math.round(e.len * 0.25 + r2() * 0.7); i > 0; i--) {
+          const sg = sgn();
+          const t = wallAt(e, along(), sg * (1.75 + r2() * 0.3));
+          if (t >= 1.2) continue;
+          const w = 0.14 + r2() * 0.08, k = 0.5 + r2() * 0.2, L = 0.18 + r2() * 0.28;
+          const floorY = fr.c.y - this.march(fr.c, dn, 0.6);
+          pa.copy(fr.c).addScaledVector(fr.d, t - 0.02);
+          pa.y = floorY + w * k * 0.8;
+          // level, off to the side and a little along the run
+          v.copy(fr.side).multiplyScalar(sg).addScaledVector(fr.T, (r2() - 0.5) * 1.4).normalize();
+          pb.copy(pa).addScaledVector(v, L);
+          v.addScaledVector(fr.T, (r2() - 0.5) * 1.2).normalize();
+          pc.copy(pb).addScaledVector(v, L * 0.8);
+          pc.y -= 0.03;
+          if (!sound(pb, w + 0.15) || !sound(pc, w + 0.15)) continue;
+          this.carve(pa, pb, w, 0.15, up, k);
+          this.carve(pb, pc, w * 0.85, 0.55, up, k);
+          dug[3]++;
+        }
+      }
+      console.log(`burrow: ${dug[0]} cracks, ${dug[1]} chimneys, ${dug[2]} pits, ${dug[3]} nooks`);
+    }
+
     // 3. the hillside, and the lumps of real ground
     const hcol = (this.hcol = new Float32Array(nx * nz));
     for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) hcol[i + nx * k] = this.terrainH(this.x0 + i * h, this.z0 + k * h);
@@ -245,12 +335,15 @@ export class World {
     const cand: { e: RailEdge; s: number; k: number }[] = [];
     for (const e of this.edges) {
       if (e.open) continue;
-      for (let s = 0.45; s < e.len - 0.45; s += 0.25) if (this.railPoint(e, s, pa).y < -0.6) cand.push({ e, s, k: rnd() });
+      const first = this.edges.indexOf(e) < FIRST;
+      for (let s = 0.45; s < e.len - 0.45; s += 0.25) if (this.railPoint(e, s, pa).y < -0.6) cand.push({ e, s, k: first ? rnd0() : 2 + rnd2() });
     }
+    // (the first level's come first, in the order they always did; the lower level, wetter, has the last two)
     cand.sort((a, b) => a.k - b.k);
     const down = new THREE.Vector3(0, -1, 0);
     for (const c of cand) {
-      if (this.puddles.length >= 6) break;
+      rnd = c.k < 2 ? rnd0 : rnd2;
+      if (this.puddles.length >= (c.k < 2 ? 6 : 8)) { if (c.k < 2) continue; break; }
       this.railPoint(c.e, c.s, pa);
       this.railTangent(c.e, c.s, pb);
       // a little off the middle of the run, where feet have not levelled it
@@ -287,10 +380,14 @@ export class World {
     }
   }
 
-  /** Dig a rounded run from a to b (a ball if they are the same point). */
-  private carve(a: THREE.Vector3, b: THREE.Vector3, r: number) {
+  /**
+   * Dig a rounded run from a to b (a ball if they are the same point), narrowing by `taper` of its width as it goes in.
+   * With an axis u it is k times as tall along it as it is wide: a slit (k > 1) or something low and flat (k < 1).
+   */
+  private carve(a: THREE.Vector3, b: THREE.Vector3, r: number, taper = 0.35, u?: THREE.Vector3, k = 1) {
     const { nx, ny, nz, x0, y0, z0, h, air } = this;
-    const rm = r + 0.06;
+    const rm = r * Math.max(1, k) + 0.06;
+    const ks = 1 / (k * k) - 1;
     const i0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - rm - x0) / h)), i1 = Math.min(nx - 1, Math.ceil((Math.max(a.x, b.x) + rm - x0) / h));
     const j0 = Math.max(0, Math.floor((Math.min(a.y, b.y) - rm - y0) / h)), j1 = Math.min(ny - 1, Math.ceil((Math.max(a.y, b.y) + rm - y0) / h));
     const k0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - rm - z0) / h)), k1 = Math.min(nz - 1, Math.ceil((Math.max(a.z, b.z) + rm - z0) / h));
@@ -303,8 +400,10 @@ export class World {
           const px = x0 + i * h, py = y0 + j * h, pz = z0 + k * h;
           let t = ((px - a.x) * dx + (py - a.y) * dy + (pz - a.z) * dz) / ll;
           t = t < 0 ? 0 : t > 1 ? 1 : t;
-          // (narrowing as it goes in)
-          const d = Math.hypot(px - a.x - dx * t, py - a.y - dy * t, pz - a.z - dz * t) - r * (1 - 0.35 * t);
+          const wx = px - a.x - dx * t, wy = py - a.y - dy * t, wz = pz - a.z - dz * t;
+          let d2 = wx * wx + wy * wy + wz * wz;
+          if (u) { const wu = wx * u.x + wy * u.y + wz * u.z; d2 += wu * wu * ks; }
+          const d = Math.sqrt(Math.max(d2, 0)) - r * (1 - taper * t);
           air[q] = smin(air[q], d, 0.035);
         }
       }

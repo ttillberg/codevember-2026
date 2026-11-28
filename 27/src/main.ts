@@ -84,14 +84,14 @@ console.log(`burrow: ${world.nx}×${world.ny}×${world.nz} cells, ${soil.geometr
 U.uMouth.value.copy(world.entrance).add(new THREE.Vector3(0, 0.12, 0.2));
 world.puddles.forEach((p, i) => U.uPuddle.value[i].set(p.x, p.y, p.z, p.r));
 
-// the sky seen from the hole: an overcast gradient, far brighter than anything the torch can do
+// the sky seen from the hole: overcast, one flat pale grey with nothing in it, far brighter than anything the torch can do
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(60, 24, 12),
   new THREE.ShaderMaterial({
     uniforms: { uSky: U.uSky, uDay: U.uDay },
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix * viewMatrix * vec4(position + cameraPosition, 1.0); }`,
     fragmentShader: `precision highp float; varying vec3 vD; uniform vec3 uSky; uniform float uDay;
-      void main(){ float h = normalize(vD).y; vec3 c = mix(vec3(0.95, 0.97, 1.0), uSky, smoothstep(0.0, 0.6, h)); gl_FragColor = vec4(c * uDay * mix(1.25, 0.8, smoothstep(0.0, 0.7, h)), 1.0); }`,
+      void main(){ gl_FragColor = vec4(vec3(0.93, 0.94, 0.96) * uDay, 1.0); }`,
     side: THREE.BackSide, depthWrite: false,
   }),
 );
