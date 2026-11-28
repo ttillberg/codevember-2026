@@ -30,8 +30,8 @@ export function debugPanel(sections: Section[]) {
     .dbg label.tog input { width: auto; flex: none; }
     .dbg label.all { margin-bottom: 9px; font-weight: 700; }
     .dbg .say { display: block; margin: 8px 0 2px; white-space: pre-line; }
-    .dbg .row { display: flex; gap: 6px; margin-top: 4px; }
-    .dbg button { flex: 1; padding: 6px 0 5px; border: 0; border-radius: 6px; cursor: pointer; color: inherit; background: rgba(244, 244, 242, 0.12);
+    .dbg .row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .dbg button { flex: 1 0 auto; padding: 6px 9px 5px; border: 0; border-radius: 6px; cursor: pointer; color: inherit; background: rgba(244, 244, 242, 0.12);
       font: 600 10px/1 inherit; letter-spacing: 0.1em; text-transform: uppercase; }
     .dbg button:hover { background: rgba(244, 244, 242, 0.22); }`;
   document.head.append(css);

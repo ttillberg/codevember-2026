@@ -950,11 +950,13 @@ void main() {
   // brushed aside as we come through: parted left and right of the way we go, the root staying where it is
   vec3 dw = c - uWalker;
   float dist = length(dw);
-  float push = smoothstep(0.34, 0.06, dist) * t * t;
+  // (a tall blade is reached from further off and goes further over: the stand in front of the hole opens like a curtain)
+  float tall = smoothstep(0.18, 0.34, aShape.x);
+  float push = smoothstep(0.34 + 0.22 * tall, 0.06, dist) * t * t;
   if (push > 0.001) {
     vec3 right = normalize(cross(uWalkDir, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
     vec3 dir = normalize(dw / max(dist, 1e-4) * 0.5 + right * clamp(dot(dw, right) / 0.07, -1.0, 1.0) * 0.9 + uWalkDir * 0.4);
-    c += dir * push * min(aShape.x * 0.8, 0.2);
+    c += dir * push * min(aShape.x * 0.8, 0.2 + 0.12 * tall);
     c.y -= push * push * aShape.x * 0.3;
   }
   vP = c + side * (position.x * aShape.y * (1.0 - 0.9 * t * t));
