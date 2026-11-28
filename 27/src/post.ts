@@ -70,8 +70,10 @@ export class Post {
   exposure = 1;
 
   constructor(private renderer: THREE.WebGLRenderer) {
+    // (the scene's target keeps its depth as a texture: the light in the air is marched against it, fog.ts)
     const mk = (samples = 0, depth = false) => new THREE.WebGLRenderTarget(4, 4, {
       type: THREE.HalfFloatType, samples, depthBuffer: depth, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      ...(depth ? { depthTexture: new THREE.DepthTexture(4, 4) } : {}),
     });
     this.scene = mk(4, true);
     this.half = mk(); this.qA = mk(); this.qB = mk(); this.eA = mk(); this.eB = mk();
@@ -119,15 +121,16 @@ export class Post {
     this.pass(this.blur, a);
   }
 
-  render(time: number) {
-    this.downTo(this.scene, this.half);
+  /** src: the frame to finish, the scene's own unless something (the air) has been laid over it since */
+  render(time: number, src: THREE.WebGLRenderTarget = this.scene) {
+    this.downTo(src, this.half);
     this.downTo(this.half, this.qA);
     this.blurPair(this.qA, this.qB);
     this.downTo(this.qA, this.eA);
     this.blurPair(this.eA, this.eB);
     this.blurPair(this.eA, this.eB);
     const u = this.final.uniforms;
-    u.tScene.value = this.scene.texture;
+    u.tScene.value = src.texture;
     u.tBlurA.value = this.qA.texture;
     u.tBlurB.value = this.eA.texture;
     u.uExposure.value = this.exposure;

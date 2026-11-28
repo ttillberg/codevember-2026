@@ -10,6 +10,7 @@ Drag to look, hold to run (or `W`/`↑`, the wheel, a tap for one short dash). A
 
 - **One field, one mesh.** The tunnels are capsules along a hand-drawn graph, stamped into a 3 cm grid together with the hillside and a few octaves of lumps, then meshed once with surface nets (`world.ts`). The same grid answers everything later: where the wall is for a root, where a crumb lands, how far the beam reaches.
 - **The torch.** A cookie (hotspot, corona, faint reflector rings), inverse square, one 2048 shadow map from a lamp held beside the head, and a fake bounce light where the hotspot lands. The exposure is metered on the CPU like a camera would, nine rays, centre-weighted: point it at a wall close by and everything else falls into black; look back at the mouth and the day burns out.
+- **The air.** Reused from day 20's light in the haze (`rays.ts` there, `fog.ts` here): a march from the eye to whatever each pixel sees, half resolution, a fixed dither, blurred on the way back up. There it asks the sun's shadow map; here the torch's, with its cookie and inverse square, so the beam is a cone in the air from beside the head and roots cut dark blades out of it. Steps crowd towards the eye, where the lamp is. The dust is the same air, only thicker: a fall of dirt, a paw, the start the animals give all put a puff of density into the march, which blooms, sinks and clears. A little of the day hangs in the air inside the mouth too.
 - **Matter without textures.** One baked 64³ noise volume that stores its own gradient, so every octave of bump is a single fetch. Soil, stone, bark all read it at their own scales (`gfx.ts`). Octaves finer than a pixel are faded out instead of left to sparkle.
 - **The gait.** We go in the way the owner would, low and at a run. The stride is counted in ground covered, not in time: each forepaw takes the weight in turn, the shoulder on that side drops and the head tips with it (a roll of about 3°), the body swings over the planted paw, every landing is a dip and every push a surge in speed. Where a paw comes down, grit jumps. The torch trails the stride by a beat (`main.ts`).
 - **What our passing does.** Fine roots are verlet strands with a memory of their shape; the head is a ball they cannot enter and they swing back after it. Loose stones on the floor get shoved along, set stones rock in their sockets, and the roof lets dirt go: over the path now and then, and wherever a root was tugged (`flora.ts`, `rocks.ts`, `dust.ts`).
@@ -23,7 +24,7 @@ Drag to look, hold to run (or `W`/`↑`, the wheel, a tap for one short dash). A
 - Metering only the ground made the animals burn out: the meter has to know what the hotspot lands on, and the pool of light gets a ceiling of its own.
 - A torch next to the lens burns everything near it to white. Fine roots get a softened falloff, a cheat that reads as more real than the real thing.
 
-`?clean` hides the furniture, `?auto` crawls in by itself, `?at=N,1.4` starts 1.4 m short of a node (`N` is the den), `?flat` shows the blockout shading.
+`?clean` hides the furniture, `?auto` crawls in by itself, `?at=N,1.4` starts 1.4 m short of a node (`N` is the den), `?flat` shows the blockout shading, `?nofog` the frame without the lit air.
 
 ```sh
 pnpm -C 27 dev

@@ -8,6 +8,7 @@ import { Flora } from './flora';
 import { Dust } from './dust';
 import { buildGrass } from './outside';
 import { Den } from './den';
+import { Fog } from './fog';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -24,6 +25,9 @@ renderer.setClearColor(0x000000, 1);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, 1, 0.012, 80);
 const post = new Post(renderer);
+// the air: ?nofog for the frame without it
+const fog = new Fog(matchMedia('(pointer: coarse)').matches ? 12 : 20);
+fog.on = !params.has('nofog');
 
 // ---- the world ----
 const t0 = performance.now();
@@ -43,11 +47,16 @@ const flora = new Flora(world, rnd);
 const dust = new Dust(world);
 const grass = buildGrass(world, rnd);
 scene.add(...rockMeshes, flora.roots, flora.hairs, grass, dust.crumbs, dust.motes);
-rocks.onShift = (p, amount) => dust.crumble(p, 0.5 + amount * 0.6);
-flora.onTug = (p) => dust.crumble(p, 0.25, 0.7);
+/** dirt comes down from p: the crumbs, and the dust they leave hanging in the air behind them */
+function crumble(p: THREE.Vector3, amount: number, size = 1) {
+  dust.crumble(p, amount, size);
+  fog.puff(tmpC.copy(p).setY(p.y - 0.06), 0.35 + amount * 0.75, 0.05 + 0.03 * amount, 0.2 + 0.2 * amount, 4 + 3 * amount, -0.32);
+}
+rocks.onShift = (p, amount) => crumble(p, 0.5 + amount * 0.6);
+flora.onTug = (p) => crumble(p, 0.25, 0.7);
 const den = new Den(world, rnd, flora.pixel);
 scene.add(den.group);
-den.onStir = (p) => dust.crumble(p, 1.1);
+den.onStir = (p) => crumble(p, 1.1);
 console.log(`burrow: ${world.nx}×${world.ny}×${world.nz} cells, ${soil.geometry.index!.count / 3} triangles, ${(performance.now() - t0) | 0} ms`);
 
 U.uMouth.value.copy(world.entrance).add(new THREE.Vector3(0, 0.12, 0.2));
@@ -190,6 +199,8 @@ function footfall(side: number) {
   if (t >= 0.5) return;
   pawPos.y -= t - 0.006;
   dust.kick(pawPos, pawBack.multiplyScalar(-nav.sign), 4 + Math.floor(Math.random() * 5));
+  // and a little cloud of it that we leave behind us
+  fog.puff(pawPos, 0.4, 0.05, 0.24, 2.4, 0.14);
 }
 
 function crawl(dt: number) {
@@ -358,6 +369,7 @@ function resize() {
   camera.fov = Math.min(96, (2 * Math.atan(Math.tan((62 * Math.PI) / 360) * Math.max(1, 1.25 / camera.aspect)) * 180) / Math.PI);
   camera.updateProjectionMatrix();
   post.setSize(Math.round(w * dpr), Math.round(h * dpr));
+  fog.setSize(Math.round(w * dpr), Math.round(h * dpr));
   const tanV = Math.tan((camera.fov * Math.PI) / 360);
   flora.pixel.value = (2 * tanV) / (h * dpr);
   dust.scale.value = (h * dpr) / (2 * tanV);
@@ -391,7 +403,7 @@ function disturb(dt: number) {
     world.railPoint(e, nav.s + nav.dir * nav.sign * (0.45 + Math.random() * 0.8), tmpA);
     tmpB.set(Math.random() * 0.7 - 0.35, 1, Math.random() * 0.7 - 0.35).normalize();
     const t = world.march(tmpA, tmpB, 1);
-    if (t < 1) dust.crumble(tmpA.addScaledVector(tmpB, t - 0.01), 0.4 + Math.random() * 0.9);
+    if (t < 1) crumble(tmpA.addScaledVector(tmpB, t - 0.01), 0.4 + Math.random() * 0.9);
   }
   dust.update(dt);
   den.update(dt, clock, camPos);
@@ -415,7 +427,8 @@ function tick(dt: number) {
   renderer.setRenderTarget(post.scene);
   renderer.clear();
   renderer.render(scene, camera);
-  post.render(time);
+  fog.update(dt);
+  post.render(time, fog.render(renderer, post.scene, camera));
 }
 let last = performance.now();
 let slowAcc = 0, slowN = 0, slowRuns = 0;
@@ -442,7 +455,7 @@ requestAnimationFrame(frame);
 // dev: jump somewhere. burrow.go('B', 0, yawDeg, pitchDeg) puts the eye on the first edge at node B.
 Object.assign(window, {
   burrow: {
-    world, nav, look, camera, U, post, dust, flora, rocks, den,
+    world, nav, look, camera, U, post, dust, flora, rocks, den, fog,
     go(name: string, along = 0, yaw?: number, pitch = 0) {
       const n = world.nodes.findIndex((x) => x.name === name);
       // arrive on the last edge listed at the node (the one that leads to it), looking the way it runs
