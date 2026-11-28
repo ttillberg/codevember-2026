@@ -283,7 +283,8 @@ void main() {
 const ROCK_VERT = /* glsl */ `
 attribute float aTint;
 attribute float aOpen;
-varying vec3 vP; varying vec3 vO; varying vec3 vNo; varying mat3 vR; varying float vTint; varying float vSky; varying float vDirt;
+attribute float aKind;
+varying vec3 vP; varying vec3 vO; varying vec3 vNo; varying mat3 vR; varying float vTint; varying float vSky; varying float vDirt; varying float vKind;
 void main() {
   // the small ones are mostly the colour of what they lie in
   mat3 M = mat3(instanceMatrix);
@@ -292,43 +293,70 @@ void main() {
   vO = position * sc + aTint * 17.0;
   vNo = normal;
   vec4 wp = instanceMatrix * vec4(position, 1.0);
-  vP = wp.xyz; vTint = aTint; vSky = aOpen; vDirt = 0.6 * smoothstep(0.07, 0.012, sc);
+  vP = wp.xyz; vTint = aTint; vSky = aOpen; vKind = aKind; vDirt = 0.6 * smoothstep(0.07, 0.012, sc);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 
 const ROCK_FRAG = COMMON + /* glsl */ `
 uniform sampler3D uCells;
-varying vec3 vP; varying vec3 vO; varying vec3 vNo; varying mat3 vR; varying float vTint; varying float vSky; varying float vDirt;
+varying vec3 vP; varying vec3 vO; varying vec3 vNo; varying mat3 vR; varying float vTint; varying float vSky; varying float vDirt; varying float vKind;
 const mat3 Q1 = mat3(0.36, 0.48, -0.8, -0.8, 0.6, 0.0, 0.48, 0.64, 0.6);
 const mat3 Q2 = mat3(0.0, 0.8, 0.6, -0.8, 0.36, -0.48, -0.6, -0.48, 0.64);
 void main() {
   vec3 O = vO, No = normalize(vNo);
   float px = footprint(vP);
+  // what it is made of: 0 granite, 1 sandstone, 2 slate, 3 quartz, 4 ironstone, 5 flint (rocks.ts)
+  float kd = floor(vKind + 0.5);
+  float sandst = float(kd == 1.0), slate = float(kd == 2.0), quartz = float(kd == 3.0), iron = float(kd == 4.0), flint = float(kd == 5.0);
+  float gran = 1.0 - sandst - slate - quartz - iron - flint;
   vec4 n1 = nz(Q1 * O * 2.3 + 0.3), n2 = nz(Q2 * O * 8.1), n3 = nz(Q1 * O * 27.0 + 0.4), n4 = nz(Q2 * O * 83.0), n5 = nz(Q1 * O * 210.0 + 0.7);
   float k3 = keep(0.006, px), k4 = keep(0.002, px), k5 = keep(0.0008, px);
-  // broken, not polished: chipped at every scale, and pitted where grains have come away
-  vec3 g = 0.007 * 2.3 * (n1.rgb * Q1) + 0.0048 * 8.1 * (n2.rgb * Q2) + 0.0024 * 27.0 * (n3.rgb * Q1) * k3
-         + 0.0009 * 83.0 * (n4.rgb * Q2) * k4 + 0.0003 * 210.0 * (n5.rgb * Q1) * k5;
+  // bedding, along the stone's own short axis: sandstone in coarse courses, slate in leaves
+  float bed = sandst + slate;
+  float lf = sandst * 46.0 + slate * 130.0 + 1.0;
+  vec4 lam = nz(vec3(O.x * 2.5, O.y * lf, O.z * 2.5) + 0.2);
+  // broken, not polished: chipped at every scale. Slate cleaves flat, quartz and flint break clean, sandstone is all grain
+  float chip = 1.0 - 0.6 * slate - 0.45 * quartz - 0.3 * flint;
+  float grain = 1.0 + 1.2 * sandst - 0.5 * quartz - 0.6 * flint;
+  vec3 g = 0.007 * 2.3 * (n1.rgb * Q1) + chip * (0.0048 * 8.1 * (n2.rgb * Q2) + 0.0024 * 27.0 * (n3.rgb * Q1) * k3)
+         + grain * (0.0009 * 83.0 * (n4.rgb * Q2) * k4 + 0.0003 * 210.0 * (n5.rgb * Q1) * k5);
+  g.y += bed * lam.g * (sandst * 0.0011 * 46.0 + slate * 0.00045 * 130.0);
   vec4 c = texture(uCells, Q2 * O * 9.0);
-  float pit = step(0.8, c.a) * smoothstep(0.32, 0.14, c.r) * keep(0.006, px);
+  float pit = step(0.8 - 0.25 * iron, c.a) * smoothstep(0.32, 0.14, c.r) * keep(0.006, px) * (gran + iron + sandst);
   vec3 N = normalize(No - (g - No * dot(g, No)));
   Surf s;
   s.N = normalize(vR * N);
   vec3 Ng = normalize(vR * No);
-  vec3 grey = vec3(0.105, 0.095, 0.082), tanc = vec3(0.13, 0.095, 0.06), dark = vec3(0.055, 0.05, 0.044);
-  vec3 base = mix(mix(grey, tanc, sat(vTint * 2.0)), dark, sat(vTint * 2.0 - 1.0) * 0.7);
-  base *= 0.8 + 0.35 * n1.a + 0.2 * n2.a;
-  base = mix(base, base * 0.4, smoothstep(0.3, 0.6, n4.a) * k4 * 0.7);
-  base = mix(base, vec3(0.2, 0.18, 0.15), smoothstep(0.4, 0.7, -n4.a) * k4 * 0.4);
-  // it came out of the ground and still wears it: caked on in patches, dusted on top, packed into every pit
+
+  vec3 cGran = mix(mix(vec3(0.105, 0.095, 0.082), vec3(0.13, 0.095, 0.06), sat(vTint * 2.0)), vec3(0.055, 0.05, 0.044), sat(vTint * 2.0 - 1.0) * 0.7);
+  cGran *= 0.8 + 0.35 * n1.a + 0.2 * n2.a;
+  cGran = mix(cGran, cGran * 0.4, smoothstep(0.3, 0.6, n4.a) * k4 * 0.7);
+  cGran = mix(cGran, vec3(0.2, 0.18, 0.15), smoothstep(0.4, 0.7, -n4.a) * k4 * 0.4);
+  vec3 cSand = mix(vec3(0.16, 0.105, 0.055), vec3(0.215, 0.155, 0.085), vTint) * (0.78 + 0.4 * lam.a) * (0.9 + 0.2 * n4.a * k4);
+  vec3 cSlate = mix(vec3(0.042, 0.047, 0.056), vec3(0.074, 0.076, 0.078), vTint) * (0.88 + 0.22 * lam.a);
+  // milky, with clearer veins through it
+  vec3 cQuartz = mix(vec3(0.25, 0.235, 0.205), vec3(0.28, 0.24, 0.185), vTint) * (0.8 + 0.3 * smoothstep(0.25, 0.0, abs(n2.a)));
+  vec3 cIron = mix(vec3(0.125, 0.052, 0.026), vec3(0.165, 0.08, 0.034), vTint) * (0.8 + 0.4 * n2.a);
+  cIron = mix(cIron, vec3(0.23, 0.13, 0.045), sat(n3.a * 1.5) * 0.4 * k3);
+  // flint: a dark glassy heart wherever it has been chipped, a pale chalky rind everywhere else
+  float heart = smoothstep(-0.05, 0.15, n1.a + 0.3 * n2.a);
+  vec3 cFlint = mix(vec3(0.25, 0.24, 0.21), vec3(0.032, 0.033, 0.04), heart);
+  vec3 base = gran * cGran + sandst * cSand + slate * cSlate + quartz * cQuartz + iron * cIron + flint * cFlint;
+
+  // it came out of the ground and still wears it: caked on in patches, dusted on top, packed into every pit.
+  // Less of it holds on what is smooth
   float up = sat(s.N.y * 0.6 + 0.4);
   float dirt = sat(0.25 + vDirt + 0.75 * smoothstep(-0.1, 0.5, n1.a + 0.5 * n2.a) + 0.35 * up + 0.3 * sat(-n3.a) * k3 + pit);
+  dirt *= 1.0 - 0.3 * (quartz + flint * heart + slate);
   vec3 soilc = mix(vec3(0.12, 0.07, 0.036), vec3(0.17, 0.105, 0.055), sat(n2.a + 0.5));
   base = mix(base, soilc, dirt * 0.88);
   s.alb = max(base * (1.0 - 0.6 * pit), vec3(0.008));
-  s.rough = mix(0.78, 0.96, dirt); s.f0 = mix(0.04, 0.02, dirt); s.trans = 0.0; s.near = 0.0;
+  float rough = gran * 0.78 + sandst * 0.96 + slate * 0.58 + quartz * 0.42 + iron * 0.9 + flint * mix(0.92, 0.3, heart);
+  s.rough = mix(rough, 0.96, dirt);
+  s.f0 = mix(0.04 + 0.012 * quartz, 0.02, dirt);
+  s.trans = 0.22 * quartz * (1.0 - dirt); s.near = 0.0;
   s.ao = (0.7 + 0.3 * sat(0.5 + n2.a)) * (1.0 - 0.6 * pit);
-  s.glint = step(0.985, hash13(floor(O * 1100.0))) * keep(0.0012, px) * (1.0 - dirt);
+  s.glint = step(0.985 - 0.02 * quartz, hash13(floor(O * 1100.0))) * keep(0.0012, px) * (1.0 - dirt) * (gran + sandst * 0.6 + 2.0 * quartz);
   gl_FragColor = vec4(shade(vP, s, Ng, vSky), 1.0);
 }`;
 
