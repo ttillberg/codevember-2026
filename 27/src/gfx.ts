@@ -135,6 +135,10 @@ vec3 daylight(vec3 P, Surf s, float sky) {
 }
 
 vec3 shade(vec3 P, Surf s, vec3 Ng, float sky) {
+  // The frame is multisampled, and a sliver of a triangle (a bone end on, the lip of the hole) is shaded at a pixel
+  // centre that can lie well off it: what was interpolated across it is then extrapolated, to anything at all, and a
+  // colour far below nothing or far above the day comes out, for one frame. Brought back to what a surface can be.
+  sky = sat(sky); s.ao = sat(s.ao); s.alb = clamp(s.alb, 0.0, 2.0);
   vec3 V = normalize(cameraPosition - P);
   vec3 c = torch(P, V, s, Ng) + bounce(P, s) + daylight(P, s, sky);
   if (sky > 0.0) {
@@ -319,7 +323,7 @@ varying vec3 vP; varying vec3 vN; varying float vAO; varying float vSky; varying
 uniform float uFlat;
 void main() {
   vec3 Ng = normalize(vN);
-  Surf s = soil(vP, Ng, vAO, vSky);
+  Surf s = soil(vP, Ng, sat(vAO), sat(vSky));
   // what grows here stains the ground under it: the shells over it (growth.ts) are only the strands
   if (vGrow.x + vGrow.y + vGrow.z > 0.01) {
     float gp = 0.6 + 0.6 * nz(vP * 37.0).a;
@@ -784,6 +788,8 @@ const mat3 S2 = mat3(0.0, 0.8, 0.6, -0.8, 0.36, -0.48, -0.6, -0.48, 0.64);
 varying vec3 vP; varying vec3 vBase; varying vec3 vN; varying vec3 vGrow; varying float vT; varying float vAO; varying float vSky;
 // lit like everything else, but cheaply: one tap of the shadow map, no gloss. There are many layers of this.
 vec3 shadeFuzz(vec3 P, Surf s, vec3 Ng, float sky) {
+  // (as in shade(): nothing that was extrapolated off a sliver gets through)
+  sky = sat(sky); s.ao = sat(s.ao); s.alb = clamp(s.alb, 0.0, 2.0);
   vec3 L = uLightPos - P;
   float d2 = dot(L, L), d = sqrt(d2);
   vec3 l = L / d;
