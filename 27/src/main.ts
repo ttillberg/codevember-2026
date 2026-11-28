@@ -722,7 +722,7 @@ function tick(dt: number) {
 // The beast by itself, out of the burrow and out of the game: stood in the open air over a grid that runs under it at
 // the pace it is walking, lit by the torch from wherever we look at it from. Drag turns round it, the wheel comes
 // nearer. The panel picks the clip, the pace, how fast time goes. Nothing else of the place is drawn or run.
-const show = { clip: 'idle', walk: true, speed: 0.24, rate: 1, floor: true, exposure: 1, dist: 0.8, yaw: 2.4, pitch: -0.25, lastYaw: 0, lastPitch: 0, walked: 0 };
+const show = { clip: 'idle', walk: true, speed: 0.24, rate: 1, floor: true, exposure: 1, dist: 0.85, yaw: 1.05, pitch: -0.22, lastYaw: 0, lastPitch: 0, walked: 0 };
 const stageAt = new THREE.Vector3(0, 1.6, 3.2);
 const stageFloor = new THREE.GridHelper(3, 30, 0x9a9a9a, 0x5a5a5a);
 if (beastStage) {

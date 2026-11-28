@@ -1,5 +1,5 @@
-# What lives further in: a low burrowing mammal with a deep-sea fish's mouth, built parametrically, rigged and
-# animated, for public/beast.glb.
+# What lives further in: a low, starved, bare thing with a deep-sea fish's mouth, built parametrically, rigged and
+# animated, for public/beast.glb. (It began as a burrowing mammal in fur: FUR below is what is left of that, none.)
 #
 #   /Applications/Blender.app/Contents/MacOS/Blender -b -P 27/model/beast.py             # build and export
 #   /Applications/Blender.app/Contents/MacOS/Blender -b -P 27/model/beast.py -- render   # and process/beast-*.png
@@ -39,6 +39,7 @@ TAU = math.pi * 2
 rnd = random.Random(27)
 
 VOXEL = 0.0034        # the remesh grid
+FUR = 0.0             # how much of the fur it was first given is left: none, it is bare
 SKIN_TRIS = 21000     # the fused skin after decimation
 FPS = 60
 
@@ -84,14 +85,16 @@ REST_GAPE = 35.0
 SKULL_LEN, JAW_LEN = 0.140, 0.160     # the lower jaw is the longer, its fangs pass in front of the snout
 
 # body: z, centre height, half width, height above the centre, below it
+# (starved: narrow hips, a belly drawn up behind a deeper chest, and a head wider than any of it. The front of it is
+# left as it was: that is the back of the mouth)
 BODY = [
-    (-0.335, 0.098, 0.030, 0.030, 0.030),
-    (-0.310, 0.102, 0.072, 0.066, 0.060),
-    (-0.250, 0.108, 0.100, 0.086, 0.076),
-    (-0.150, 0.112, 0.107, 0.088, 0.082),
-    (-0.030, 0.113, 0.105, 0.087, 0.083),
-    (0.050, 0.116, 0.098, 0.084, 0.080),
-    (0.100, 0.114, 0.078, 0.064, 0.064),
+    (-0.335, 0.098, 0.020, 0.022, 0.020),
+    (-0.310, 0.102, 0.042, 0.044, 0.034),
+    (-0.250, 0.108, 0.058, 0.058, 0.042),
+    (-0.150, 0.112, 0.054, 0.058, 0.038),
+    (-0.030, 0.113, 0.064, 0.064, 0.056),
+    (0.050, 0.116, 0.078, 0.070, 0.066),
+    (0.100, 0.114, 0.072, 0.062, 0.062),
     (0.130, 0.106, 0.045, 0.042, 0.040),
 ]
 # skull: along the tooth line from the hinge, half width, height above the tooth line. Tall and blunt, a
@@ -105,7 +108,7 @@ PALATE, TROUGH = 0.42, 0.34           # how far the palate is vaulted and the ja
 # limbs, the left one (+x); the right is mirrored
 SHOULDER, ELBOW, WRIST, KNUCKLE = V(0.070, 0.118, 0.050), V(0.112, 0.088, 0.030), V(0.100, 0.030, 0.125), V(0.100, 0.018, 0.176)
 HIP, KNEE, ANKLE, TOE = V(0.060, 0.105, -0.250), V(0.105, 0.065, -0.175), V(0.100, 0.030, -0.255), V(0.105, 0.012, -0.190)
-TAIL0, TAIL1 = V(0, 0.100, -0.322), V(0, 0.086, -0.360)
+TAIL0, TAIL1 = V(0, 0.100, -0.322), V(0, 0.072, -0.500)   # a whip of a tail, half as long again as it was thick
 EYE_S, EYE_U, EYE_V, EYE_R = 0.048, 0.0615, 0.033, 0.0145
 
 
@@ -262,9 +265,9 @@ def build_pile():
 
     # shoulders and haunches, the muscle over each
     for sx, side in ((1, 'L'), (-1, 'R')):
-        P.ellipsoid(V(sx * 0.050, 0.148, 0.030), (0.050, 0.046, 0.075), 'shoulder_' + side)
-        P.ellipsoid(V(sx * 0.062, 0.112, -0.225), (0.056, 0.062, 0.078), 'haunch_' + side)
-    P.capsule(TAIL0, 0.024, TAIL1, 0.010, 'tail')
+        P.ellipsoid(V(sx * 0.046, 0.140, 0.030), (0.036, 0.034, 0.058), 'shoulder_' + side)
+        P.ellipsoid(V(sx * 0.050, 0.112, -0.225), (0.036, 0.044, 0.060), 'haunch_' + side)
+    P.capsule(TAIL0, 0.017, TAIL1, 0.0045, 'tail')
 
     # the ridge down the back: bare knobs, a big one and a small one each side, from the skull to the rump
     z, i = -0.305, 0
@@ -272,11 +275,29 @@ def build_pile():
         cy, a, bt, bb = body_at(z)
         top = cy + bt
         big = 1.0 + 0.22 * math.sin(i * 2.4)
-        P.ellipsoid(V(rnd.uniform(-0.002, 0.002), top - 0.002, z), (0.0105 * big, 0.0090 * big, 0.0145 * big), 'ridge', n=12, m=8)
+        P.ellipsoid(V(rnd.uniform(-0.002, 0.002), top - 0.001, z), (0.0085 * big, 0.0125 * big, 0.0125 * big), 'ridge', n=12, m=8)
         for sx in (1, -1):
             P.ellipsoid(V(sx * (0.0170 + rnd.uniform(-0.002, 0.002)), top - 0.0055, z + 0.013), (0.0078, 0.0064, 0.0108), 'ridge', n=10, m=6)
         z += 0.0265
         i += 1
+
+    # the ribs: there is nothing on them. Each a thin hoop standing proud of the flank, from beside the ridge down
+    # and back to the edge of the belly, from behind the shoulder to in front of the haunch
+    z = -0.205
+    while z < 0.02:
+        for sx in (1, -1):
+            pts = []
+            for k in range(8):
+                th = math.radians(lerp(66, -58, k / 7))
+                zz = z - 0.016 * (1 - math.sin(th))          # raked back as it comes down
+                cy, a, bt, bb = body_at(zz)
+                c, sn = math.cos(th), math.sin(th)
+                u = (a + 0.0028) * abs(c) ** 0.9
+                v = ((bt if sn >= 0 else bb) + 0.0028) * math.copysign(abs(sn) ** 0.9, sn)
+                pts.append(V(sx * u, cy + v, zz))
+            for k, (p0, p1) in enumerate(zip(pts, pts[1:])):
+                P.capsule(p0, lerp(0.0050, 0.0036, k / 6), p1, lerp(0.0050, 0.0036, (k + 1) / 6), 'rib', n=8)
+        z += 0.029
 
     # skull and jaw: a dome over the tooth line and hollow on the other side of it
     def shell(rows, length, pt, sign, hollow, crown):
@@ -341,16 +362,16 @@ def build_pile():
         side = 'L' if sx > 0 else 'R'
         mx = V(sx, 1, 1)
         # foreleg: out and down to the elbow, forward and down to the wrist, a broad flat paw
-        P.capsule(SHOULDER * mx, 0.040, ELBOW * mx, 0.030, 'arm_upper_' + side)
-        P.capsule(ELBOW * mx, 0.030, WRIST * mx, 0.022, 'arm_lower_' + side)
-        P.ellipsoid(V(0.107, 0.064, 0.072) * mx, (0.024, 0.026, 0.038), 'arm_lower_' + side, t=0.4)
+        P.capsule(SHOULDER * mx, 0.026, ELBOW * mx, 0.019, 'arm_upper_' + side)
+        P.capsule(ELBOW * mx, 0.019, WRIST * mx, 0.015, 'arm_lower_' + side)
+        P.ellipsoid(V(0.107, 0.064, 0.072) * mx, (0.015, 0.017, 0.030), 'arm_lower_' + side, t=0.4)
         P.ellipsoid(V(0.100, 0.021, 0.153) * mx, (0.035, 0.0145, 0.036), 'paw_' + side)
         for i in range(4):
             p0, p1 = finger(i, sx)
             P.capsule(p0, 0.0098, p1, 0.0080, f'finger{i}_' + side, n=12)
         # hind leg: thigh forward to the knee, shank back to the hock, the foot flat and forward
-        P.capsule(HIP * mx, 0.050, KNEE * mx, 0.034, 'leg_upper_' + side)
-        P.capsule(KNEE * mx, 0.032, ANKLE * mx, 0.019, 'leg_lower_' + side)
+        P.capsule(HIP * mx, 0.030, KNEE * mx, 0.021, 'leg_upper_' + side)
+        P.capsule(KNEE * mx, 0.020, ANKLE * mx, 0.014, 'leg_lower_' + side)
         P.ellipsoid(V(0.103, 0.015, -0.218) * mx, (0.024, 0.0125, 0.044), 'foot_' + side)
         for i in range(4):
             p0, p1 = toe(i, sx)
@@ -420,7 +441,7 @@ def relax(val, edges, factor, iters):
     return val
 
 
-SOFTEN = {'body': 1.0, 'shoulder': 1.0, 'haunch': 1.0, 'tail': 0.8, 'arm': 0.8, 'leg': 0.8, 'paw': 0.45, 'finger': 0.35, 'foot': 0.4, 'skull': 0.3, 'jaw': 0.3, 'lip': 0.3, 'plate': 0.3, 'ridge': 0.55, 'socket': 0.22}
+SOFTEN = {'body': 1.0, 'shoulder': 1.0, 'haunch': 1.0, 'tail': 0.8, 'arm': 0.8, 'leg': 0.8, 'paw': 0.45, 'finger': 0.35, 'foot': 0.4, 'skull': 0.3, 'jaw': 0.3, 'lip': 0.3, 'plate': 0.3, 'ridge': 0.55, 'rib': 0.3, 'socket': 0.22}
 
 
 def fuse(pile, look):
@@ -496,7 +517,8 @@ def srgb(r, g, b):
     return V(r, g, b) ** 2.2
 
 
-C_SKIN, C_SKIN_PALE, C_KNOB, C_SOCKET, C_PAW = srgb(0.36, 0.32, 0.28), srgb(0.44, 0.39, 0.34), srgb(0.40, 0.37, 0.33), srgb(0.07, 0.055, 0.05), srgb(0.34, 0.28, 0.25)
+# (old bone, gone yellow: not the grey of something dug up)
+C_SKIN, C_SKIN_PALE, C_KNOB, C_SOCKET, C_PAW = srgb(0.40, 0.36, 0.28), srgb(0.56, 0.52, 0.41), srgb(0.66, 0.62, 0.49), srgb(0.08, 0.065, 0.05), srgb(0.46, 0.41, 0.32)
 C_HIDE = srgb(0.10, 0.08, 0.07)
 C_GUM, C_THROAT, C_TONGUE = srgb(0.80, 0.42, 0.44), srgb(0.34, 0.08, 0.10), srgb(0.86, 0.47, 0.50)
 C_TOOTH0, C_TOOTH1 = srgb(0.84, 0.74, 0.52), srgb(0.95, 0.92, 0.82)
@@ -516,9 +538,9 @@ def describe(part, t, ins, p):
     x, y, z = p
     side = part[-1]
     rel = p - HINGE
-    if part in ('body', 'ridge'):
+    if part in ('body', 'ridge', 'rib'):
         w = spine_weights(z)
-        if part == 'ridge':
+        if part != 'body':
             return False, 0.0, C_KNOB, w
         cy = body_at(z)[0]
         fur = 1.0 - ss(0.090, 0.125, z)
@@ -629,7 +651,7 @@ def skin(model, me, look):
         for b, x in w.items():
             W[i, idx[b]] = x
     head = np.array([p.startswith(('skull', 'jaw', 'lip', 'plate', 'socket', 'paw', 'finger', 'foot', 'ridge')) for p in part])
-    fur = relax(fur, edges, 0.5, 6)[:, 0]
+    fur = relax(fur, edges, 0.5, 6)[:, 0] * FUR
     fur = np.where(head, np.minimum(fur, 0.35) * (fur > 0.02), fur)   # only a fringe of it reaches on to bare parts
     fur[mouth > 0.5] = 0.0
     fur = np.clip(relax(fur, edges, 0.5, 1)[:, 0], 0, 1)
@@ -1061,8 +1083,10 @@ SETTLE = sym({'spine1@': (0, -0.011, -0.004), 'spine3': (-2, 0, 0), 'head': (-4,
 # the pairs; the spine bends from side to side with it, hips one way and shoulders the other.
 CRAWL_T = 1.1                         # seconds a cycle
 CRAWL_STRIDE = 0.264                  # metres of ground a cycle
-CRAWL_DUTY = 0.64                     # of the cycle each paw is on the ground
-CRAWL_LIFT = {'arm_L': 0.10, 'leg_R': 0.04, 'arm_R': 0.60, 'leg_L': 0.54}   # when each paw leaves the ground, of the cycle
+CRAWL_DUTY = 0.56                     # of the cycle each paw is on the ground
+# when each paw leaves the ground, of the cycle (they come down at 0.46, 0.40, 0.96 and 0.90: the page times its
+# footfalls by that)
+CRAWL_LIFT = {'arm_L': 0.02, 'leg_R': 0.96, 'arm_R': 0.52, 'leg_L': 0.46}
 CRAWL_MID = {'arm': 0.090 - WRIST[2], 'leg': -0.270 - ANKLE[2]}             # the middle of its stance, from where it rests
 
 
@@ -1076,7 +1100,8 @@ def crawl_foot(limb, tau):
         # planted: straight back, at the speed the ground goes by
         return mid + half - CRAWL_STRIDE * (u - swing), None
     s = u / swing
-    q = s * s * s * (s * (6 * s - 15) + 10)          # over the ground it leaves and arrives at rest
+    # over the ground it leaves and arrives at rest; and unhurried in between: a paw is carried forward, not thrown
+    q = lerp(s * s * (3 - 2 * s), s * s * s * (s * (6 * s - 15) + 10), 0.25)
     return mid - half + CRAWL_STRIDE * (q - u), s
 
 
@@ -1084,7 +1109,7 @@ def crawl(t):
     tau = t / CRAWL_T
     wave = lambda lag: math.cos(TAU * (tau - lag))
     # each girdle is turned furthest as its paw comes down: the hip or shoulder of the reaching leg forward
-    hips, chest = 7.5 * wave(0.40), -8.5 * wave(0.46)
+    hips, chest = 9.5 * wave(0.40), -10.5 * wave(0.46)
     roll1, roll3 = 2.0 * math.sin(TAU * (tau - 0.04)), -2.5 * math.sin(TAU * (tau - 0.10))   # dipping to the lifted paw
     pose = {
         # low, and kept over its feet: the bend alone would throw the chest sideways
@@ -1094,7 +1119,8 @@ def crawl(t):
         'head': (-2.0 + 0.6 * math.sin(2 * TAU * tau), -0.85 * chest, -0.7 * roll3),
         'jaw': (-14 + 3.0 * math.sin(2 * TAU * tau + 0.5), 0, 0),
         'tongue1': (-2, 2 * wave(0.2), 0), 'tongue2': (-3 * math.sin(2 * TAU * tau), 3 * wave(0.3), 0),
-        'tail': (-5, -13 * wave(0.47), 0),
+        # (the tail comes after the hips, a beat late)
+        'tail': (-3, -17 * wave(0.56), 0),
     }
     for limb in CRAWL_LIFT:
         side = limb[-1]
