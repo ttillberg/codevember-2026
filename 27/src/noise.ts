@@ -90,3 +90,39 @@ export function bakeNoiseTexture(size = 64, seed = 7): THREE.Data3DTexture {
   tex.needsUpdate = true;
   return tex;
 }
+
+/**
+ * Tileable cells (Worley) for the shaders: r = distance to the nearest point, g = how much further the second nearest
+ * is (small along the walls between cells: cracks), b and a = two numbers of the nearest cell's own. Distances in cells.
+ */
+export function bakeCellTexture(size = 64, cells = 8, seed = 31): THREE.Data3DTexture {
+  const rnd = mulberry32(seed);
+  const C = cells, n = size;
+  const pts = new Float32Array(C * C * C * 5);
+  for (let i = 0; i < C * C * C; i++) pts.set([rnd(), rnd(), rnd(), rnd(), rnd()], i * 5);
+  const data = new Uint16Array(n * n * n * 4);
+  const h = THREE.DataUtils.toHalfFloat;
+  let o = 0;
+  for (let z = 0; z < n; z++)
+    for (let y = 0; y < n; y++)
+      for (let x = 0; x < n; x++) {
+        const px = ((x + 0.5) / n) * C, py = ((y + 0.5) / n) * C, pz = ((z + 0.5) / n) * C;
+        const cx = Math.floor(px), cy = Math.floor(py), cz = Math.floor(pz);
+        let f1 = 9, f2 = 9, id = 0;
+        for (let k = -1; k <= 1; k++)
+          for (let j = -1; j <= 1; j++)
+            for (let i = -1; i <= 1; i++) {
+              const q = ((((cx + i) % C) + C) % C) + C * ((((cy + j) % C) + C) % C) + C * C * ((((cz + k) % C) + C) % C);
+              const d = Math.hypot(cx + i + pts[q * 5] - px, cy + j + pts[q * 5 + 1] - py, cz + k + pts[q * 5 + 2] - pz);
+              if (d < f1) { f2 = f1; f1 = d; id = q; } else if (d < f2) f2 = d;
+            }
+        data[o++] = h(f1); data[o++] = h(f2 - f1); data[o++] = h(pts[id * 5 + 3]); data[o++] = h(pts[id * 5 + 4]);
+      }
+  const tex = new THREE.Data3DTexture(data, n, n, n);
+  tex.format = THREE.RGBAFormat;
+  tex.type = THREE.HalfFloatType;
+  tex.minFilter = tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = tex.wrapT = tex.wrapR = THREE.RepeatWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}

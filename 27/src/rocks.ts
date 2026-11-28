@@ -23,12 +23,13 @@ function boulder(seed: number, detail: number, rnd: () => number): THREE.BufferG
   for (let i = 0; i < pos.count; i++) {
     d.fromBufferAttribute(pos, i).normalize();
     // soft minimum over the cutting planes: flat faces, worn edges
-    let acc = Math.exp(-16);
+    // (a soft minimum, but a hard enough one: faces and edges, not a pebble out of a stream)
+    let acc = Math.exp(-30);
     for (const [n, h] of planes) {
       const c = d.dot(n);
-      if (c > 0.05) acc += Math.exp((-16 * h) / c);
+      if (c > 0.05) acc += Math.exp((-30 * h) / c);
     }
-    let r = -Math.log(acc) / 16;
+    let r = -Math.log(acc) / 30;
     r *= 1 + 0.07 * P.n(d.x * 2.4, d.y * 2.4, d.z * 2.4) + 0.025 * P.n(d.x * 7 + 3, d.y * 7, d.z * 7);
     pos.setXYZ(i, d.x * r * sx, d.y * r * sy, d.z * r * sz);
   }

@@ -1,7 +1,7 @@
 // Light and matter. Every surface runs the same three lights: the torch (a cookie, 1/d², a shadow map), a fake bounce
 // off whatever the hotspot lands on, and the day coming in through the mouth of the burrow.
 import * as THREE from 'three';
-import { bakeNoiseTexture } from './noise';
+import { bakeNoiseTexture, bakeCellTexture } from './noise';
 
 export const SHADOW_RES = 2048;
 export const LIGHT_COL = new THREE.Vector3(1.0, 0.86, 0.66);
@@ -9,6 +9,7 @@ export const LIGHT_COL = new THREE.Vector3(1.0, 0.86, 0.66);
 export const U = {
   uTime: { value: 0 },
   uNoise: { value: bakeNoiseTexture(64, 7) as THREE.Texture },
+  uCells: { value: bakeCellTexture(64, 8) as THREE.Texture },
   uShadow: { value: null as THREE.Texture | null },
   uShadowRes: { value: SHADOW_RES },
   uLightVP: { value: new THREE.Matrix4() },
@@ -131,62 +132,123 @@ float keep(float feature, float px) { return sat(feature / (px * 2.5) - 0.6); }
 `;
 
 const SOIL = /* glsl */ `
+uniform sampler3D uCells;
+vec4 cz(vec3 p) { return texture(uCells, p); }
+// The noise volumes tile, and a wall shows it: the same lump every hand's breadth, in rows. So every octave looks at
+// the ground through its own rotation, the middle ones twice over at scales that share no measure, and all of them
+// through a warp from the octave below. Nothing lines up with anything, or with the wall.
+const mat3 R1 = mat3(0.36, 0.48, -0.8, -0.8, 0.6, 0.0, 0.48, 0.64, 0.6);
+const mat3 R2 = mat3(0.0, 0.8, 0.6, -0.8, 0.36, -0.48, -0.6, -0.48, 0.64);
+const mat3 R3 = mat3(0.6, 0.0, 0.8, 0.48, 0.8, -0.36, -0.64, 0.6, 0.48);
+
 float turfMask(vec3 P) {
   float t = clamp(P.z / 1.8, 0.0, 1.0);
   vec3 q = P - vec3(0.05 * t, -0.05 - 0.2 * t, 1.8 * t);
   q.y *= 0.8;
   return sat((length(q) - (0.62 + 0.25 * t + 0.2 * nz(P * 0.35).a)) / 0.25);
 }
+// the ground lies in layers (world.ts has the same two lines, and weathers the walls by them)
+float strataY(vec3 P) { return P.y + 0.1 * sin(P.x * 1.3 + 0.7 * sin(P.z * 0.9)) + 0.07 * sin(P.z * 1.7 + P.x * 0.6); }
+float band(float y, float c, float w) { return 1.0 - smoothstep(w * 0.4, w, abs(y - c)); }
+// rounded lumps parted by creases, out of a noise that runs smoothly through zero
+float billow(float h) { return sqrt(h * h + 0.02); }
 
 Surf soil(vec3 P, vec3 N, float ao, float sky) {
   float px = footprint(P);
-  vec4 n0 = nz(P * 0.37 + 0.11);
-  vec4 n1 = nz(P * 1.9);
-  vec4 n2 = nz(P * 7.3 + 0.37);
-  vec4 n3 = nz(P * 23.0 + 0.61);
-  vec4 n4 = nz(P * 71.0 + 0.23);
-  vec4 n5 = nz(P * 190.0 + 0.5);
-  float k2 = keep(0.023, px), k3 = keep(0.007, px), k4 = keep(0.0023, px), k5 = keep(0.0009, px);
-  // some stretches of wall are cloddy, some packed smooth
-  float rough0 = sat(0.6 + 0.9 * nz(P * 0.83 + 0.7).a);
-  k2 *= mix(0.25, 1.0, rough0); k3 *= mix(0.5, 1.0, rough0);
-  // clods and crumbs: rounded tops pressed into the wall
-  float t2 = sat((n2.a + 0.15) / 0.75), c2 = t2 * t2 * (3.0 - 2.0 * t2);
-  vec3 g2 = n2.rgb * (6.0 * t2 * (1.0 - t2) / 0.75);
-  float t3 = sat((n3.a + 0.05) / 0.6), c3 = t3 * t3 * (3.0 - 2.0 * t3);
-  vec3 g3 = n3.rgb * (6.0 * t3 * (1.0 - t3) / 0.6);
-  vec3 g = 0.010 * 1.9 * n1.rgb
-         + 0.0052 * 7.3 * g2 * k2
-         + 0.0024 * 23.0 * g3 * k3
-         + 0.00095 * 71.0 * n4.rgb * k4
-         + 0.00034 * 190.0 * n5.rgb * k5;
+  float under = 1.0 - sky;
+  vec4 wA = nz(R1 * P * 0.31 + 0.11), wB = nz(R2 * P * 0.19 + 0.57);
+  vec4 n1 = nz(R3 * P * 1.9);
+  vec3 Pw = P + (n1.rgb * R3) * 0.0028 + (wA.rgb * R1) * 0.006;
+
+  // ---- where we are: what kind of ground this is ----
+  float yy = strataY(P) + 0.035 * n1.a + 0.05 * wA.a;
+  float top = max(smoothstep(-0.52, -0.28, yy), sky);                       // dark crumbly topsoil, the first stretch in
+  float gravel = sat(band(yy, -0.93, 0.11) + 0.7 * band(yy, -0.36, 0.05) + sat(wB.a * 2.4 - 1.0)) * under; // stony seams and lenses
+  float flr = smoothstep(0.45, 0.8, N.y) * under;                            // trodden: its own dust lies over whatever layer it cuts
+  float steep = 1.0 - N.y * N.y;                                             // a layer shows as a line on a wall, as a smear on a ledge
+  float sand = sat(band(yy, -0.69, 0.028) + band(yy, -1.2, 0.034)) * (1.0 - gravel) * (1.0 - 0.9 * flr) * (0.35 + 0.65 * steep) * under;                  // thin pale seams
+  float damp = sat(smoothstep(-1.2, -1.6, yy) * 0.8 + sat(-wB.a * 2.4 - 0.9)) * under;                      // deep down, and in patches
+  float clay = (1.0 - top) * (1.0 - sand);
+  float cracked = clay * sat(wA.a * 2.2 - 0.2) * (1.0 - flr) * (1.0 - damp) * (1.0 - gravel);
+
+  // ---- relief ----
+  float k2 = keep(0.022, px), k3 = keep(0.0065, px), k4 = keep(0.0022, px), k5 = keep(0.0008, px);
+  vec4 a2 = nz(R1 * Pw * 6.3), b2 = nz(R2 * Pw * 8.9 + 0.37);
+  vec4 a3 = nz(R3 * Pw * 21.0 + 0.61), b3 = nz(R1 * Pw * 29.0 + 0.2);
+  vec4 n4 = nz(R2 * P * 67.0 + 0.23), n5 = nz(R3 * P * 183.0 + 0.5);
+  float h2 = (a2.a + b2.a) * 0.7, h3 = (a3.a + b3.a) * 0.7;
+  vec3 g2 = ((a2.rgb * R1) * 6.3 + (b2.rgb * R2) * 8.9) * 0.7;
+  vec3 g3 = ((a3.rgb * R3) * 21.0 + (b3.rgb * R1) * 29.0) * 0.7;
+  float c2 = billow(h2), c3 = billow(h3);
+  // how lumpy, cloddy and crumbly each kind is; the floor is pressed flat, wet ground slumps smooth
+  float even = (1.0 - 0.55 * flr) * (1.0 - 0.4 * damp);
+  float A1 = mix(0.010, 0.006, sand);
+  float A2 = (0.0046 * clay + 0.0068 * top + 0.003 * gravel) * (1.0 - 0.3 * sand) * even * k2;
+  float A3 = (0.0021 * clay + 0.0032 * top + 0.0022 * gravel + 0.0012 * sand) * even * k3;
+  float A4 = mix(0.0011, 0.0024, sand) * k4, A5 = mix(0.0004, 0.0009, sand) * k5; // sand is all grain
+  vec3 g = A1 * 1.9 * (n1.rgb * R3) + A2 * (h2 / c2) * g2 + A3 * (h3 / c3) * g3 + A4 * 67.0 * (n4.rgb * R2) + A5 * 183.0 * (n5.rgb * R3);
+  // the fine bedding inside a layer: thin level lines, laid down one at a time
+  vec4 st = nz(vec3(P.x * 1.7, yy * 31.0, P.z * 1.7) + 0.4);
+  float lay = (clay * 0.8 + sand) * steep * steep * (1.0 - top);
+  g.y += 0.0011 * 31.0 * st.g * lay;
+
+  // cells: stones each of their own, the cracks of clay drying, the holes of whatever lives in a wall
+  vec4 cl = cz(R2 * Pw * 5.5 + 0.3), cs = cz(R1 * P * 15.0 + 0.1), cc = cz(R3 * Pw * 2.3);
+  float s1 = step(cl.b, 0.025 + 0.7 * gravel + 0.14 * flr + 0.04 * top) * keep(0.01, px);
+  float q1 = cl.r / (0.2 + 0.2 * cl.a);
+  float dome1 = sqrt(max(1.0 - q1 * q1, 0.0)) * s1;
+  float s2 = step(cs.b, 0.02 + 0.5 * gravel + 0.16 * flr + 0.05 * top + 0.2 * sand) * keep(0.004, px);
+  float q2 = cs.r / (0.22 + 0.2 * cs.a);
+  float dome2 = sqrt(max(1.0 - q2 * q2, 0.0)) * s2;
+  float crack = smoothstep(0.07, 0.01, cc.g) * cracked * keep(0.004, px);
+  float pit = step(0.975, cs.a) * sat(wA.a * 3.0 + 0.6) * (1.0 - s2) * smoothstep(0.3, 0.16, cs.r) * (1.0 - flr) * (1.0 - sand) * keep(0.004, px)
+            + step(0.965, cl.a) * (1.0 - s1) * smoothstep(0.26, 0.14, cl.r) * (1.0 - flr) * keep(0.008, px);
+  pit = sat(pit) * under;
+  float hW = 0.0055 * dome1 + 0.0022 * dome2 - 0.004 * crack - 0.006 * pit;
+  // (their slope from the screen's own derivatives: the cells carry no gradient)
+  vec3 dpx = dFdx(P), dpy = dFdy(P);
+  vec3 e1 = cross(dpy, N), e2 = cross(N, dpx);
+  float det = dot(dpx, e1);
+  vec3 gW = (dFdx(hW) * e1 + dFdy(hW) * e2) * (sign(det) / (abs(det) + 1e-12));
+  gW *= min(1.0, 2.5 / (length(gW) + 1e-5));
+
   Surf s;
-  s.N = normalize(N - (g - N * dot(g, N)));
-  float cav = sat(0.5 + 0.35 * n1.a + 0.45 * (c2 - 0.5) + 0.3 * (c3 - 0.5) * k3 + 0.25 * n4.a * k4);
-  vec3 umber = vec3(0.055, 0.030, 0.016), brown = vec3(0.150, 0.082, 0.040), red = vec3(0.200, 0.085, 0.038), ochre = vec3(0.330, 0.215, 0.110);
-  vec3 alb = mix(brown, red, sat(n0.a * 0.9 + 0.45));
-  alb = mix(alb, umber, sat(0.5 - n1.a * 0.6) * 0.35);
-  // the dry crust on whatever stands proud
-  alb = mix(alb, ochre, (0.4 * smoothstep(0.5, 0.95, cav) + 0.12 * sat(n4.a) * k4) * (1.0 - 0.65 * sky));
-  alb *= mix(0.72, 1.1, cav);
-  // little stones in the mix
-  float st = smoothstep(0.66, 0.78, n3.a) * k3;
-  vec3 stone = mix(vec3(0.30, 0.27, 0.23), vec3(0.42, 0.34, 0.25), sat(n4.a + 0.5));
-  alb = mix(alb, stone, st * 0.7);
+  s.N = normalize(N - (g - N * dot(g, N)) - gW);
+
+  // ---- colour ----
+  float cav = sat(0.5 + 0.3 * n1.a + 0.45 * (c2 - 0.6) * k2 + 0.3 * (c3 - 0.6) * k3 + 0.2 * n4.a * k4);
+  vec3 cClay = mix(vec3(0.135, 0.078, 0.04), vec3(0.165, 0.076, 0.036), sat(wA.a * 0.9 + 0.45));
+  cClay = mix(cClay, vec3(0.25, 0.17, 0.095), sat(0.26 * smoothstep(0.55, 0.95, cav) + 0.14 * sat(st.a) * lay));
+  vec3 cTop = mix(vec3(0.045, 0.027, 0.016), vec3(0.085, 0.05, 0.027), sat(n1.a * 0.8 + 0.5));
+  vec3 cSand = vec3(0.2, 0.142, 0.08) * (0.8 + 0.3 * st.a + 0.25 * n4.a * k4);
+  vec3 alb = mix(cClay, cTop, top);
+  alb = mix(alb, vec3(0.19, 0.135, 0.082), gravel * 0.7 * (1.0 - top));
+  alb = mix(alb, cSand, sand * 0.65);
+  // where it never dries: darker, and greyed in patches where the iron has gone out of it
+  alb = mix(alb, mix(alb, vec3(0.12, 0.115, 0.09), sat(wB.r * 0.12 + 0.3)) * 0.6, damp);
+  alb = mix(alb, vec3(0.2, 0.135, 0.082), 0.3 * flr);
+  alb *= mix(0.68, 1.1, cav) * (1.0 - 0.7 * crack) * (1.0 - 0.85 * pit);
+  float dome = max(dome1, dome2);
+  float hs = dome1 > 0.0 ? fract(cl.b * 13.7) : fract(cs.b * 17.3);
+  vec3 sc = mix(vec3(0.14, 0.13, 0.115), vec3(0.19, 0.14, 0.088), smoothstep(0.2, 0.5, hs));
+  sc = mix(sc, vec3(0.15, 0.075, 0.043), smoothstep(0.62, 0.72, hs));
+  sc = mix(sc, vec3(0.27, 0.25, 0.21), smoothstep(0.92, 0.96, hs));
+  float stone = smoothstep(0.02, 0.3, dome);
+  alb = mix(alb, mix(sc, alb, 0.3 + 0.35 * (1.0 - dome)), stone);
   if (sky > 0.01) {
     // under the sky: weathered grey-brown, and a dark thatch wherever the grass has hold
     float turf = turfMask(P) * sky;
-    alb = mix(alb, vec3(0.115, 0.085, 0.055) * (0.8 + 0.4 * cav), 0.45 * sky);
+    alb = mix(alb, vec3(0.115, 0.085, 0.055) * (0.8 + 0.4 * cav), 0.7 * sky);
     vec3 thatch = mix(vec3(0.05, 0.045, 0.022), vec3(0.04, 0.062, 0.018), sat(n1.a + 0.4)) * (0.6 + 0.8 * cav);
     alb = mix(alb, thatch, turf * 0.85);
   }
   s.alb = alb;
-  s.rough = mix(0.97, 0.66, st);
-  s.f0 = mix(0.018, 0.04, st);
-  s.ao = ao * mix(0.55, 1.0, cav);
+  s.rough = mix(mix(0.97, 0.6, damp), 0.66, stone);
+  s.f0 = mix(0.018 + 0.022 * damp, 0.04, stone);
+  s.ao = ao * mix(0.55, 1.0, cav) * (1.0 - 0.6 * crack) * (1.0 - 0.8 * pit);
   s.trans = 0.0; s.near = 0.0;
   vec3 cell = floor(P * 1400.0);
-  s.glint = step(0.992, hash13(cell)) * keep(0.0012, px);
+  s.glint = step(0.992 - 0.012 * sand, hash13(cell)) * keep(0.0012, px);
   return s;
 }
 `;
@@ -229,32 +291,37 @@ void main() {
 }`;
 
 const ROCK_FRAG = COMMON + /* glsl */ `
+uniform sampler3D uCells;
 varying vec3 vP; varying vec3 vO; varying vec3 vNo; varying mat3 vR; varying float vTint; varying float vSky; varying float vDirt;
+const mat3 Q1 = mat3(0.36, 0.48, -0.8, -0.8, 0.6, 0.0, 0.48, 0.64, 0.6);
+const mat3 Q2 = mat3(0.0, 0.8, 0.6, -0.8, 0.36, -0.48, -0.6, -0.48, 0.64);
 void main() {
   vec3 O = vO, No = normalize(vNo);
   float px = footprint(vP);
-  vec4 n1 = nz(O * 2.3 + 0.3), n2 = nz(O * 8.1), n3 = nz(O * 27.0 + 0.4), n4 = nz(O * 83.0), n5 = nz(O * 210.0 + 0.7);
+  vec4 n1 = nz(Q1 * O * 2.3 + 0.3), n2 = nz(Q2 * O * 8.1), n3 = nz(Q1 * O * 27.0 + 0.4), n4 = nz(Q2 * O * 83.0), n5 = nz(Q1 * O * 210.0 + 0.7);
   float k3 = keep(0.006, px), k4 = keep(0.002, px), k5 = keep(0.0008, px);
-  float crack = smoothstep(0.05, 0.0, abs(n1.a));
-  vec3 g = 0.006 * 2.3 * n1.rgb + 0.0032 * 8.1 * n2.rgb + 0.0013 * 27.0 * n3.rgb * k3 + 0.0005 * 83.0 * n4.rgb * k4 + 0.00016 * 210.0 * n5.rgb * k5;
-  g += n1.rgb * sign(n1.a) * crack * 0.25;
+  // broken, not polished: chipped at every scale, and pitted where grains have come away
+  vec3 g = 0.007 * 2.3 * (n1.rgb * Q1) + 0.0048 * 8.1 * (n2.rgb * Q2) + 0.0024 * 27.0 * (n3.rgb * Q1) * k3
+         + 0.0009 * 83.0 * (n4.rgb * Q2) * k4 + 0.0003 * 210.0 * (n5.rgb * Q1) * k5;
+  vec4 c = texture(uCells, Q2 * O * 9.0);
+  float pit = step(0.8, c.a) * smoothstep(0.32, 0.14, c.r) * keep(0.006, px);
   vec3 N = normalize(No - (g - No * dot(g, No)));
   Surf s;
   s.N = normalize(vR * N);
   vec3 Ng = normalize(vR * No);
-  vec3 grey = vec3(0.135, 0.12, 0.10), tanc = vec3(0.17, 0.125, 0.078), dark = vec3(0.07, 0.062, 0.054);
+  vec3 grey = vec3(0.105, 0.095, 0.082), tanc = vec3(0.13, 0.095, 0.06), dark = vec3(0.055, 0.05, 0.044);
   vec3 base = mix(mix(grey, tanc, sat(vTint * 2.0)), dark, sat(vTint * 2.0 - 1.0) * 0.7);
-  base *= 0.85 + 0.3 * n1.a + 0.15 * n2.a;
-  base = mix(base, base * 0.35, smoothstep(0.3, 0.6, n4.a) * k4 * 0.7);
-  base = mix(base, vec3(0.27, 0.24, 0.2), smoothstep(0.35, 0.7, -n4.a) * k4 * 0.5);
-  base *= 1.0 - 0.3 * crack;
-  // dust settles on top, soil stays in the pores
+  base *= 0.8 + 0.35 * n1.a + 0.2 * n2.a;
+  base = mix(base, base * 0.4, smoothstep(0.3, 0.6, n4.a) * k4 * 0.7);
+  base = mix(base, vec3(0.2, 0.18, 0.15), smoothstep(0.4, 0.7, -n4.a) * k4 * 0.4);
+  // it came out of the ground and still wears it: caked on in patches, dusted on top, packed into every pit
   float up = sat(s.N.y * 0.6 + 0.4);
-  float dirt = sat(0.3 + vDirt + 0.5 * up * sat(0.6 + n2.a) + 0.3 * sat(-n3.a) * k3);
-  base = mix(base, vec3(0.15, 0.085, 0.042), dirt * 0.8);
-  s.alb = max(base * 0.6, vec3(0.01));
-  s.rough = 0.8; s.f0 = 0.04; s.trans = 0.0; s.near = 0.0;
-  s.ao = 1.0 - 0.5 * crack;
+  float dirt = sat(0.25 + vDirt + 0.75 * smoothstep(-0.1, 0.5, n1.a + 0.5 * n2.a) + 0.35 * up + 0.3 * sat(-n3.a) * k3 + pit);
+  vec3 soilc = mix(vec3(0.12, 0.07, 0.036), vec3(0.17, 0.105, 0.055), sat(n2.a + 0.5));
+  base = mix(base, soilc, dirt * 0.88);
+  s.alb = max(base * (1.0 - 0.6 * pit), vec3(0.008));
+  s.rough = mix(0.78, 0.96, dirt); s.f0 = mix(0.04, 0.02, dirt); s.trans = 0.0; s.near = 0.0;
+  s.ao = (0.7 + 0.3 * sat(0.5 + n2.a)) * (1.0 - 0.6 * pit);
   s.glint = step(0.985, hash13(floor(O * 1100.0))) * keep(0.0012, px) * (1.0 - dirt);
   gl_FragColor = vec4(shade(vP, s, Ng, vSky), 1.0);
 }`;

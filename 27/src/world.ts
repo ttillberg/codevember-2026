@@ -17,6 +17,11 @@ export const sstep = (e0: number, e1: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 
+/** The ground lies in layers: height with the layers' own slow buckling in it. Mirrored in the soil shader (gfx.ts). */
+export const strataY = (x: number, y: number, z: number) => y + 0.1 * Math.sin(x * 1.3 + 0.7 * Math.sin(z * 0.9)) + 0.07 * Math.sin(z * 1.7 + x * 0.6);
+/** 1 inside a layer at height c, half-thickness w */
+const band = (y: number, c: number, w: number) => 1 - sstep(w * 0.4, w, Math.abs(y - c));
+
 export interface RailEdge {
   a: number;
   b: number;
@@ -167,7 +172,51 @@ export class World {
     }
     this.stampDen(1.05, 0.78, 0.5);
 
-    // 2. the hillside, and the lumps of real ground
+    // 2. hollows: pockets where something fell or was dug out, alcoves, and the holes of smaller lodgers
+    const fr = { c: new THREE.Vector3(), T: new THREE.Vector3(), side: new THREE.Vector3(), up: new THREE.Vector3(), d: new THREE.Vector3() };
+    const wallAt = (e: RailEdge, s: number, phi: number): number => {
+      this.railPoint(e, s, fr.c);
+      this.railTangent(e, s, fr.T);
+      fr.side.crossVectors(fr.T, up).normalize();
+      fr.up.crossVectors(fr.side, fr.T);
+      fr.d.copy(fr.up).multiplyScalar(Math.cos(phi)).addScaledVector(fr.side, Math.sin(phi));
+      return this.march(fr.c, fr.d, 1.2);
+    };
+    const pa = new THREE.Vector3(), pb = new THREE.Vector3();
+    for (const e of this.edges) {
+      if (e.open) continue;
+      const along = () => 0.3 + rnd() * Math.max(0.1, e.len - 0.6);
+      const around = () => (rnd() < 0.5 ? -1 : 1) * (0.2 + rnd() * 1.9); // anywhere but the floor
+      for (let i = Math.round(e.len * 2.4); i > 0; i--) {
+        const t = wallAt(e, along(), around());
+        if (t >= 1.2) continue;
+        const r = 0.035 + rnd() * rnd() * 0.1;
+        pa.copy(fr.c).addScaledVector(fr.d, t + r * (rnd() - 0.5));
+        this.carve(pa, pa, r);
+        // often two or three run together into one ragged hollow
+        for (let k = rnd() < 0.35 ? 1 + Math.floor(rnd() * 2) : 0; k > 0; k--) {
+          pb.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).multiplyScalar(r * 1.8).add(pa);
+          this.carve(pb, pb, r * (0.6 + rnd() * 0.5));
+        }
+      }
+      for (let i = Math.round(e.len * 0.32 + rnd() * 0.6); i > 0; i--) {
+        const t = wallAt(e, along(), around());
+        if (t >= 1.2) continue;
+        const r = 0.15 + rnd() * 0.11;
+        pa.copy(fr.c).addScaledVector(fr.d, t + r * 0.35);
+        this.carve(pa, pa, r);
+      }
+      for (let i = Math.round(e.len * 0.5 + rnd() * 0.7); i > 0; i--) {
+        const t = wallAt(e, along(), around());
+        if (t >= 1.2) continue;
+        // a narrow run going off into the ground, bending a little, ending in the dark
+        pa.copy(fr.c).addScaledVector(fr.d, t - 0.03);
+        pb.copy(fr.d).addScaledVector(fr.T, (rnd() - 0.5) * 0.9).addScaledVector(up, (rnd() - 0.5) * 0.5 - 0.1).normalize().multiplyScalar(0.22 + rnd() * 0.3).add(pa);
+        this.carve(pa, pb, 0.045 + rnd() * 0.03);
+      }
+    }
+
+    // 3. the hillside, and the lumps of real ground
     const hcol = (this.hcol = new Float32Array(nx * nz));
     for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) hcol[i + nx * k] = this.terrainH(this.x0 + i * h, this.z0 + k * h);
     let q = 0;
@@ -181,11 +230,37 @@ export class World {
           if (a > -0.14 && a < 0.14) {
             const px = this.x0 + i * h;
             a += 0.042 * P.n(px * 2.3, py * 2.3, pz * 2.3) + 0.022 * P.n(px * 6.1 + 7.3, py * 6.1, pz * 6.1) + 0.011 * P.n(px * 14.3, py * 14.3 + 3.1, pz * 14.3);
+            // the layers weather differently: gravel stands proud, sand has run out from between
+            const yy = strataY(px, py, pz);
+            a += 0.02 * band(yy, -0.93, 0.11) + 0.012 * band(yy, -0.36, 0.05) - 0.028 * band(yy, -0.69, 0.04) - 0.028 * band(yy, -1.2, 0.045);
           }
           air[q] = a;
         }
       }
     }
+  }
+
+  /** Dig a rounded run from a to b (a ball if they are the same point). */
+  private carve(a: THREE.Vector3, b: THREE.Vector3, r: number) {
+    const { nx, ny, nz, x0, y0, z0, h, air } = this;
+    const rm = r + 0.06;
+    const i0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - rm - x0) / h)), i1 = Math.min(nx - 1, Math.ceil((Math.max(a.x, b.x) + rm - x0) / h));
+    const j0 = Math.max(0, Math.floor((Math.min(a.y, b.y) - rm - y0) / h)), j1 = Math.min(ny - 1, Math.ceil((Math.max(a.y, b.y) + rm - y0) / h));
+    const k0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - rm - z0) / h)), k1 = Math.min(nz - 1, Math.ceil((Math.max(a.z, b.z) + rm - z0) / h));
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const ll = Math.max(dx * dx + dy * dy + dz * dz, 1e-9);
+    for (let k = k0; k <= k1; k++)
+      for (let j = j0; j <= j1; j++) {
+        let q = i0 + nx * (j + ny * k);
+        for (let i = i0; i <= i1; i++, q++) {
+          const px = x0 + i * h, py = y0 + j * h, pz = z0 + k * h;
+          let t = ((px - a.x) * dx + (py - a.y) * dy + (pz - a.z) * dz) / ll;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          // (narrowing as it goes in)
+          const d = Math.hypot(px - a.x - dx * t, py - a.y - dy * t, pz - a.z - dz * t) - r * (1 - 0.35 * t);
+          air[q] = smin(air[q], d, 0.035);
+        }
+      }
   }
 
   terrainH(x: number, z: number): number {
